@@ -20,7 +20,7 @@
             type="password"
             :placeholder="isSetupMode ? 'SET NEW PASSWORD' : 'INPUT PASSWORD'"
             @keyup.enter="handleAction"
-            class="w-full bg-medical-50 border border-medical-200 p-3 outline-none focus:border-accent font-mono text-center tracking-widest text-lg"
+            class="w-full bg-medical-50 border border-medical-200 p-3 outline-none focus:border-accent font-mono text-center tracking-widest text-lg text-medical-900 placeholder:text-medical-400"
             autofocus
         />
 

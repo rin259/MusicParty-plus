@@ -5,6 +5,7 @@ class SocketService {
         this.client = null;
         this.connected = false;
         this.stompConfig = null;
+        this.reconnectPromise = null;
     }
 
     /**
@@ -83,11 +84,26 @@ class SocketService {
     /**
      * 强制重连 (用于网络恢复或从后台切回时)
      */
-    forceReconnect() {
-        if (this.client && !this.client.active) {
-            console.log('Force reconnecting socket...');
-            this.client.activate();
-        }
+    forceReconnect(force = false) {
+        const client = this.client;
+        if (!client || this.reconnectPromise || (!force && client.active)) return this.reconnectPromise;
+
+        console.log('Rebuilding socket after network or background suspension...');
+        const reconnectPromise = Promise.resolve()
+            .then(() => client.active ? client.deactivate({ force: true }) : undefined)
+            .catch((error) => console.warn('Socket reset failed:', error))
+            .then(() => {
+                if (this.client === client && !client.active) {
+                    client.activate();
+                }
+            })
+            .finally(() => {
+                if (this.reconnectPromise === reconnectPromise) {
+                    this.reconnectPromise = null;
+                }
+            });
+        this.reconnectPromise = reconnectPromise;
+        return reconnectPromise;
     }
 
     /**
@@ -98,6 +114,7 @@ class SocketService {
             this.client.deactivate();
             this.client = null;
             this.connected = false;
+            this.reconnectPromise = null;
         }
     }
 }

@@ -7,6 +7,15 @@ services:
     environment:
       - PORT=3000
       - HTTPS=true
+    # ncm-api 内置 endpoint 中 interface/interfacepc/interface3.music.163.com
+    # 与 music.163.com 仍解析到已下线或拒连的旧 IP(如 111.124.200.67)，
+    # 导致容器内 ECONNREFUSED 并 502。search 等走 eapiDomain(interfacepc)，
+    # 故四个域名全部重写到当前真实可用的网易云 IP 1.95.21.33。
+    extra_hosts:
+      - "interface.music.163.com:1.95.21.33"
+      - "interfacepc.music.163.com:1.95.21.33"
+      - "interface3.music.163.com:1.95.21.33"
+      - "music.163.com:1.95.21.33"
     networks:
       - music-net
 

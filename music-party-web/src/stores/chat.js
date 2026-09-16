@@ -20,6 +20,7 @@ export const useChatStore = defineStore('chat', () => {
     // 1. 添加单条消息 (来自 WebSocket 推送)
     const addMessage = (msg) => {
         messages.value.push(msg);
+        window.dispatchEvent(new CustomEvent('music-party:chat-message', { detail: msg }));
 
         if (messages.value.length > 2000) {
             messages.value = messages.value.slice(-1000);

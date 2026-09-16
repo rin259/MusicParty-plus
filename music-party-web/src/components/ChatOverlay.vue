@@ -50,7 +50,7 @@
         <!-- 2. Tabs 切换栏 -->
         <div class="flex border-b border-medical-200 bg-medical-50/50">
           <button
-              v-for="tab in ['CHAT', 'SYSTEM']"
+            v-for="tab in ['CHAT', 'SYSTEM INFO']"
               :key="tab"
               @click="activeTab = tab"
               class="flex-1 py-2 text-[10px] font-bold font-mono transition-colors relative"
@@ -169,9 +169,7 @@
       </div>
     </Transition>
 
-    <!--
-      悬浮开关按钮 (拖拽手柄)
-    -->
+    <!-- Floating trigger doubles as the drag handle. -->
     <div
         id="tutorial-chat"
         v-if="!isMobile || !chatStore.isOpen"
@@ -183,14 +181,9 @@
             ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(249,115,22,0.6)] scale-110'
             : 'bg-white border-medical-200 text-medical-500 shadow-lg hover:text-medical-900 hover:border-medical-300'"
     >
-      <div v-if="chatStore.unreadCount > 0"
-           class="absolute inset-0 bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAADCAYAAABS3WWCAAAAE0lEQVQYV2NkYGD4zwABjFAQAwBATgMJy2B8NAAAAABJRU5ErkJggg==')] opacity-30 pointer-events-none animate-scan z-0">
-      </div>
-
       <span v-if="chatStore.unreadCount > 0" class="font-bold font-mono text-sm relative z-10 animate-pulse">
-         {{ chatStore.unreadCount > 99 ? '99+' : chatStore.unreadCount }}
+        {{ chatStore.unreadCount > 99 ? '99+' : chatStore.unreadCount }}
       </span>
-
       <MessageSquare v-else class="w-5 h-5 relative z-10"/>
     </div>
 
@@ -331,7 +324,7 @@ const processedMessages = computed(() => {
       return msg.type === 'CHAT' || msg.type === 'LIKE' || msg.type === 'PLAY_START';
     }
     // SYSTEM Tab: 系统 + 点赞 + 开始播放
-    if (activeTab.value === 'SYSTEM') {
+    if (activeTab.value === 'SYSTEM INFO') {
       return msg.type === 'SYSTEM' || msg.type === 'LIKE' || msg.type === 'PLAY_START';
     }
     return false;

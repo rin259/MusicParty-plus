@@ -3,7 +3,7 @@
   <!-- 全局 Toast 挂载点 -->
   <ToastNotification ref="toastInstance" />
 
-  <div class="h-screen w-screen overflow-hidden font-sans">
+  <div class="h-screen w-screen overflow-hidden font-sans transition-colors duration-500">
     <AudioEngine />
     <!-- 1. 认证遮罩 -->
     <AuthOverlay @unlocked="userStore.isAuthPassed = true" v-if="!userStore.isAuthPassed" />

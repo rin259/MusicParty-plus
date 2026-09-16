@@ -3,6 +3,8 @@
     <img
         v-if="!hasError && src"
         :src="src"
+        loading="lazy"
+        decoding="async"
         class="w-full h-full object-cover transition-opacity duration-500"
         @error="hasError = true"
     />

@@ -5,8 +5,9 @@
         ref="audioRef"
         :src="audioSrc"
         @error="handleError"
-        @waiting="player.isBuffering = true"
-        @playing="player.isBuffering = false"
+        @waiting="handleBufferingStart"
+        @stalled="handleBufferingStart"
+        @playing="handleBufferingEnd"
         @canplay="onCanPlay"
         @seeked="onCanPlay"
         referrerpolicy="no-referrer"
@@ -23,7 +24,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
 import { useAudio } from '../composables/useAudio';
@@ -32,6 +33,10 @@ const player = usePlayerStore();
 const ui = useUiStore();
 const audioRef = ref(null);
 const aliveAudioRef = ref(null);
+let audioContext;
+let analyser;
+let frequencyData;
+let visualizerFrame;
 
 // 极弱底噪 WAV (人耳难以察觉)
 const ALIVE_WAV = 'data:audio/wav;base64,UklGRjIAAABXQVZFRm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YRAAAAAAAAAAAAAAAAD//w==';
@@ -41,6 +46,8 @@ const {
   isBuffering,
   isErrorState,
   handleError,
+  handleBufferingStart,
+  handleBufferingEnd,
   checkAutoPlay
 } = useAudio(audioRef, player);
 
@@ -74,13 +81,42 @@ watch(() => ui.volume, (newVol) => {
 }, { immediate: true });
 
 const onCanPlay = () => {
-  player.isBuffering = false;
+  handleBufferingEnd();
   checkAutoPlay();
+};
+
+const publishSpectrum = () => {
+  if (analyser) {
+    analyser.getByteFrequencyData(frequencyData);
+    window.dispatchEvent(new CustomEvent('music-party:spectrum', {
+      detail: {
+        data: frequencyData.slice(0),
+        sampleRate: audioContext.sampleRate,
+        fftSize: analyser.fftSize
+      }
+    }));
+  }
+  visualizerFrame = requestAnimationFrame(publishSpectrum);
+};
+
+const enableSpectrum = () => {
+  if (analyser || !audioRef.value) return;
+  audioContext = new AudioContext();
+  const source = audioContext.createMediaElementSource(audioRef.value);
+  analyser = audioContext.createAnalyser();
+  // 2048 gives ~23Hz bins at 48kHz, sufficient to isolate frequencies <=80Hz.
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.55;
+  frequencyData = new Uint8Array(analyser.frequencyBinCount);
+  source.connect(analyser);
+  analyser.connect(audioContext.destination);
+  publishSpectrum();
 };
 
 onMounted(() => {
   if (audioRef.value) {
     audioRef.value.volume = ui.volume;
+    audioRef.value.addEventListener('play', enableSpectrum, { once: true });
   }
   // 初始尝试播放保活音轨
   if (!player.isPaused && ui.keepAliveEnabled) {
@@ -89,5 +125,10 @@ onMounted(() => {
       aliveAudioRef.value.play().catch(() => {});
     }
   }
+});
+
+onUnmounted(() => {
+  cancelAnimationFrame(visualizerFrame);
+  audioContext?.close();
 });
 </script>

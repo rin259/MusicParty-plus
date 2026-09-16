@@ -9,6 +9,8 @@ import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.thornex.musicparty.config.LocalResourceConfig;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.enums.CacheStatus;
@@ -17,6 +19,7 @@ import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
+import reactor.util.retry.Retry;
 
 import java.io.File;
 import java.io.IOException;
@@ -24,10 +27,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Service
@@ -42,20 +47,28 @@ public class LocalCacheService {
     private final AtomicLong currentTotalSize = new AtomicLong(0);
     private final ApplicationEventPublisher eventPublisher;
     private final AppProperties appProperties;
+    private final YtDlpResolver ytDlpResolver;
     private final Sinks.Many<DownloadTask> downloadQueue = Sinks.many().unicast().onBackpressureBuffer();
     private Disposable queueSubscription;
 
-    private record DownloadTask(
-            String musicId,
-            Mono<String> urlProvider,
-            Map<String, String> headers,
-            String extension
-    ) {}
+    private record DownloadTask(String musicId, Mono<DownloadSource> sourceProvider) {}
 
-    public LocalCacheService(WebClient webClient, ApplicationEventPublisher eventPublisher, AppProperties appProperties) {
+    public record DownloadSource(String url, Map<String, String> headers, String extension, boolean useYtDlp) {
+        public DownloadSource(String url, Map<String, String> headers, String extension) {
+            this(url, headers, extension, false);
+        }
+
+        public static DownloadSource ytDlp(String sourceUrl) {
+            return new DownloadSource(sourceUrl, Map.of(), "", true);
+        }
+    }
+
+    public LocalCacheService(WebClient webClient, ApplicationEventPublisher eventPublisher, AppProperties appProperties,
+                             YtDlpResolver ytDlpResolver) {
         this.webClient = webClient;
         this.eventPublisher = eventPublisher;
         this.appProperties = appProperties;
+        this.ytDlpResolver = ytDlpResolver;
     }
 
     @Data
@@ -77,6 +90,17 @@ public class LocalCacheService {
         File[] files = dir.listFiles();
         if (files != null) {
             for (File f : files) {
+                if (!f.isFile()) {
+                    continue;
+                }
+                if (f.getName().endsWith(".part")) {
+                    try {
+                        Files.deleteIfExists(f.toPath());
+                    } catch (IOException e) {
+                        log.warn("Failed to clean partial cache file {}", f, e);
+                    }
+                    continue;
+                }
                 String id = f.getName().split("\\.")[0]; // 假设文件名是 id.mp3
                 CacheEntry entry = new CacheEntry();
                 entry.setId(id);
@@ -119,6 +143,10 @@ public class LocalCacheService {
      * @param extension 文件扩展名 (如 .m4a, .mp3)
      */
     public void submitDownload(String musicId, Mono<String> urlProvider, Map<String, String> headers, String extension) {
+        submitDownload(musicId, urlProvider.map(url -> new DownloadSource(url, headers, extension)));
+    }
+
+    public void submitDownload(String musicId, Mono<DownloadSource> sourceProvider) {
         if (cacheIndex.containsKey(musicId) && cacheIndex.get(musicId).getStatus() == CacheStatus.COMPLETED) {
             log.info("Music {} already cached.", musicId);
             touch(musicId); // 更新访问时间
@@ -143,7 +171,7 @@ public class LocalCacheService {
 
         eventPublisher.publishEvent(new DownloadStatusEvent(this, musicId));
 
-        Sinks.EmitResult result = downloadQueue.tryEmitNext(new DownloadTask(musicId, urlProvider, headers, extension));
+        Sinks.EmitResult result = downloadQueue.tryEmitNext(new DownloadTask(musicId, sourceProvider));
 
         if (result.isFailure()) {
             log.error("Failed to enqueue download task for {}", musicId);
@@ -166,42 +194,42 @@ public class LocalCacheService {
         eventPublisher.publishEvent(new DownloadStatusEvent(this, musicId));
         log.info("Processing download: {}", musicId);
 
-        return task.urlProvider()
-                .flatMap(url -> {
-                    entry.setOriginalUrl(url);
-                    String fileName = musicId + task.extension();
+        return Mono.defer(task::sourceProvider)
+                .flatMap(source -> {
+                    entry.setOriginalUrl(source.url());
+                    if (source.useYtDlp()) {
+                        return downloadWithYtDlp(musicId, entry, source.url());
+                    }
+
+                    String fileName = musicId + source.extension();
                     entry.setFileName(fileName);
                     Path destPath = Paths.get(LocalResourceConfig.CACHE_DIR, fileName);
 
+                    Path tempPath = Paths.get(LocalResourceConfig.CACHE_DIR, fileName + ".part");
                     return webClient.get()
-                            .uri(url)
-                            .headers(httpHeaders -> task.headers().forEach(httpHeaders::add))
+                            .uri(source.url())
+                            .headers(httpHeaders -> source.headers().forEach(httpHeaders::add))
                             .retrieve()
                             .bodyToFlux(DataBuffer.class)
-                            .collectList()
-                            .publishOn(Schedulers.boundedElastic())
-                            .doOnSuccess(dataBuffers -> {
+                            .timeout(Duration.ofMinutes(12))
+                            .as(data -> DataBufferUtils.write(data, tempPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING))
+                            .then(Mono.fromRunnable(() -> completeDownload(musicId, entry, tempPath, destPath, fileName)))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .doOnError(error -> {
                                 try {
-                                    try (var os = Files.newOutputStream(destPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                                        for (DataBuffer buffer : dataBuffers) {
-                                            byte[] bytes = new byte[buffer.readableByteCount()];
-                                            buffer.read(bytes);
-                                            os.write(bytes);
-                                            DataBufferUtils.release(buffer);
-                                        }
-                                    }
-                                    long size = Files.size(destPath);
-                                    entry.setSize(size);
-                                    entry.setStatus(CacheStatus.COMPLETED);
-                                    currentTotalSize.addAndGet(size);
-                                    log.info("Download completed: {}", fileName);
-                                    eventPublisher.publishEvent(new DownloadStatusEvent(this, musicId));
-                                    ensureCapacity();
-                                } catch (IOException e) {
-                                    throw new RuntimeException("File write error", e);
+                                    Files.deleteIfExists(tempPath);
+                                } catch (IOException cleanupError) {
+                                    log.warn("Failed to clean partial cache file {}", tempPath, cleanupError);
                                 }
                             });
                 })
+                // Signed media URLs can resolve to a transiently unavailable CDN node.
+                // Resubscribing also obtains a fresh signed URL from the source provider.
+                .retryWhen(Retry.backoff(2, Duration.ofSeconds(1))
+                        .maxBackoff(Duration.ofSeconds(5))
+                        .filter(this::isRetryableDownloadFailure)
+                        .doBeforeRetry(signal -> log.warn("Retrying download {} after transient failure (attempt {})",
+                                musicId, signal.totalRetries() + 1)))
                 // 错误处理
                 .doOnError(error -> {
                     log.error("Download Task failed for {}: {}", musicId, error.getMessage());
@@ -211,6 +239,50 @@ public class LocalCacheService {
                 // 这里的 onErrorResume 保证即使这个任务失败，Flux 链也不会断，会继续执行 delay 和下一个任务
                 .onErrorResume(e -> Mono.empty())
                 .then(); // 转为 Mono<Void>
+    }
+
+    private Mono<Void> downloadWithYtDlp(String musicId, CacheEntry entry, String sourceUrl) {
+        Path stagingDirectory = Paths.get(LocalResourceConfig.CACHE_DIR, ".yt-dlp");
+        return ytDlpResolver.downloadAudio(sourceUrl, stagingDirectory, musicId)
+                .flatMap(downloaded -> Mono.fromRunnable(() -> {
+                    String fileName = musicId + "." + downloaded.extension();
+                    Path destination = Paths.get(LocalResourceConfig.CACHE_DIR, fileName);
+                    completeDownload(musicId, entry, downloaded.file(), destination, fileName);
+                }));
+    }
+
+    private void completeDownload(String musicId, CacheEntry entry, Path sourcePath, Path destination, String fileName) {
+        try {
+            try {
+                Files.move(sourcePath, destination, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+                Files.move(sourcePath, destination, StandardCopyOption.REPLACE_EXISTING);
+            }
+            long size = Files.size(destination);
+            long previousSize = entry.getSize();
+            entry.setFileName(fileName);
+            entry.setSize(size);
+            entry.setStatus(CacheStatus.COMPLETED);
+            currentTotalSize.addAndGet(size - previousSize);
+            log.info("Download completed: {}", fileName);
+            eventPublisher.publishEvent(new DownloadStatusEvent(this, musicId));
+            ensureCapacity();
+        } catch (IOException e) {
+            throw new RuntimeException("File write error", e);
+        }
+    }
+
+    private boolean isRetryableDownloadFailure(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof WebClientResponseException response) {
+                int status = response.getStatusCode().value();
+                return status == 403 || status == 408 || status == 429 || status >= 500;
+            }
+            if (cause instanceof WebClientRequestException || cause instanceof IOException || cause instanceof TimeoutException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

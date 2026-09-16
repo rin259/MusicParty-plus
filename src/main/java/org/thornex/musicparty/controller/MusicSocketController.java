@@ -49,6 +49,12 @@ public class MusicSocketController {
         musicPlayerService.enqueuePlaylist(request, sessionId);
     }
 
+    @MessageMapping("/enqueue/album")
+    public void enqueueAlbum(EnqueuePlaylistRequest request, @Header("simpSessionId") String sessionId) {
+        if (isGuest(sessionId)) return;
+        musicPlayerService.enqueueAlbum(request, sessionId);
+    }
+
     @MessageMapping("/control/next")
     public void nextSong(@Header("simpSessionId") String sessionId) {
         if (isGuest(sessionId)) return;
@@ -65,6 +71,12 @@ public class MusicSocketController {
     public void togglePause(@Header("simpSessionId") String sessionId) {
         if (isGuest(sessionId)) return;
         musicPlayerService.togglePause(sessionId);
+    }
+
+    @MessageMapping("/control/seek")
+    public void seek(@Payload SeekRequest request, @Header("simpSessionId") String sessionId) {
+        if (isGuest(sessionId)) return;
+        musicPlayerService.seekTo(request.positionMs(), sessionId);
     }
 
     @MessageMapping("/queue/top")

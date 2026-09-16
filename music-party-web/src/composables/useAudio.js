@@ -2,6 +2,7 @@
 
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useToast } from './useToast';
+import { shouldRestartRepeat } from '../logic/audioSync';
 
 export function useAudio(audioRef, playerStore) {
     const localProgress = ref(0);
@@ -11,6 +12,9 @@ export function useAudio(audioRef, playerStore) {
     const { info, error, success } = useToast();
     let syncTimer = null;
     let wakeLock = null;
+    let bufferingUntil = 0;
+    let lastForcedSyncAt = 0;
+    let lastRepeatRestartAt = 0;
 
     // 请求唤醒锁 (防止 WebSocket 断连)
     const requestWakeLock = async () => {
@@ -82,13 +86,35 @@ export function useAudio(audioRef, playerStore) {
     // 这是修复你问题的关键：音频加载就绪后，主动判断是否需要播放
     const checkAutoPlay = () => {
         if (!playerStore.nowPlaying) return;
-        isBuffering.value = false;
+        handleBufferingEnd();
 
         if (playerStore.isPaused) {
             audioRef.value.pause();
         } else {
             safePlay();
         }
+    };
+
+    const handleBufferingStart = () => {
+        isBuffering.value = true;
+        // Give the browser time to refill its own buffer before considering a catch-up seek.
+        bufferingUntil = Date.now() + 3000;
+    };
+
+    const handleBufferingEnd = () => {
+        isBuffering.value = false;
+    };
+
+    const hasBufferedHeadroom = (audio) => {
+        if (!audio.buffered.length) return false;
+        for (let index = 0; index < audio.buffered.length; index++) {
+            const start = audio.buffered.start(index);
+            const end = audio.buffered.end(index);
+            if (audio.currentTime >= start && audio.currentTime <= end) {
+                return end - audio.currentTime >= 3;
+            }
+        }
+        return false;
     };
 
     // === 2. 监听后端状态变化 ===
@@ -168,10 +194,27 @@ export function useAudio(audioRef, playerStore) {
         }
     };
 
+    const handlePageResume = () => {
+        if (!playerStore.isPaused) requestWakeLock();
+        playerStore.tryReconnect();
+    };
+
+    const handleRemoteSeek = (event) => {
+        if (!audioRef.value || !playerStore.nowPlaying) return;
+        const durationMs = playerStore.nowPlaying.music.duration || 0;
+        const positionMs = Math.max(0, Math.min(Number(event.detail) || 0, durationMs));
+        audioRef.value.currentTime = positionMs / 1000;
+        localProgress.value = positionMs;
+        lastForcedSyncAt = Date.now();
+        if (!playerStore.isPaused) safePlay();
+    };
+
     // === 5. 进度条同步 ===
     onMounted(() => {
         document.addEventListener('visibilitychange', handleVisibilityChange);
         window.addEventListener('online', handleNetworkChange);
+        window.addEventListener('pageshow', handlePageResume);
+        window.addEventListener('music-party:seek', handleRemoteSeek);
 
         syncTimer = setInterval(() => {
             if (!playerStore.nowPlaying) {
@@ -193,6 +236,24 @@ export function useAudio(audioRef, playerStore) {
 
             // 3. 强行同步逻辑 (纠偏)
             if (audioRef.value && !isBuffering.value && !isErrorState.value) {
+                const audio = audioRef.value;
+                const repeatRestart = shouldRestartRepeat({
+                    playMode: playerStore.playMode,
+                    targetTime,
+                    ended: audio.ended,
+                    duration: audio.duration,
+                    currentTime: audio.currentTime
+                });
+
+                // An ended media element has no buffered headroom at its current position.
+                // Repeat rewinds are authoritative server jumps, not ordinary drift correction.
+                if (repeatRestart && Date.now() - lastRepeatRestartAt >= 1000) {
+                    lastRepeatRestartAt = Date.now();
+                    audio.currentTime = targetTime / 1000;
+                    safePlay();
+                    return;
+                }
+
                 // 如果是暂停状态，强制对齐
                 if (playerStore.isPaused) {
                     // 避免重复赋值导致杂音
@@ -203,23 +264,29 @@ export function useAudio(audioRef, playerStore) {
                 // 如果是播放状态，只有偏差过大才对齐
                 else {
                     const domTime = audioRef.value.currentTime * 1000;
-                    // 动态调整阈值：前台 2s，后台 10s (避免后台节流导致的频繁 seek 卡顿)
-                    const threshold = document.hidden ? 10000 : 2000;
+                    // Do not seek around a buffer recovery. A source stall can otherwise become an audible jump.
+                    const threshold = document.hidden ? 15000 : 5000;
                     
-                    if (Math.abs(domTime - targetTime) > threshold) {
-                        if (audioRef.value.readyState >= 2) {
+                    if (Math.abs(domTime - targetTime) > threshold
+                        && Date.now() >= bufferingUntil
+                        && Date.now() - lastForcedSyncAt >= 5000
+                        && !audioRef.value.seeking
+                        && audioRef.value.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
+                        && hasBufferedHeadroom(audioRef.value)) {
                             console.log(`[Sync] Correcting time (${document.hidden ? 'bg' : 'fg'}): ${domTime} -> ${targetTime}`);
                             audioRef.value.currentTime = targetTime / 1000;
-                        }
+                            lastForcedSyncAt = Date.now();
                     }
                 }
             }
-        }, 200);
+        }, 250);
     });
 
     onUnmounted(() => {
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('online', handleNetworkChange);
+        window.removeEventListener('pageshow', handlePageResume);
+        window.removeEventListener('music-party:seek', handleRemoteSeek);
         clearInterval(syncTimer);
         releaseWakeLock();
     });
@@ -230,6 +297,8 @@ export function useAudio(audioRef, playerStore) {
         isErrorState,
         retryCount,
         handleError,
+        handleBufferingStart,
+        handleBufferingEnd,
         checkAutoPlay
     };
 }

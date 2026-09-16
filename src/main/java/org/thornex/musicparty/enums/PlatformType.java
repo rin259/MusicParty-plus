@@ -5,7 +5,9 @@ import lombok.Getter;
 @Getter
 public enum PlatformType {
     NETEASE("netease"),
-    BILIBILI("bilibili");
+    BILIBILI("bilibili"),
+    SOUNDCLOUD("soundcloud"),
+    YTMUSIC("ytmusic");
 
     private final String value;
 

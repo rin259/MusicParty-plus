@@ -10,6 +10,7 @@ import org.thornex.musicparty.enums.PlayerAction;
 import org.thornex.musicparty.event.PlayerStateEvent;
 import org.thornex.musicparty.event.QueueUpdateEvent;
 import org.thornex.musicparty.event.SystemMessageEvent;
+import org.thornex.musicparty.event.SeekEvent;
 import org.thornex.musicparty.service.UserService;
 import org.thornex.musicparty.util.MessageFormatter;
 
@@ -34,6 +35,11 @@ public class WebSocketBroadcaster {
     @EventListener
     public void onQueueChanged(QueueUpdateEvent event) {
         messagingTemplate.convertAndSend("/topic/player/queue", event.getQueue());
+    }
+
+    @EventListener
+    public void onSeek(SeekEvent event) {
+        messagingTemplate.convertAndSend("/topic/player/seek", event.getPositionMs());
     }
 
     /**

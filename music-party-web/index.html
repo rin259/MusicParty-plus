@@ -1,6 +1,14 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
+    <script>
+      (() => {
+        const stored = localStorage.getItem('mp_theme');
+        const theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
     <meta charset="UTF-8" />
       <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />

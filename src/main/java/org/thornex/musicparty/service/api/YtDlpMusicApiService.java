@@ -1,0 +1,101 @@
+package org.thornex.musicparty.service.api;
+
+import org.thornex.musicparty.dto.Music;
+import org.thornex.musicparty.dto.PlayableMusic;
+import org.thornex.musicparty.dto.Playlist;
+import org.thornex.musicparty.dto.UserSearchResult;
+import org.thornex.musicparty.enums.CacheStatus;
+import org.thornex.musicparty.service.LocalCacheService;
+import org.thornex.musicparty.service.YtDlpResolver;
+import reactor.core.publisher.Mono;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+abstract class YtDlpMusicApiService implements IMusicApiService {
+    private final String platform;
+    private final LocalCacheService localCacheService;
+    protected final YtDlpResolver resolver;
+    private final int searchLimit;
+    private final Map<String, YtDlpResolver.TrackMetadata> metadataById = new ConcurrentHashMap<>();
+    private final Map<String, List<YtDlpResolver.TrackMetadata>> searchCache = new ConcurrentHashMap<>();
+
+    protected YtDlpMusicApiService(String platform, LocalCacheService localCacheService, YtDlpResolver resolver, int searchLimit) {
+        this.platform = platform;
+        this.localCacheService = localCacheService;
+        this.resolver = resolver;
+        this.searchLimit = searchLimit;
+    }
+
+    @Override public String getPlatformName() { return platform; }
+
+    @Override
+    public Mono<List<Music>> searchMusic(String keyword) {
+        return searchMusic(keyword, 0, searchLimit);
+    }
+
+    @Override
+    public Mono<List<Music>> searchMusic(String keyword, int offset, int limit) {
+        String cacheKey = keyword.toLowerCase();
+        List<YtDlpResolver.TrackMetadata> cached = searchCache.get(cacheKey);
+        if (cached != null) {
+            return Mono.just(paginate(cached, offset, limit));
+        }
+        return search(keyword, 10)
+                .doOnNext(tracks -> {
+                    tracks.forEach(track -> metadataById.put(track.id(), track));
+                    searchCache.put(cacheKey, tracks);
+                })
+                .map(tracks -> paginate(tracks, offset, limit));
+    }
+
+    private List<Music> paginate(List<YtDlpResolver.TrackMetadata> tracks, int offset, int limit) {
+        int from = Math.min(offset, tracks.size());
+        int to = Math.min(offset + limit, tracks.size());
+        return tracks.subList(from, to).stream().map(this::toMusic).toList();
+    }
+
+    @Override
+    public void prefetchMusic(String musicId) {
+        CacheStatus status = localCacheService.getStatus(cacheId(musicId));
+        if (status == CacheStatus.COMPLETED || status == CacheStatus.PENDING || status == CacheStatus.DOWNLOADING) return;
+
+        localCacheService.submitDownload(cacheId(musicId), getMetadata(musicId)
+                .map(metadata -> LocalCacheService.DownloadSource.ytDlp(metadata.sourceUrl())));
+    }
+
+    @Override
+    public Mono<PlayableMusic> getPlayableMusic(String musicId) {
+        return getMetadata(musicId).flatMap(metadata -> {
+            String localUrl = localCacheService.getLocalUrl(cacheId(musicId));
+            Mono<Void> validation = localUrl == null ? validateBeforeDownload(metadata) : Mono.empty();
+            return validation.then(Mono.fromSupplier(() -> {
+                if (localUrl == null) prefetchMusic(musicId);
+                return new PlayableMusic(metadata.id(), metadata.title(), List.of(metadata.artist()), metadata.durationMs(), platform,
+                        localUrl == null ? "PENDING_DOWNLOAD" : localUrl, metadata.thumbnail(), false);
+            }));
+        });
+    }
+
+    protected Mono<Void> validateBeforeDownload(YtDlpResolver.TrackMetadata metadata) { return Mono.empty(); }
+
+    @Override public Mono<List<Playlist>> getUserPlaylists(String userId) { return Mono.just(List.of()); }
+    @Override public Mono<List<Music>> getPlaylistMusics(String playlistId, int offset, int limit) { return Mono.just(List.of()); }
+    @Override public Mono<List<UserSearchResult>> searchUsers(String keyword) { return Mono.just(List.of()); }
+    @Override public Mono<String> getLyric(String musicId) { return Mono.just(""); }
+
+    private Mono<YtDlpResolver.TrackMetadata> getMetadata(String musicId) {
+        YtDlpResolver.TrackMetadata cached = metadataById.get(musicId);
+        return cached != null ? Mono.just(cached) : resolveMetadata(musicId).doOnNext(track -> metadataById.put(track.id(), track));
+    }
+
+    private Music toMusic(YtDlpResolver.TrackMetadata track) {
+        return new Music(track.id(), track.title(), List.of(track.artist()), track.durationMs(), platform, track.thumbnail());
+    }
+
+    private String cacheId(String musicId) { return platform + "_" + musicId; }
+
+    protected abstract Mono<List<YtDlpResolver.TrackMetadata>> search(String keyword, int limit);
+    protected abstract Mono<YtDlpResolver.TrackMetadata> resolveMetadata(String musicId);
+}

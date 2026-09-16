@@ -7,7 +7,7 @@
     <!-- 我们使用一个绝对定位的高亮框来框住目标元素 -->
     <div
         v-if="targetRect"
-        class="absolute border-2 border-accent shadow-[0_0_20px_rgba(var(--color-accent),0.5)] transition-all duration-300 ease-out pointer-events-none"
+        class="absolute border-2 border-accent shadow-[0_0_20px_rgba(var(--accent),0.5)] transition-all duration-300 ease-out pointer-events-none"
         :style="{
           top: targetRect.top - 4 + 'px',
           left: targetRect.left - 4 + 'px',

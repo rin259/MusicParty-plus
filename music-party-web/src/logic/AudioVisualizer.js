@@ -1,3 +1,24 @@
+export const sampleSpectrumFrequency = (spectrum, sampleRate, fftSize, frequency) => {
+    if (!spectrum.length) return 0;
+    const bin = frequency * fftSize / sampleRate;
+    const lower = Math.max(0, Math.min(spectrum.length - 1, Math.floor(bin)));
+    const upper = Math.min(spectrum.length - 1, lower + 1);
+    const mix = bin - Math.floor(bin);
+    return spectrum[lower] + (spectrum[upper] - spectrum[lower]) * mix;
+};
+
+export const logFrequencyPosition = (position, minFrequency = 45, maxFrequency = 16000) => (
+    minFrequency * Math.pow(maxFrequency / minFrequency, position)
+);
+
+export const advanceBassMass = (state, target) => {
+    const velocity = state.velocity + (target - state.displacement) * 0.12;
+    return {
+        displacement: state.displacement + velocity * 0.78,
+        velocity: velocity * 0.78
+    };
+};
+
 export class AudioVisualizer {
     constructor() {
         this.canvas = null;
@@ -17,6 +38,14 @@ export class AudioVisualizer {
 
         // 状态标记
         this.isPlaying = false;
+        this.spectrum = new Uint8Array(0);
+        this.sampleRate = 48000;
+        this.fftSize = 2048;
+        this.lowFrequencyBinCount = 1;
+        this.energy = 0;
+        this.bassEnergy = 0;
+        this.bassDisplacement = 0;
+        this.bassVelocity = 0;
 
         // 爆发控制变量
         this.speedMultiplier = 1.0;
@@ -24,8 +53,9 @@ export class AudioVisualizer {
         this.roughnessMultiplier = 1.0;
 
         // 配置参数 (Performance Optimized)
-        this.breatheBars = 60; // Reduced from 120
+        this.breatheBars = 60;
         this.breatheRadiusBase = 180;
+        this.barLevels = new Float32Array(this.breatheBars);
 
         // 圆环定义
         this.rings = [
@@ -63,6 +93,29 @@ export class AudioVisualizer {
      */
     setPlaying(isPlaying) {
         this.isPlaying = isPlaying;
+    }
+
+    setSpectrum(payload) {
+        this.spectrum = payload?.data || new Uint8Array(0);
+        if (!this.spectrum.length) return;
+        this.sampleRate = payload.sampleRate;
+        this.fftSize = payload.fftSize;
+        const binWidth = payload.sampleRate / payload.fftSize;
+        this.lowFrequencyBinCount = Math.max(1, Math.min(
+            this.spectrum.length,
+            Math.floor(80 / binWidth) + 1
+        ));
+        const total = this.spectrum.reduce((sum, value) => sum + value, 0) / this.spectrum.length / 255;
+        const bassBins = this.spectrum.slice(0, this.lowFrequencyBinCount);
+        const bass = bassBins.reduce((sum, value) => sum + value, 0) / bassBins.length / 255;
+        const energyRate = total < this.energy ? 0.48 : 0.24;
+        const bassRate = bass < this.bassEnergy ? 0.55 : 0.3;
+        this.energy += (total - this.energy) * energyRate;
+        this.bassEnergy += (bass - this.bassEnergy) * bassRate;
+    }
+
+    sampleFrequency(frequency) {
+        return sampleSpectrumFrequency(this.spectrum, this.sampleRate, this.fftSize, frequency);
     }
 
     /**
@@ -121,10 +174,34 @@ export class AudioVisualizer {
         this.smoothAlpha += (targetAlpha - this.smoothAlpha) * 0.03;
         this.smoothWidthScale += (targetWidthScale - this.smoothWidthScale) * 0.05;
 
+        // Low-frequency envelope is integrated as a damped moving mass,
+        // approximating a passive radiator near its tuning resonance.
+        const bassTarget = this.isPlaying ? this.bassEnergy : 0;
+        const mass = advanceBassMass({
+            displacement: this.bassDisplacement,
+            velocity: this.bassVelocity
+        }, bassTarget);
+        this.bassDisplacement = mass.displacement;
+        this.bassVelocity = mass.velocity;
+
         // 优化：透明度极低时不渲染复杂图形
         if (this.smoothAlpha < 0.01) return;
 
-        // --- 2. 绘制橙色流体圆环 ---
+        // --- 2. Energy field behind the cover ---
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        const glowRadius = 250 + this.energy * 35;
+        const glow = ctx.createRadialGradient(center, center, 120, center, center, glowRadius);
+        glow.addColorStop(0, `rgba(249, 115, 22, ${this.isPlaying ? 0.025 + this.energy * 0.07 : 0.01})`);
+        glow.addColorStop(0.55, `rgba(249, 115, 22, ${this.isPlaying ? this.energy * 0.035 : 0})`);
+        glow.addColorStop(1, 'rgba(249, 115, 22, 0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(center, center, glowRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // --- 3. 绘制橙色流体圆环 ---
         ctx.save();
         ctx.globalCompositeOperation = 'screen';
         ctx.shadowBlur = 50;
@@ -132,8 +209,11 @@ export class AudioVisualizer {
 
         this.rings.forEach((ring) => {
             ctx.beginPath();
-            const count = 120; // Reduced from 240
-            const currentMaxWidth = ring.maxWidth * this.smoothWidthScale * this.roughnessMultiplier;
+            const count = 120;
+            const excursion = Math.max(-0.08, this.bassDisplacement);
+            const beatScale = 1 + excursion * 0.72;
+            const currentMaxWidth = ring.maxWidth * this.smoothWidthScale * this.roughnessMultiplier * beatScale;
+            const radiusOffset = excursion * 18;
 
             // 外圈
             for (let i = 0; i <= count; i++) {
@@ -142,7 +222,7 @@ export class AudioVisualizer {
                 const normalizedWave = (wave + 1) / 2;
                 const currentWidth = ring.baseWidth + normalizedWave * currentMaxWidth;
 
-                const r = ring.radius + currentWidth / 2;
+                const r = ring.radius + radiusOffset + currentWidth / 2;
                 const x = center + Math.cos(angle) * r;
                 const y = center + Math.sin(angle) * r;
 
@@ -157,7 +237,7 @@ export class AudioVisualizer {
                 const normalizedWave = (wave + 1) / 2;
                 const currentWidth = ring.baseWidth + normalizedWave * currentMaxWidth;
 
-                const r = ring.radius - currentWidth / 2;
+                const r = ring.radius + radiusOffset - currentWidth / 2;
                 const x = center + Math.cos(angle) * r;
                 const y = center + Math.sin(angle) * r;
 
@@ -170,13 +250,21 @@ export class AudioVisualizer {
         });
         ctx.restore();
 
-        // --- 3. 绘制呼吸态频谱 (前景灰色) ---
+        // --- 4. Log-frequency spectrum with per-bar envelopes ---
         ctx.globalCompositeOperation = 'source-over';
         this.breatheOffset += 0.05;
 
         for (let i = 0; i < this.breatheBars; i++) {
             const angle = (Math.PI * 2 * i) / this.breatheBars;
-            const h = Math.sin(i * 0.5 + Date.now() / 500) * 5 + 5;
+            // Continuous vertical-coordinate mapping for exact left/right symmetry.
+            const spectrumPosition = (Math.sin(angle) + 1) / 2;
+            const frequency = logFrequencyPosition(spectrumPosition);
+            const bin = this.sampleFrequency(frequency);
+            const targetLevel = Math.pow(bin / 255, 0.72);
+            const response = targetLevel > this.barLevels[i] ? 0.46 : 0.16;
+            this.barLevels[i] += (targetLevel - this.barLevels[i]) * response;
+            const level = this.barLevels[i];
+            const h = this.isPlaying ? 5 + level * 58 : 4;
 
             const startX = center + Math.cos(angle) * (this.breatheRadiusBase + 10);
             const startY = center + Math.sin(angle) * (this.breatheRadiusBase + 10);
@@ -186,9 +274,11 @@ export class AudioVisualizer {
             ctx.beginPath();
             ctx.moveTo(startX, startY);
             ctx.lineTo(endX, endY);
-            ctx.strokeStyle = '#D1D5DB';
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = this.isPlaying ? `rgba(249, 115, 22, ${0.25 + level * 0.48})` : '#D1D5DB';
+            ctx.lineWidth = this.isPlaying ? 2.8 : 2;
             ctx.lineCap = 'round';
+            ctx.shadowColor = this.isPlaying ? `rgba(249, 115, 22, ${0.28 + level * 0.42})` : 'transparent';
+            ctx.shadowBlur = this.isPlaying ? 4 + level * 8 : 0;
             ctx.stroke();
         }
     }

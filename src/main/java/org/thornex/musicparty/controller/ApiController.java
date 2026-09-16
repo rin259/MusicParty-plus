@@ -5,6 +5,7 @@ import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.Music;
 import org.thornex.musicparty.dto.Playlist;
 import org.thornex.musicparty.dto.UserSearchResult;
+import org.thornex.musicparty.dto.AlbumSearchResult;
 import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.service.api.IMusicApiService;
 import reactor.core.publisher.Mono;
@@ -41,6 +42,12 @@ public class ApiController {
         if ("bilibili".equalsIgnoreCase(platform) && !appProperties.getBilibili().isEnabled()) {
             throw new ApiRequestException("Bilibili 源已被禁用");
         }
+        if ("soundcloud".equalsIgnoreCase(platform) && !appProperties.getSoundcloud().isEnabled()) {
+            throw new ApiRequestException("SoundCloud 源已被禁用");
+        }
+        if ("ytmusic".equalsIgnoreCase(platform) && !appProperties.getYtmusic().isEnabled()) {
+            throw new ApiRequestException("YouTube Music 源已被禁用");
+        }
 
         IMusicApiService service = apiServiceMap.get(platform);
         if (service == null) {
@@ -50,8 +57,10 @@ public class ApiController {
     }
 
     @GetMapping("/search/{platform}/{keyword}")
-    public Mono<List<Music>> searchMusic(@PathVariable String platform, @PathVariable String keyword) {
-        return getService(platform).searchMusic(keyword);
+    public Mono<List<Music>> searchMusic(@PathVariable String platform, @PathVariable String keyword,
+                                         @RequestParam(defaultValue = "0") int offset,
+                                         @RequestParam(defaultValue = "30") int limit) {
+        return getService(platform).searchMusic(keyword, offset, limit);
     }
 
     @GetMapping("/user/playlists/{platform}/{userId}")
@@ -72,8 +81,23 @@ public class ApiController {
         return getService(platform).searchUsers(keyword);
     }
 
+    @GetMapping("/user/search/{platform}")
+    public Mono<List<UserSearchResult>> searchUsersByQuery(@PathVariable String platform, @RequestParam String keyword) {
+        return getService(platform).searchUsers(keyword);
+    }
+
     @GetMapping("/music/lyric/{platform}/{musicId}")
     public Mono<String> getLyric(@PathVariable String platform, @PathVariable String musicId) {
         return getService(platform).getLyric(musicId);
+    }
+
+    @GetMapping("/search/albums/{platform}/{keyword}")
+    public Mono<List<AlbumSearchResult>> searchAlbums(@PathVariable String platform, @PathVariable String keyword) {
+        return getService(platform).searchAlbums(keyword);
+    }
+
+    @GetMapping("/album/songs/{platform}/{albumId}")
+    public Mono<List<Music>> getAlbumSongs(@PathVariable String platform, @PathVariable String albumId) {
+        return getService(platform).getAlbumMusics(albumId);
     }
 }

@@ -66,6 +66,15 @@
       </div>
     </div>
 
+    <!-- LAYER 2.5: live chat danmaku. It is visual-only and never blocks playback controls. -->
+    <div class="absolute inset-0 z-20 overflow-hidden pointer-events-none">
+      <TransitionGroup v-for="lane in [0, 1]" :key="lane" name="danmaku" tag="div" class="danmaku-lane" :class="lane === 0 ? 'left-[4%] md:left-[8%]' : 'right-[4%] md:right-[8%]'">
+        <div v-for="message in danmakuMessages.filter(item => item.lane === lane)" :key="message.instanceId" class="danmaku-item max-w-[38vw] md:max-w-[30vw] truncate rounded-full border border-white/50 bg-medical-900/75 px-3 py-1.5 text-xs text-white shadow-lg backdrop-blur-sm">
+          <span class="mr-1.5 text-accent font-bold">{{ userStore.resolveName(message.userId, message.userName) }}</span>{{ message.content }}
+        </div>
+      </TransitionGroup>
+    </div>
+
     <!-- LAYER 3: 核心实体层 (封面) -->
     <div class="relative z-30 flex items-center justify-center pointer-events-auto">
       <div class="relative">
@@ -82,7 +91,7 @@
             :class="[
                  // 仅保留暂停时的缩放/灰度
                  player.isPaused ? 'scale-95 grayscale' : 'scale-100',
-                 hasLiked ? 'cursor-default' : 'cursor-pointer'
+                  'cursor-pointer'
              ]"
             @mouseenter="!isMobile && (isHovering = true)"
             @mouseleave="!isMobile && (isHovering = false)"
@@ -104,17 +113,16 @@
               leave-to-class="opacity-0 scale-95"
           >
             <div
-                v-if="isBursting || (!hasLiked && (isHovering || mobileLikePending)) || hasLiked"
+                v-if="isBursting || isHovering || mobileLikePending"
                 class="absolute inset-0 z-40 flex items-center justify-center select-none"
                 :class="[
                     // 已点赞状态下，只显示极淡的角落标记，不遮挡封面
-                    hasLiked && !isBursting ? 'opacity-100' : '',
                     // 交互或爆发时，增加暗色扫描背景
-                    (isBursting || (!hasLiked && (isHovering || mobileLikePending))) ? 'bg-medical-900/40' : ''
+                    (isBursting || isHovering || mobileLikePending) ? 'bg-medical-900/40' : ''
                 ]"
             >
               <!-- 1. 动态网格背景 (仅在交互时显示) -->
-              <div v-if="!hasLiked || isHovering" class="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.1)_1px,transparent_1px)] bg-[size:20px_20px] opacity-20"></div>
+              <div class="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.1)_1px,transparent_1px)] bg-[size:20px_20px] opacity-20"></div>
 
               <!-- 2. 四角瞄准器 (HUD) -->
               <div class="absolute top-2 left-2 w-2 h-2 border-t border-l border-white/50 transition-all duration-300" :class="isBursting ? 'w-4 h-4 border-accent' : ''"></div>
@@ -134,27 +142,25 @@
                 <div
                     class="relative transition-all duration-300 transform z-10"
                     :class="[
-                      isBursting ? 'scale-125 text-accent drop-shadow-[0_0_15px_rgba(var(--color-accent),0.9)]' :
-                      hasLiked ? 'text-accent scale-100 drop-shadow-[0_0_5px_rgba(var(--color-accent),0.5)]' :
-                      'text-white/70 scale-100 group-hover:scale-110 group-hover:text-white'
+                      isBursting ? 'scale-125 text-accent drop-shadow-[0_0_15px_rgba(var(--accent),0.9)]' :
+                       'text-white/70 scale-100 group-hover:scale-110 group-hover:text-white'
                   ]"
                 >
                   <Activity
-                      v-if="!hasLiked && (isHovering || mobileLikePending) && !isBursting"
+                      v-if="(isHovering || mobileLikePending) && !isBursting"
                       class="w-10 h-10 animate-pulse"
                   />
 
-                  <Zap v-else class="w-10 h-10" :class="hasLiked || isBursting ? 'fill-current stroke-none' : ''" />
+                  <Zap v-else class="w-10 h-10" :class="isBursting ? 'fill-current stroke-none' : ''" />
                 </div>
 
 
                 <!-- 状态文字 -->
                 <div class="flex items-center gap-1 font-mono text-[9px] tracking-[0.2em] transition-colors duration-300"
-                     :class="isBursting || hasLiked ? 'text-accent' : 'text-white/70'"
+                     :class="isBursting ? 'text-accent' : 'text-white/70'"
                 >
                   <span v-if="isBursting">INJECTING...</span>
-                  <span v-else-if="hasLiked">WONDERFUL MUSIC</span>
-                  <span v-else>LIKE_THIS</span>
+                  <span v-else>REACT_TO_BEAT</span>
                 </div>
               </div>
             </div>
@@ -208,13 +214,29 @@ const hasLiked = computed(() => {
   return player.nowPlaying?.likedUserIds?.includes(userStore.userToken);
 });
 
+const danmakuMessages = ref([]);
+const danmakuTimers = new Set();
+let danmakuLane = 0;
+
+const enqueueDanmaku = (event) => {
+  const message = event.detail;
+  if (message?.type !== 'CHAT') return;
+
+  const instanceId = `${message.id}-${Date.now()}`;
+  danmakuMessages.value.push({ ...message, instanceId, lane: danmakuLane++ % 5 });
+  const timer = setTimeout(() => {
+    danmakuMessages.value = danmakuMessages.value.filter(item => item.instanceId !== instanceId);
+    danmakuTimers.delete(timer);
+  }, 7200);
+  danmakuTimers.add(timer);
+};
+
 
 // 特效冷却 (本地)
 const EFFECT_COOLDOWN = 1000;
 let lastEffectTime = 0;
 
 const handleCoverClick = () => {
-  if (hasLiked.value) return;
   if (isMobile.value) {
     if (!mobileLikePending.value) {
       // 第一次点击
@@ -308,6 +330,8 @@ onMounted(() => {
 
   // 2. 监听全局自定义事件
   useEventListener(window, 'player:like', () => triggerBurst());
+  useEventListener(window, 'music-party:spectrum', (event) => visualizer.setSpectrum(event.detail));
+  useEventListener(window, 'music-party:chat-message', enqueueDanmaku);
 
   // 3. 启动高频更新循环 (歌词进度 & 视觉同步)
   updateInterval = setInterval(() => {
@@ -390,5 +414,25 @@ onUnmounted(() => {
   visualizer.unmount();
   clearInterval(logInterval);
   clearInterval(updateInterval);
+  danmakuTimers.forEach(clearTimeout);
 });
 </script>
+
+<style scoped>
+.danmaku-lane {
+  position: absolute;
+  bottom: 12%;
+  display: flex;
+  max-height: 72%;
+  flex-direction: column-reverse;
+  align-items: flex-start;
+  gap: 10px;
+}
+.danmaku-item { animation: danmaku-life 7.2s linear both; }
+@keyframes danmaku-life {
+  0% { transform: translateY(22px); opacity: 0; }
+  10% { opacity: 1; }
+  78% { opacity: 1; }
+  100% { transform: translateY(-150px); opacity: 0; }
+}
+</style>

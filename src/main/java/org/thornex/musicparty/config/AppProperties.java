@@ -9,11 +9,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class AppProperties {
     private NeteaseApiConfig  netease;
     private BilibiliApiConfig bilibili;
+    private YtDlpSourceConfig soundcloud = new YtDlpSourceConfig();
+    private YtDlpSourceConfig ytmusic = new YtDlpSourceConfig();
     private String adminPassword;
     private String baseUrl;
     private String authorName = "ThorNex";
     private String backWords = "THORNEX";
     private String ffmpegPath = "ffmpeg"; // 默认使用环境变量中的 ffmpeg
+    private YtDlpConfig ytDlp = new YtDlpConfig();
 
     // 新增配置项
     private QueueConfig queue = new QueueConfig();
@@ -57,6 +60,20 @@ public class AppProperties {
         private int maxAttempts = 5;
         private int windowSeconds = 60;
         private int blockDurationSeconds = 300;
+    }
+
+    @Data
+    public static class YtDlpConfig {
+        private boolean enabled = true;
+        private String path = "yt-dlp";
+        private long timeoutSeconds = 45;
+        private long downloadTimeoutSeconds = 900;
+    }
+
+    @Data
+    public static class YtDlpSourceConfig {
+        private boolean enabled = true;
+        private int searchLimit = 30;
     }
 
     @Data

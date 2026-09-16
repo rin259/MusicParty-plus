@@ -71,10 +71,12 @@ public class MusicPlayerService {
     private final Set<String> skipVotes = ConcurrentHashMap.newKeySet();
 
     private final Map<String, Object> likeLock = new HashMap<>();
+    // Keep the unique-user list for presence UI, while preserving every reaction as a marker.
     private Set<String> currentLikedUserIds;
     private List<Long> currentLikeMarkers;
 
     private final AtomicLong lastControlTimestamp = new AtomicLong(0);
+    private final Map<String, Long> lastSeekTimestamps = new ConcurrentHashMap<>();
     private static final long GLOBAL_COOLDOWN_MS = 1000;
     private static final long IDLE_RESET_TIMEOUT_MS = Duration.ofHours(2).toMillis();
 
@@ -136,6 +138,21 @@ public class MusicPlayerService {
                     return;
                 }
 
+                if (playMode.get() == PlayMode.LIST_LOOP) {
+                        Music finishedMusic = new Music(
+                                music.id(),
+                                music.name(),
+                                music.artists(),
+                                music.duration(),
+                                music.platform(),
+                                music.coverUrl()
+                        );
+                        queueManager.addToHistory(finishedMusic);
+                        currentMusic.set(null);
+                        playNextInQueue();
+                        return;
+                    }
+
                 Music finishedMusic = new Music(
                         music.id(),
                         music.name(),
@@ -172,6 +189,13 @@ public class MusicPlayerService {
         MusicQueueItem nextItem = queueManager.pollNext(playMode.get(), isFairShuffle.get(), allowOfflineShuffle.get(), statusMap, onlineUserTokens);
 
         if (nextItem == null) {
+            if (playMode.get() == PlayMode.LIST_LOOP) {
+                queueManager.repopulateFromLoopList();
+                if (!queueManager.getQueueSnapshot().isEmpty()) {
+                    playNextInQueue();
+                    return;
+                }
+            }
             if (isLoading.get()) {
                 isLoading.set(false);
             }
@@ -308,6 +332,8 @@ public class MusicPlayerService {
                         appProperties.getChat().getMaxMessageLength(),
                         appProperties.getNetease().isEnabled(),
                         appProperties.getBilibili().isEnabled(),
+                        appProperties.getSoundcloud().isEnabled(),
+                        appProperties.getYtmusic().isEnabled(),
                         isVoteSkipEnabled.get(),
                         voteSkipThreshold.get(),
                         voteSkipWaitTime.get()
@@ -337,6 +363,7 @@ public class MusicPlayerService {
         log.info("Fair shuffle mode set to {} by {}", newState, getUserName(sessionId));
         broadcastFullPlayerState();
         broadcastQueueUpdate(); // 可能会影响前端展示
+        publishRuntimeConfigChanged();
     }
 
     public void toggleAllowOfflineShuffle(String sessionId) {
@@ -350,6 +377,7 @@ public class MusicPlayerService {
 
         log.info("Allow offline shuffle set to {} by {}", newState, getUserName(sessionId));
         broadcastFullPlayerState();
+        publishRuntimeConfigChanged();
     }
 
     public int clearOfflineSongs() {
@@ -384,6 +412,7 @@ public class MusicPlayerService {
             broadcastFullPlayerState();
             eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.WARN, PlayerAction.SYSTEM_MESSAGE, "SYSTEM",
                     locked ? "管理员锁定了" + desc : "管理员解锁了" + desc));
+            publishRuntimeConfigChanged();
         }
     }
 
@@ -394,20 +423,75 @@ public class MusicPlayerService {
         broadcastFullPlayerState();
         eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.WARN, PlayerAction.SYSTEM_MESSAGE, "SYSTEM",
                 locked ? "管理员锁定了所有控制" : "管理员解锁了所有控制"));
+        publishRuntimeConfigChanged();
     }
+
+    public RuntimeSettings getRuntimeSettings() {
+        return new RuntimeSettings(
+                playMode.get().name(),
+                isFairShuffle.get(),
+                allowOfflineShuffle.get(),
+                isPauseLocked.get(),
+                isSkipLocked.get(),
+                isPlayModeLocked.get(),
+                isVoteSkipEnabled.get(),
+                voteSkipThreshold.get(),
+                voteSkipWaitTime.get()
+        );
+    }
+
+    public void restoreRuntimeSettings(RuntimeSettings settings) {
+        if (settings == null) {
+            return;
+        }
+
+        if (settings.playMode() != null) {
+            try {
+                PlayMode restoredMode = PlayMode.valueOf(settings.playMode());
+                playMode.set(restoredMode);
+                isShuffle.set(restoredMode == PlayMode.SHUFFLE);
+            } catch (IllegalArgumentException e) {
+                log.warn("Ignoring unknown persisted play mode: {}", settings.playMode());
+            }
+        }
+        if (settings.fairShuffle() != null) isFairShuffle.set(settings.fairShuffle());
+        if (settings.allowOfflineShuffle() != null) allowOfflineShuffle.set(settings.allowOfflineShuffle());
+        if (settings.pauseLocked() != null) isPauseLocked.set(settings.pauseLocked());
+        if (settings.skipLocked() != null) isSkipLocked.set(settings.skipLocked());
+        if (settings.playModeLocked() != null) isPlayModeLocked.set(settings.playModeLocked());
+        if (settings.voteSkipEnabled() != null) {
+            isVoteSkipEnabled.set(settings.voteSkipEnabled());
+            appProperties.getPlayer().setVoteSkipEnabled(settings.voteSkipEnabled());
+        }
+        if (settings.voteSkipThreshold() != null) {
+            voteSkipThreshold.set(settings.voteSkipThreshold());
+            appProperties.getPlayer().setVoteSkipThreshold(settings.voteSkipThreshold());
+        }
+        if (settings.voteSkipWaitTime() != null) {
+            voteSkipWaitTime.set(settings.voteSkipWaitTime());
+            appProperties.getPlayer().setVoteSkipWaitTime(settings.voteSkipWaitTime());
+        }
+    }
+
+    public record RuntimeSettings(
+            String playMode,
+            Boolean fairShuffle,
+            Boolean allowOfflineShuffle,
+            Boolean pauseLocked,
+            Boolean skipLocked,
+            Boolean playModeLocked,
+            Boolean voteSkipEnabled,
+            Double voteSkipThreshold,
+            Integer voteSkipWaitTime
+    ) {}
 
     public void enqueue(EnqueueRequest request, String sessionId) {
         Optional<User> userOpt = userService.getUser(sessionId);
         if (userOpt.isEmpty()) return;
         User enqueuer = userOpt.get();
 
-        // Check platform enabled
-        if ("netease".equalsIgnoreCase(request.platform()) && !appProperties.getNetease().isEnabled()) {
-            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "添加失败: 网易云音乐源已被禁用"));
-            return;
-        }
-        if ("bilibili".equalsIgnoreCase(request.platform()) && !appProperties.getBilibili().isEnabled()) {
-            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "添加失败: Bilibili 源已被禁用"));
+        if (!isPlatformEnabled(request.platform())) {
+            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "添加失败: 此音乐源已被禁用"));
             return;
         }
 
@@ -426,14 +510,15 @@ public class MusicPlayerService {
                 .subscribe(playableMusic -> {
                             Music music = new Music(playableMusic.id(), playableMusic.name(), playableMusic.artists(), playableMusic.duration(), playableMusic.platform(), playableMusic.coverUrl());
 
-                            QueueItemStatus initialStatus = "bilibili".equals(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
-                            if ("bilibili".equals(request.platform())) {
+                            QueueItemStatus initialStatus = usesLocalCache(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
+                            if (usesLocalCache(request.platform())) {
                                 service.prefetchMusic(music.id());
                             }
 
                             MusicQueueItem newItem = queueManager.add(music, new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()), initialStatus);
 
                             if (newItem != null) {
+                                queueManager.addToLoopList(music);
                                 log.info("{} enqueued: {}", enqueuer.getName(), music.name());
                                 broadcastQueueUpdate();
                                 eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.SUCCESS, PlayerAction.ADD, enqueuer.getToken(), music.name()));
@@ -453,10 +538,7 @@ public class MusicPlayerService {
 
         String token = getUserToken(sessionId);
 
-        // 1. 检查去重 (单人单曲一次)
-        if (currentLikedUserIds.contains(token)) return;
-
-        // 2. 更新数据
+        // A listener may react to a track more than once. The marker list records each reaction.
         currentLikedUserIds.add(token);
 
         // 使用计算出的当前进度作为 Marker
@@ -477,13 +559,8 @@ public class MusicPlayerService {
         if (userOpt.isEmpty()) return;
         User enqueuer = userOpt.get();
 
-        // Check platform enabled
-        if ("netease".equalsIgnoreCase(request.platform()) && !appProperties.getNetease().isEnabled()) {
-            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "导入失败: 网易云音乐源已被禁用"));
-            return;
-        }
-        if ("bilibili".equalsIgnoreCase(request.platform()) && !appProperties.getBilibili().isEnabled()) {
-            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "导入失败: Bilibili 源已被禁用"));
+        if (!isPlatformEnabled(request.platform())) {
+            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "导入失败: 此音乐源已被禁用"));
             return;
         }
 
@@ -506,19 +583,67 @@ public class MusicPlayerService {
         service.getPlaylistMusics(request.playlistId(), 0, importLimit)
                 .subscribe(musics -> {
                     int count = 0;
-                    QueueItemStatus initialStatus = "bilibili".equals(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
+                    QueueItemStatus initialStatus = usesLocalCache(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
 
                     for (Music music : musics) {
-                        if ("bilibili".equals(request.platform())) {
+                        if (usesLocalCache(request.platform())) {
                             service.prefetchMusic(music.id());
                         }
                         MusicQueueItem newItem = queueManager.add(music, new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()), initialStatus);
                         if (newItem != null) {
+                            queueManager.addToLoopList(music);
                             count++;
                         }
                     }
 
                     log.info("{} enqueued {} songs from playlist", enqueuer.getName(), count);
+                    broadcastQueueUpdate();
+                    eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.SUCCESS, PlayerAction.IMPORT_PLAYLIST, enqueuer.getToken(), String.valueOf(count)));
+                });
+    }
+
+    public void enqueueAlbum(EnqueuePlaylistRequest request, String sessionId) {
+        Optional<User> userOpt = userService.getUser(sessionId);
+        if (userOpt.isEmpty()) return;
+        User enqueuer = userOpt.get();
+
+        if (!isPlatformEnabled(request.platform())) {
+            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "导入失败: 此音乐源已被禁用"));
+            return;
+        }
+
+        long currentCount = queueManager.getQueueSnapshot().stream()
+                .filter(item -> item.enqueuedBy().token().equals(enqueuer.getToken()))
+                .count();
+        int maxUserSongs = appProperties.getQueue().getMaxUserSongs();
+
+        if (currentCount >= maxUserSongs) {
+            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "导入失败: 您的点歌数量已达上限"));
+            return;
+        }
+
+        int remainingQuota = (int) (maxUserSongs - currentCount);
+        int importLimit = Math.min(appProperties.getPlayer().getMaxPlaylistImportSize(), remainingQuota);
+
+        IMusicApiService service = getApiService(request.platform());
+        service.getAlbumMusics(request.playlistId())
+                .subscribe(musics -> {
+                    int count = 0;
+                    QueueItemStatus initialStatus = usesLocalCache(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
+
+                    for (Music music : musics) {
+                        if (count >= importLimit) break;
+                        if (usesLocalCache(request.platform())) {
+                            service.prefetchMusic(music.id());
+                        }
+                        MusicQueueItem newItem = queueManager.add(music, new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()), initialStatus);
+                        if (newItem != null) {
+                            queueManager.addToLoopList(music);
+                            count++;
+                        }
+                    }
+
+                    log.info("{} enqueued {} songs from album", enqueuer.getName(), count);
                     broadcastQueueUpdate();
                     eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.SUCCESS, PlayerAction.IMPORT_PLAYLIST, enqueuer.getToken(), String.valueOf(count)));
                 });
@@ -549,6 +674,7 @@ public class MusicPlayerService {
     public void removeSongFromQueue(String queueId, String sessionId) {
         Optional<MusicQueueItem> removedItem = queueManager.remove(queueId);
         if (removedItem.isPresent()) {
+            queueManager.removeFromLoopList(removedItem.get().music().id());
             log.info("Removed song from queue by {}", getUserName(sessionId));
             broadcastQueueUpdate();
             eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.INFO, PlayerAction.REMOVE, getUserToken(sessionId), removedItem.get().music().name()));
@@ -696,6 +822,7 @@ public class MusicPlayerService {
         }
 
         broadcastFullPlayerState();
+        publishRuntimeConfigChanged();
     }
 
     public void togglePause(String sessionId) {
@@ -733,6 +860,31 @@ public class MusicPlayerService {
         eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.INFO, newState ? PlayerAction.PAUSE : PlayerAction.PLAY, getUserToken(sessionId), null));
     }
 
+    public synchronized void seekTo(long requestedPositionMs, String sessionId) {
+        PlayableMusic music = currentMusic.get();
+        if (music == null || isSeekRateLimited(sessionId)) return;
+
+        long position = clampSeekPosition(requestedPositionMs, music.duration());
+        positionAnchor.set(position);
+        timestampAnchor.set(System.currentTimeMillis());
+
+        log.info("Player seeked to {}ms by {}", position, getUserName(sessionId));
+        eventPublisher.publishEvent(new SeekEvent(this, position));
+        broadcastFullPlayerState();
+    }
+
+    static long clampSeekPosition(long requestedPositionMs, long durationMs) {
+        return Math.max(0, Math.min(requestedPositionMs, Math.max(0, durationMs)));
+    }
+
+    private boolean isSeekRateLimited(String sessionId) {
+        long now = System.currentTimeMillis();
+        long previous = lastSeekTimestamps.getOrDefault(sessionId, 0L);
+        if (now - previous < 250) return true;
+        lastSeekTimestamps.put(sessionId, now);
+        return false;
+    }
+
     public void cyclePlayMode(String sessionId) {
         if (isRateLimited(sessionId)) return;
         if (isPlayModeLocked.get() && !"SYSTEM".equals(sessionId)) return;
@@ -744,7 +896,8 @@ public class MusicPlayerService {
             next = switch (current) {
                 case SEQUENTIAL -> PlayMode.SHUFFLE;
                 case SHUFFLE -> PlayMode.REPEAT_ONE;
-                case REPEAT_ONE -> PlayMode.SEQUENTIAL;
+                case REPEAT_ONE -> PlayMode.LIST_LOOP;
+                case LIST_LOOP -> PlayMode.SEQUENTIAL;
             };
         } while (!playMode.compareAndSet(current, next));
 
@@ -759,9 +912,11 @@ public class MusicPlayerService {
             case SEQUENTIAL -> "顺序播放";
             case SHUFFLE -> "随机播放";
             case REPEAT_ONE -> "单曲循环";
+            case LIST_LOOP -> "列表循环";
         };
         eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.INFO,
                 PlayerAction.MODE_CHANGE, getUserToken(sessionId), modeName));
+        publishRuntimeConfigChanged();
     }
 
     public void resetSystem() {
@@ -780,6 +935,11 @@ public class MusicPlayerService {
         broadcastQueueUpdate();
         log.warn("System reset complete.");
         eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.WARN, PlayerAction.RESET, "SYSTEM", null));
+        publishRuntimeConfigChanged();
+    }
+
+    private void publishRuntimeConfigChanged() {
+        eventPublisher.publishEvent(new RuntimeConfigChangedEvent(this));
     }
 
     public void clearQueue() {
@@ -791,14 +951,33 @@ public class MusicPlayerService {
         eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.WARN, PlayerAction.SYSTEM_MESSAGE, "SYSTEM", "管理员已清空播放列表"));
     }
 
+    public void prefetchRestoredQueue() {
+        for (MusicQueueItem item : queueManager.getQueueSnapshot()) {
+            if (!usesLocalCache(item.music().platform())) {
+                continue;
+            }
+            try {
+                getApiService(item.music().platform()).prefetchMusic(item.music().id());
+            } catch (RuntimeException error) {
+                log.warn("Unable to prefetch restored {} track {}", item.music().platform(), item.music().id(), error);
+            }
+        }
+        broadcastQueueUpdate();
+    }
+
     @EventListener
     public void handleDownloadEvent(DownloadStatusEvent event) {
-        boolean existsInQueue = queueManager.getQueueSnapshot().stream()
-                .anyMatch(item -> item.music().id().equals(event.getMusicId()));
+        Optional<MusicQueueItem> queueItem = queueManager.getQueueSnapshot().stream()
+                .filter(item -> cacheIdFor(item.music()).equals(event.getMusicId()))
+                .findFirst();
 
-        if (existsInQueue) {
+        if (queueItem.isPresent()) {
             log.debug("Download status changed for {}, updating queue UI.", event.getMusicId());
             broadcastQueueUpdate();
+            if (localCacheService.getStatus(event.getMusicId()) == CacheStatus.FAILED) {
+                eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR,
+                        PlayerAction.ERROR_LOAD, "SYSTEM", queueItem.get().music().name()));
+            }
             if (currentMusic.get() == null) {
                 playNextInQueue();
             }
@@ -911,11 +1090,8 @@ public class MusicPlayerService {
 
     private List<MusicQueueItem> getQueueWithUpdatedStatus() {
         return queueManager.getQueueSnapshot().stream().map(item -> {
-            if ("netease".equals(item.music().platform())) {
-                return item.status() == QueueItemStatus.READY ? item : item.withStatus(QueueItemStatus.READY);
-            }
-            if ("bilibili".equals(item.music().platform())) {
-                CacheStatus cacheStatus = localCacheService.getStatus(item.music().id());
+            if (usesLocalCache(item.music().platform())) {
+                CacheStatus cacheStatus = localCacheService.getStatus(cacheIdFor(item.music()));
                 QueueItemStatus newStatus = mapCacheStatusToEnum(cacheStatus);
                 if (item.status() != newStatus) {
                     return item.withStatus(newStatus);
@@ -928,8 +1104,8 @@ public class MusicPlayerService {
     private Map<String, QueueItemStatus> buildStatusMap() {
         Map<String, QueueItemStatus> statusMap = new HashMap<>();
         for (MusicQueueItem item : queueManager.getQueueSnapshot()) {
-            if ("bilibili".equals(item.music().platform())) {
-                statusMap.put(item.music().id(), mapCacheStatusToEnum(localCacheService.getStatus(item.music().id())));
+            if (usesLocalCache(item.music().platform())) {
+                statusMap.put(item.music().id(), mapCacheStatusToEnum(localCacheService.getStatus(cacheIdFor(item.music()))));
             } else {
                 statusMap.put(item.music().id(), QueueItemStatus.READY);
             }
@@ -945,6 +1121,24 @@ public class MusicPlayerService {
             case FAILED -> QueueItemStatus.FAILED;
             default -> QueueItemStatus.PENDING;
         };
+    }
+
+    private boolean isPlatformEnabled(String platform) {
+        return switch (platform.toLowerCase(Locale.ROOT)) {
+            case "netease" -> appProperties.getNetease().isEnabled();
+            case "bilibili" -> appProperties.getBilibili().isEnabled();
+            case "soundcloud" -> appProperties.getSoundcloud().isEnabled();
+            case "ytmusic" -> appProperties.getYtmusic().isEnabled();
+            default -> false;
+        };
+    }
+
+    private boolean usesLocalCache(String platform) {
+        return "netease".equals(platform) || "bilibili".equals(platform) || "soundcloud".equals(platform) || "ytmusic".equals(platform);
+    }
+
+    private String cacheIdFor(Music music) {
+        return "bilibili".equals(music.platform()) ? music.id() : music.platform() + "_" + music.id();
     }
 
     /*private void resetPauseState() {

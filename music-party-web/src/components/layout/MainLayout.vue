@@ -1,7 +1,7 @@
 <!-- src/components/layout/MainLayout.vue -->
 <script setup>
 import { ref, onMounted } from 'vue';
-import { Search, Users, ListMusic, X, Minimize2, Maximize2, Volume2, Activity } from 'lucide-vue-next';
+import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun } from 'lucide-vue-next';
 import UserList from '../UserList.vue';
 import QueueList from '../QueueList.vue';
 import CoverImage from '../CoverImage.vue';
@@ -20,18 +20,22 @@ onMounted(() => {
 
 const mobileQueueOpen = ref(false);
 const mobileUserOpen = ref(false);
+const mobileMenuOpen = ref(false);
 
 const toggleMobileQueue = () => {
   mobileQueueOpen.value = !mobileQueueOpen.value;
   if(mobileQueueOpen.value) mobileUserOpen.value = false;
+  mobileMenuOpen.value = false;
 };
 
 const toggleMobileUser = () => {
   mobileUserOpen.value = !mobileUserOpen.value;
   if(mobileUserOpen.value) mobileQueueOpen.value = false;
+  mobileMenuOpen.value = false;
 };
 
 const handleSearchClick = () => {
+  mobileMenuOpen.value = false;
   emit('search');
 }
 </script>
@@ -39,46 +43,92 @@ const handleSearchClick = () => {
 <template>
   <div class="h-[100dvh] w-screen flex flex-col relative overflow-hidden bg-medical-50">
     <!-- 1. 顶部栏 Header -->
-    <header v-if="!uiStore.isLiteMode" class="h-14 bg-white border-b border-medical-200 flex justify-between items-center px-4 md:px-6 flex-shrink-0 relative z-50">
-      <div class="flex items-center gap-2 flex-shrink-0">
+    <header v-if="!uiStore.isLiteMode" class="h-14 bg-white border-b border-medical-200 flex justify-between items-center gap-3 px-3 md:px-6 flex-shrink-0 relative z-50">
+      <div class="flex min-w-0 items-center gap-2">
         <div class="w-2.5 h-2.5 md:w-3 md:h-3 bg-accent flex-shrink-0"></div>
-        <div class="flex items-baseline gap-1">
-          <a href="https://github.com/PluvIIter/MusicParty" target="_blank" class="font-black text-base md:text-xl tracking-tighter text-medical-900 whitespace-nowrap hover:text-accent transition-colors">MUSIC PARTY</a>
-          <span class="text-medical-300 font-mono font-normal text-[10px] md:text-xs whitespace-nowrap">by {{ uiStore.authorName }}</span>
+        <div class="min-w-0 flex items-baseline gap-1">
+          <span class="font-black text-sm md:text-xl tracking-tighter text-medical-900 whitespace-nowrap">MUSIC PARTY</span>
         </div>
       </div>
 
-      <div class="flex items-center gap-2 md:gap-4">
-        <!-- 移动端：显示人数按钮 -->
-        <button
-            id="tutorial-rename-mobile"
-            @click="toggleMobileUser"
-            class="md:hidden relative flex items-center justify-center w-9 h-9 bg-medical-50 border border-medical-200 text-medical-500 hover:text-medical-900 transition-colors overflow-hidden group rounded-sm transform-gpu"
-            :class="{ 'bg-medical-200 text-medical-900 border-medical-300': mobileUserOpen }"
-        >
-          <span
-              class="absolute inset-0 flex items-center justify-center font-black text-4xl leading-none text-accent/15 pointer-events-none z-0 select-none scale-110 font-mono"
-          >
-            {{ userStore.onlineUsers.length > 9 ? 'N' : userStore.onlineUsers.length }}
-          </span>
-          <Users class="w-5 h-5 relative z-10" />
-        </button>
-
+      <div class="hidden md:flex items-center gap-4">
         <!-- 精简模式按钮 -->
         <button
             @click="uiStore.toggleLiteMode"
-            class="flex items-center justify-center w-9 h-9 md:w-10 md:h-9 border border-medical-200 bg-medical-50 hover:bg-medical-100 text-medical-600 transition-all rounded-sm"
+            class="flex items-center justify-center w-10 h-9 border border-medical-200 bg-medical-50 hover:bg-medical-100 text-medical-600 transition-all rounded-sm"
             title="精简模式"
         >
           <Minimize2 class="w-4 h-4" />
         </button>
 
-        <!-- 搜索按钮 -->
-        <button id="tutorial-search" @click="handleSearchClick" class="flex items-center justify-center w-9 h-9 md:w-auto md:h-9 md:px-4 border border-accent bg-accent hover:bg-accent-hover font-bold text-sm text-white transition-all rounded-sm gap-2">
+        <button
+            @click="uiStore.toggleTheme"
+            class="flex items-center justify-center w-10 h-9 border border-medical-200 bg-medical-50 hover:bg-medical-100 text-medical-600 transition-all rounded-sm"
+            :title="uiStore.theme === 'dark' ? '切换浅色模式' : '切换深色模式'"
+            aria-label="切换深色模式"
+        >
+          <Sun v-if="uiStore.theme === 'dark'" class="w-4 h-4" />
+          <Moon v-else class="w-4 h-4" />
+        </button>
+
+        <button id="tutorial-search" @click="handleSearchClick" class="flex items-center justify-center h-9 px-4 border border-accent bg-accent hover:bg-accent-hover font-bold text-sm text-white transition-all rounded-sm gap-2">
           <Search class="w-4 h-4" />
-          <span class="hidden md:inline">SEARCH</span>
+          <span>添加歌曲</span>
         </button>
       </div>
+
+      <div class="flex md:hidden items-center gap-2 flex-shrink-0">
+        <button
+            @click="uiStore.toggleTheme"
+            class="flex items-center justify-center w-9 h-9 bg-medical-50 border border-medical-200 text-medical-600 transition-colors rounded-sm"
+            :title="uiStore.theme === 'dark' ? '切换浅色模式' : '切换深色模式'"
+            aria-label="切换深色模式"
+        >
+          <Sun v-if="uiStore.theme === 'dark'" class="w-4 h-4" />
+          <Moon v-else class="w-4 h-4" />
+        </button>
+        <button id="tutorial-search" @click="handleSearchClick" class="flex items-center justify-center w-9 h-9 border border-accent bg-accent hover:bg-accent-hover font-bold text-sm text-white transition-all rounded-sm">
+          <Search class="w-4 h-4" />
+        </button>
+        <button
+            @click="mobileMenuOpen = !mobileMenuOpen"
+            class="flex items-center justify-center w-9 h-9 bg-medical-50 border border-medical-200 text-medical-600 transition-colors rounded-sm"
+            :class="mobileMenuOpen ? 'bg-medical-200 text-medical-900 border-medical-300' : 'hover:bg-medical-100'"
+            :aria-expanded="mobileMenuOpen"
+            aria-label="打开菜单"
+        >
+          <X v-if="mobileMenuOpen" class="w-5 h-5" />
+          <Menu v-else class="w-5 h-5" />
+        </button>
+      </div>
+
+      <div v-if="mobileMenuOpen" class="md:hidden fixed inset-0 z-[90] bg-medical-900/35" @click="mobileMenuOpen = false"></div>
+      <Transition name="drawer">
+        <aside v-if="mobileMenuOpen" class="md:hidden fixed inset-y-0 right-0 z-[100] w-[min(18rem,calc(100vw-1rem))] bg-white border-l border-medical-200 shadow-2xl p-4 flex flex-col gap-3">
+          <div class="flex items-center justify-between border-b border-medical-100 pb-3">
+            <span class="font-mono text-xs font-bold text-medical-500">MENU</span>
+            <button @click="mobileMenuOpen = false" class="p-2 -m-2 text-medical-500 hover:text-medical-900" aria-label="关闭菜单"><X class="w-5 h-5" /></button>
+          </div>
+          <button id="tutorial-rename-mobile" @click="toggleMobileUser" class="w-full flex items-center justify-between p-3 border border-medical-200 bg-medical-50 text-medical-700">
+            <span class="flex items-center gap-2 text-sm font-bold"><Users class="w-4 h-4" /> 在线用户</span>
+            <span class="font-mono text-xs text-accent">{{ userStore.onlineUsers.length }}</span>
+          </button>
+          <button id="tutorial-queue-mobile" @click="toggleMobileQueue" class="w-full flex items-center justify-between p-3 border border-medical-200 bg-medical-50 text-medical-700">
+            <span class="flex items-center gap-2 text-sm font-bold"><ListMusic class="w-4 h-4" /> 播放队列</span>
+            <span class="font-mono text-xs text-accent">{{ playerStore.queue.length }}</span>
+          </button>
+          <div class="mt-auto grid grid-cols-2 gap-2 pt-4 border-t border-medical-100">
+            <button @click="uiStore.toggleTheme" class="flex items-center justify-center gap-2 p-3 border border-medical-200 text-medical-600">
+              <Sun v-if="uiStore.theme === 'dark'" class="w-4 h-4" /><Moon v-else class="w-4 h-4" />
+              <span class="text-xs font-bold">主题</span>
+            </button>
+            <button @click="uiStore.toggleLiteMode" class="flex items-center justify-center gap-2 p-3 border border-medical-200 text-medical-600">
+              <Minimize2 class="w-4 h-4" /><span class="text-xs font-bold">精简</span>
+            </button>
+          </div>
+        </aside>
+      </Transition>
+
     </header>
 
     <!-- 2. 主体内容区 -->
@@ -94,12 +144,6 @@ const handleSearchClick = () => {
       <aside class="w-80 bg-white border-l border-medical-200 hidden md:block overflow-hidden">
         <QueueList />
       </aside>
-
-      <div class="md:hidden absolute top-4 right-4 z-40">
-        <button id="tutorial-queue-mobile" @click="toggleMobileQueue" class="p-2 bg-white shadow border border-medical-200 rounded-sm">
-          <ListMusic class="w-5 h-5 text-medical-600"/>
-        </button>
-      </div>
 
       <Transition name="slide-fade">
         <div v-if="mobileQueueOpen" class="md:hidden absolute inset-0 bg-white z-30 pt-4 overflow-y-auto">
@@ -218,6 +262,8 @@ const handleSearchClick = () => {
 <style scoped>
 .slide-fade-enter-active, .slide-fade-leave-active { transition: all 0.3s ease; }
 .slide-fade-enter-from, .slide-fade-leave-to { transform: translateY(10px); opacity: 0; }
+.drawer-enter-active, .drawer-leave-active { transition: transform 0.25s ease, opacity 0.25s ease; }
+.drawer-enter-from, .drawer-leave-to { transform: translateX(100%); opacity: 0; }
 
 /* 自定义 Range 样式以匹配工业风 */
 input[type=range]::-webkit-slider-thumb {
@@ -225,18 +271,18 @@ input[type=range]::-webkit-slider-thumb {
   height: 14px;
   width: 6px;
   border-radius: 0;
-  background: #111827; /* medical-900 */
+  background: rgb(var(--surface-strong, 17 24 39));
   cursor: pointer;
-  border: 1px solid white;
+  border: 1px solid rgb(var(--medical-100));
   margin-top: -5px; /* 确保滑块在轨道中央 */
   box-shadow: 0 1px 2px rgba(0,0,0,0.2);
 }
 input[type=range]:hover::-webkit-slider-thumb {
-  background: #ff5722; /* accent */
+  background: rgb(var(--accent));
 }
 input[type=range]::-webkit-slider-runnable-track {
   width: 100%;
   height: 4px;
-  background: #e5e7eb;
+  background: rgb(var(--medical-200));
 }
 </style>

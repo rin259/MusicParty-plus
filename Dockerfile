@@ -43,17 +43,26 @@ RUN mvn clean package -DskipTests
 # ============================
 # Stage 3: Runtime Image
 # ============================
-FROM eclipse-temurin:21-jre-alpine
+# Reuse the official runtime image so Java and FFmpeg remain identical to the
+# upstream deployment. yt-dlp is shipped as a pinned standalone executable.
+FROM thornex/music-party:latest
 WORKDIR /app
 
-# 安装 FFmpeg
-RUN apk add --no-cache ffmpeg
+# FFmpeg remains available for the existing streaming path; yt-dlp owns the
+# SoundCloud and YouTube Music extraction and local download path.
+ARG YTDLP_VERSION=2026.08.19
+ADD https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_musllinux /usr/local/bin/yt-dlp
+RUN chmod 0755 /usr/local/bin/yt-dlp
 
 # 复制构建好的 JAR 包
 COPY --from=backend-builder /app/backend/target/*.jar app.jar
+
+# 入口脚本：启动时及运行期间定期自更新 yt-dlp
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # 暴露端口
 EXPOSE 8080
 
 # 启动命令
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["/entrypoint.sh"]

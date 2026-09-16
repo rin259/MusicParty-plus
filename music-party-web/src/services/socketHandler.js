@@ -104,6 +104,9 @@ export const createSocketSubscriptions = () => {
 
         // 3. 队列更新
         [WS_DEST.TOPIC_QUEUE]: (data) => { playerStore.queue = data; },
+        [WS_DEST.TOPIC_SEEK]: (positionMs) => {
+            window.dispatchEvent(new CustomEvent('music-party:seek', { detail: Number(positionMs) }));
+        },
 
         // 4. 事件通知 (Toast)
         [WS_DEST.TOPIC_EVENTS]: handleGameEvent,

@@ -14,9 +14,10 @@ export const usePlayerStore = defineStore('player', () => {
     const nowPlaying = ref(null);
     const queue = ref([]);
     const isPaused = ref(false);
-    const playMode = ref('SEQUENTIAL'); // 'SEQUENTIAL' | 'SHUFFLE' | 'REPEAT_ONE'
+    const playMode = ref('SEQUENTIAL'); // 'SEQUENTIAL' | 'SHUFFLE' | 'REPEAT_ONE' | 'LIST_LOOP'
     const isShuffle = computed(() => playMode.value === 'SHUFFLE');
     const isRepeatOne = computed(() => playMode.value === 'REPEAT_ONE');
+    const isListLoop = computed(() => playMode.value === 'LIST_LOOP');
     const isFairShuffle = ref(true);
     const allowOfflineShuffle = ref(false);
     const isPauseLocked = ref(false);
@@ -51,6 +52,8 @@ export const usePlayerStore = defineStore('player', () => {
         maxChatMessageLength: 200,
         neteaseEnabled: true,
         bilibiliEnabled: true,
+        soundcloudEnabled: true,
+        ytmusicEnabled: true,
         voteSkipEnabled: false,
         voteSkipThreshold: 0.5,
         voteSkipWaitTime: 15
@@ -153,10 +156,8 @@ export const usePlayerStore = defineStore('player', () => {
         socketService.connect(authHeaders, callbacks, subscriptions);
     };
 
-    const tryReconnect = () => {
-        if (!connected.value) {
-            socketService.forceReconnect();
-        }
+    const tryReconnect = (force = false) => {
+        return socketService.forceReconnect(force);
     };
 
     // --- 指令发送 ---
@@ -166,6 +167,7 @@ export const usePlayerStore = defineStore('player', () => {
 
     const enqueue = (platform, musicId) => requireAuth() && socketService.send(WS_DEST.ENQUEUE, { platform, musicId });
     const enqueuePlaylist = (platform, playlistId) => requireAuth() && socketService.send(WS_DEST.ENQUEUE_PLAYLIST, { platform, playlistId });
+    const enqueueAlbum = (platform, albumId) => requireAuth() && socketService.send(WS_DEST.ENQUEUE_ALBUM, { platform, playlistId: albumId });
     const topSong = (queueId) => requireAuth() && socketService.send(WS_DEST.QUEUE_TOP, { queueId });
     const removeSong = (queueId) => requireAuth() && socketService.send(WS_DEST.QUEUE_REMOVE, { queueId });
 
@@ -181,6 +183,10 @@ export const usePlayerStore = defineStore('player', () => {
 
     const sendLike = () => {
         if (requireAuth()) socketService.send(WS_DEST.PLAYER_LIKE);
+    };
+
+    const seekTo = (positionMs) => {
+        if (requireAuth()) socketService.send(WS_DEST.PLAYER_SEEK, { positionMs: Math.round(positionMs) });
     };
 
     const sendChatMessage = (content) => {
@@ -201,13 +207,13 @@ export const usePlayerStore = defineStore('player', () => {
     });
 
     return {
-        nowPlaying, queue, isPaused, playMode, isShuffle, isRepeatOne, isFairShuffle, allowOfflineShuffle, config,
+nowPlaying, queue, isPaused, playMode, isShuffle, isRepeatOne, isListLoop, isFairShuffle, allowOfflineShuffle, config,
         isPauseLocked, isSkipLocked, isPlayModeLocked, connected, isLoading, lyricText,
         localProgress, isBuffering, isErrorState, streamListenerCount, streamActive,
         isVoteSkipEnabled, voteSkipThreshold, voteSkipWaitTime, currentVotes, eligibleUsers,
-        connect, tryReconnect, getCurrentProgress, syncState, // 导出 syncState
+        connect, tryReconnect, getCurrentProgress, syncState,
         playNext, togglePause, cyclePlayMode,
-        enqueue, enqueuePlaylist, topSong, removeSong,
-        bindAccount, renameUser, sendChatMessage, sendLike
+        enqueue, enqueuePlaylist, enqueueAlbum, topSong, removeSong,
+        bindAccount, renameUser, sendChatMessage, sendLike, seekTo
     };
 });

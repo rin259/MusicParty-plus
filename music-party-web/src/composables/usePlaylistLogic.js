@@ -145,6 +145,20 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         }
     }, 200);
 
+    const loadRemainingSongs = async () => {
+        if (!currentPlaylistId.value || isLoadingMore.value || loadingRef.value) return;
+
+        isLoadingMore.value = true;
+        try {
+            while (hasMore.value) {
+                offset.value += limit.value;
+                await fetchSongsPage();
+            }
+        } finally {
+            isLoadingMore.value = false;
+        }
+    };
+
     // 监听平台切换 -> 刷新歌单列表
     watch([platformRef, bindings], () => {
         fetchPlaylists();
@@ -163,6 +177,7 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         searchUser,
         bindUser,
         loadPlaylist,
-        handleScroll
+        handleScroll,
+        loadRemainingSongs
     };
 }

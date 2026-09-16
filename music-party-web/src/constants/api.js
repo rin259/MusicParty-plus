@@ -7,8 +7,10 @@ export const WS_DEST = {
     PLAYER_PAUSE: '/app/control/toggle-pause',
     PLAYER_SHUFFLE: '/app/control/toggle-shuffle',
     PLAYER_LIKE: '/app/control/like',
+    PLAYER_SEEK: '/app/control/seek',
     ENQUEUE: '/app/enqueue',
     ENQUEUE_PLAYLIST: '/app/enqueue/playlist',
+    ENQUEUE_ALBUM: '/app/enqueue/album',
     QUEUE_TOP: '/app/queue/top',
     QUEUE_REMOVE: '/app/queue/remove',
     USER_BIND: '/app/user/bind',
@@ -21,6 +23,7 @@ export const WS_DEST = {
     TOPIC_QUEUE: '/topic/player/queue',
     TOPIC_USERS: '/topic/users/online',
     TOPIC_CHAT: '/topic/chat',
+    TOPIC_SEEK: '/topic/player/seek',
 
     // 个人频道
     USER_ME: '/app/user/me',

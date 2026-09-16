@@ -1,6 +1,8 @@
 package org.thornex.musicparty.service;
 
 import lombok.extern.slf4j.Slf4j;
+import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -26,16 +28,24 @@ public class UserService {
     private final Map<String, String> sessionToToken = new ConcurrentHashMap<>();
 
     private final ApplicationEventPublisher eventPublisher;
+    private final long leaveDelaySeconds;
 
     // 延迟任务调度器，用于处理断连抖动
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
     private final Map<String, ScheduledFuture<?>> pendingLeaveEvents = new ConcurrentHashMap<>();
 
     private static final long USER_EXPIRATION_MS = 1 * 60 * 60 * 1000L;
-    private static final long LEAVE_DELAY_SEC = 10; // 10秒延迟判定真正离开
+    // Mobile browsers may suspend WebSocket timers briefly when backgrounded.
+    private static final long LEAVE_DELAY_SEC = 45;
 
+    @Autowired
     public UserService(ApplicationEventPublisher eventPublisher) {
+        this(eventPublisher, LEAVE_DELAY_SEC);
+    }
+
+    UserService(ApplicationEventPublisher eventPublisher, long leaveDelaySeconds) {
         this.eventPublisher = eventPublisher;
+        this.leaveDelaySeconds = leaveDelaySeconds;
     }
 
     /**
@@ -103,16 +113,19 @@ public class UserService {
                 user.setLastActiveTime(System.currentTimeMillis());
                 log.info("User Offline (Pending Confirmation): {}", user.getName());
 
-                // 延迟发送离开日志
-                if (!user.isGuest()) {
-                    String userToken = user.getToken();
-                    ScheduledFuture<?> future = scheduler.schedule(() -> {
+                // Keep the user counted during the grace period, then confirm the leave.
+                String userToken = user.getToken();
+                ScheduledFuture<?> future = scheduler.schedule(() -> {
+                    if (user.getSessionId() == null) {
                         pendingLeaveEvents.remove(userToken);
                         log.info("User Leave Confirmed: {}", user.getName());
-                        eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.INFO, PlayerAction.USER_LEAVE, userToken, null));
-                    }, LEAVE_DELAY_SEC, TimeUnit.SECONDS);
-                    pendingLeaveEvents.put(userToken, future);
-                }
+                        if (!user.isGuest()) {
+                            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.INFO, PlayerAction.USER_LEAVE, userToken, null));
+                        }
+                        eventPublisher.publishEvent(new UserCountChangeEvent(this, getOnlineUserSummaries().size()));
+                    }
+                }, leaveDelaySeconds, TimeUnit.SECONDS);
+                pendingLeaveEvents.put(userToken, future);
 
                 eventPublisher.publishEvent(new UserCountChangeEvent(this, getOnlineUserSummaries().size()));
                 return Optional.of(user);
@@ -201,10 +214,15 @@ public class UserService {
 
     public List<UserSummary> getOnlineUserSummaries() {
         return usersByToken.values().stream()
-                // 只返回在线用户 (sessionId != null)
-                .filter(u -> u.getSessionId() != null)
+                // Keep a briefly disconnected user online until the reconnect grace period expires.
+                .filter(u -> u.getSessionId() != null || pendingLeaveEvents.containsKey(u.getToken()))
                 .map(user -> new UserSummary(user.getToken(), user.getSessionId(), user.getName(), user.isGuest()))
                 .toList();
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        scheduler.shutdownNow();
     }
 
     /**

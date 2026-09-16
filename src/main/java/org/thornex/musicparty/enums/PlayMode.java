@@ -6,5 +6,6 @@ package org.thornex.musicparty.enums;
 public enum PlayMode {
     SEQUENTIAL,   // 顺序播放
     SHUFFLE,      // 随机播放
-    REPEAT_ONE    // 单曲循环
+    REPEAT_ONE,   // 单曲循环
+    LIST_LOOP     // 列表循环
 }

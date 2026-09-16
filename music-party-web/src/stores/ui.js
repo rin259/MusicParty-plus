@@ -5,10 +5,12 @@ import { STORAGE_KEYS } from '../constants/keys';
 import client from '../api/client';
 
 export const useUiStore = defineStore('ui', () => {
-    const isLiteMode = ref(false);
+    const isLiteMode = ref(localStorage.getItem(STORAGE_KEYS.LITE_MODE) === 'true');
     const volume = ref(parseFloat(localStorage.getItem(STORAGE_KEYS.VOLUME) || '0.5'));
     const autoLiteMode = ref(localStorage.getItem('mp_auto_lite_mode') !== 'false'); // 默认 true
     const keepAliveEnabled = ref(localStorage.getItem(STORAGE_KEYS.KEEP_ALIVE) === 'true');
+    const storedTheme = localStorage.getItem(STORAGE_KEYS.THEME);
+    const theme = ref(storedTheme || (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
 
     const authorName = ref('ThorNex');
     const backWords = ref('THORNEX');
@@ -25,6 +27,19 @@ export const useUiStore = defineStore('ui', () => {
         keepAliveEnabled.value = !keepAliveEnabled.value;
         localStorage.setItem(STORAGE_KEYS.KEEP_ALIVE, keepAliveEnabled.value.toString());
     };
+
+    const applyTheme = (nextTheme) => {
+        theme.value = nextTheme === 'dark' ? 'dark' : 'light';
+        document.documentElement.classList.add('theme-transition');
+        document.documentElement.classList.toggle('dark', theme.value === 'dark');
+        document.documentElement.dataset.theme = theme.value;
+        localStorage.setItem(STORAGE_KEYS.THEME, theme.value);
+        window.setTimeout(() => document.documentElement.classList.remove('theme-transition'), 420);
+    };
+
+    const toggleTheme = () => applyTheme(theme.value === 'dark' ? 'light' : 'dark');
+
+    applyTheme(theme.value);
 
     const fetchConfig = async () => {
         try {
@@ -45,6 +60,10 @@ export const useUiStore = defineStore('ui', () => {
         localStorage.setItem('mp_auto_lite_mode', newVal.toString());
     });
 
+    watch(isLiteMode, (newVal) => {
+        localStorage.setItem(STORAGE_KEYS.LITE_MODE, newVal.toString());
+    });
+
     return {
         isLiteMode,
         toggleLiteMode,
@@ -53,6 +72,9 @@ export const useUiStore = defineStore('ui', () => {
         autoLiteMode,
         keepAliveEnabled,
         toggleKeepAlive,
+        theme,
+        applyTheme,
+        toggleTheme,
         authorName,
         backWords,
         fetchConfig

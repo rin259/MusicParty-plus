@@ -26,7 +26,7 @@
                 v-model="password"
                 type="password"
                 placeholder="ENTER ADMIN PASSWORD"
-                class="w-full bg-medical-50 border border-medical-200 px-3 py-2 text-sm outline-none focus:border-accent font-sans transition-colors"
+                class="w-full bg-medical-50 border border-medical-200 px-3 py-2 text-sm outline-none focus:border-accent font-sans transition-colors text-medical-900 placeholder:text-medical-400"
                 @keyup.enter="handleVerify"
             />
           </div>

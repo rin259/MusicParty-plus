@@ -63,23 +63,20 @@
       </div>
     </div>
 
-    <!-- Normal Mode: Virtual List -->
-    <div v-else v-bind="containerProps" class="flex-1 overflow-y-auto p-2">
-      <div v-bind="wrapperProps">
-        <QueueItem
-            v-for="{ data: item, index } in list"
-            :key="item.queueId"
-            :item="item"
-            :index="index"
-        />
-      </div>
+    <!-- Normal Mode: Fixed-height native list avoids virtual-scroll range churn on queue sync. -->
+    <div v-else class="flex-1 min-h-0 overflow-y-auto p-2">
+      <QueueItem
+          v-for="(item, index) in queue"
+          :key="item.queueId"
+          :item="item"
+          :index="index"
+      />
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue';
-import { useVirtualList } from '@vueuse/core';
 import { usePlayerStore } from '../stores/player';
 import { Shuffle, ChevronDown, ChevronRight, User } from 'lucide-vue-next';
 import { useUserStore } from '../stores/user';
@@ -88,12 +85,6 @@ import QueueItem from './QueueItem.vue';
 const player = usePlayerStore();
 const queue = computed(() => player.queue);
 const userStore = useUserStore();
-
-// Virtual List Setup (used for normal mode)
-const { list, containerProps, wrapperProps } = useVirtualList(queue, {
-  itemHeight: 64,
-  overscan: 10,
-});
 
 // --- Shuffle Mode Logic ---
 

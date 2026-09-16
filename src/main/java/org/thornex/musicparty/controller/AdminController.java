@@ -7,6 +7,7 @@ import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.*;
 import org.thornex.musicparty.service.ChatService;
 import org.thornex.musicparty.service.MusicPlayerService;
+import org.thornex.musicparty.service.RuntimeConfigService;
 import org.thornex.musicparty.service.api.BilibiliMusicApiService;
 import org.thornex.musicparty.service.api.NeteaseMusicApiService;
 import org.thornex.musicparty.service.stream.LiveStreamService;
@@ -24,8 +25,9 @@ public class AdminController {
     private final NeteaseMusicApiService neteaseMusicApiService;
     private final BilibiliMusicApiService bilibiliMusicApiService;
     private final LiveStreamService liveStreamService;
+    private final RuntimeConfigService runtimeConfigService;
 
-    public AdminController(MusicPlayerService musicPlayerService, ChatService chatService, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService) {
+    public AdminController(MusicPlayerService musicPlayerService, ChatService chatService, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService, RuntimeConfigService runtimeConfigService) {
         this.musicPlayerService = musicPlayerService;
         this.chatService = chatService;
         this.adminPassword = appProperties.getAdminPassword();
@@ -33,6 +35,7 @@ public class AdminController {
         this.neteaseMusicApiService = neteaseMusicApiService;
         this.bilibiliMusicApiService = bilibiliMusicApiService;
         this.liveStreamService = liveStreamService;
+        this.runtimeConfigService = runtimeConfigService;
     }
 
     private boolean isValid(String password) {
@@ -141,9 +144,11 @@ public class AdminController {
 
         if ("netease".equalsIgnoreCase(request.platform())) {
             neteaseMusicApiService.updateCookie(request.value());
+            runtimeConfigService.save();
             return ResponseEntity.ok(Map.of("message", "网易云音乐凭据已更新"));
         } else if ("bilibili".equalsIgnoreCase(request.platform())) {
             bilibiliMusicApiService.updateSessdata(request.value());
+            runtimeConfigService.save();
             return ResponseEntity.ok(Map.of("message", "Bilibili SessData 已更新"));
         } else {
             return ResponseEntity.badRequest().build();
@@ -155,6 +160,7 @@ public class AdminController {
         if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
 
         liveStreamService.setEnabled(request.enabled());
+        runtimeConfigService.save();
         musicPlayerService.broadcastFullPlayerState();
         return ResponseEntity.ok(Map.of("message", request.enabled() ? "直播流同步服务已启动" : "直播流同步服务已停止"));
     }

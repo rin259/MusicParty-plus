@@ -12,6 +12,7 @@ import org.thornex.musicparty.dto.UserSearchResult;
 import org.thornex.musicparty.enums.CacheStatus;
 import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.service.LocalCacheService;
+import org.thornex.musicparty.service.YtDlpResolver;
 import org.thornex.musicparty.util.BilibiliApiUtils;
 import reactor.core.publisher.Mono;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -30,17 +31,19 @@ public class BilibiliMusicApiService implements IMusicApiService {
     private final LocalCacheService localCacheService;
     private static final String PLATFORM = "bilibili";
     private final BilibiliWbiService wbiService;
+    private final YtDlpResolver ytDlpResolver;
 
     private static class WbiSignatureException extends RuntimeException {
         public WbiSignatureException(String message) { super(message); }
     }
 
-    public BilibiliMusicApiService(WebClient webClient, AppProperties appProperties, LocalCacheService localCacheService, BilibiliWbiService wbiService) {
+    public BilibiliMusicApiService(WebClient webClient, AppProperties appProperties, LocalCacheService localCacheService, BilibiliWbiService wbiService, YtDlpResolver ytDlpResolver) {
         this.webClient = webClient;
         this.baseUrl = appProperties.getBilibili().getBaseUrl();
         this.sessdata = appProperties.getBilibili().getSessdata();
         this.localCacheService = localCacheService;
         this.wbiService = wbiService;
+        this.ytDlpResolver = ytDlpResolver;
     }
 
     private void ensureConfigured() {
@@ -53,6 +56,10 @@ public class BilibiliMusicApiService implements IMusicApiService {
         this.sessdata = newSessdata;
         this.wbiService.updateSessdata(newSessdata);
         log.info("Bilibili API Service SESSDATA updated.");
+    }
+
+    public String getSessdata() {
+        return sessdata;
     }
 
     @Override
@@ -68,13 +75,18 @@ public class BilibiliMusicApiService implements IMusicApiService {
 
     @Override
     public Mono<List<Music>> searchMusic(String keyword) {
+        return searchMusic(keyword, 0, 20);
+    }
+
+    @Override
+    public Mono<List<Music>> searchMusic(String keyword, int offset, int limit) {
         ensureConfigured();
-        // 1. 准备请求参数（严格按照文档要求的 type 搜索）
+        int page = (offset / Math.max(limit, 1)) + 1;
         Map<String, String> params = new HashMap<>();
         params.put("search_type", "video");
         params.put("keyword", keyword);
-        params.put("page", "1");      // 默认第一页
-        params.put("page_size", "20"); // 文档默认 20
+        params.put("page", String.valueOf(page));
+        params.put("page_size", String.valueOf(Math.min(limit, 50)));
 
         // 2. 调用 WBI 签名服务
         Mono<List<Music>> requestMono = wbiService.signParams(params)
@@ -162,14 +174,18 @@ public class BilibiliMusicApiService implements IMusicApiService {
         ensureConfigured();
         // 检查缓存状态，如果已经下载或正在下载，直接返回
         CacheStatus status = localCacheService.getStatus(bvid);
-        if (status == CacheStatus.COMPLETED || status == CacheStatus.DOWNLOADING) {
+        if (status == CacheStatus.COMPLETED || status == CacheStatus.PENDING || status == CacheStatus.DOWNLOADING) {
             return;
         }
 
         log.info("Prefetching Bilibili music: {}", bvid);
 
         // 复用之前的解析逻辑，获取 DASH 音频流地址
-        Mono<String> urlProvider = resolveDashAudioUrl(bvid);
+        Mono<String> urlProvider = resolveDashAudioUrl(bvid)
+                .onErrorResume(error -> {
+                    log.warn("Bilibili API audio resolution failed for {} ({}), trying yt-dlp", bvid, error.getMessage());
+                    return ytDlpResolver.resolveBilibiliAudioUrl(bvid, sessdata);
+                });
 
         // 准备请求头 (防盗链)
         Map<String, String> headers = new HashMap<>();

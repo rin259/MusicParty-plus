@@ -34,6 +34,8 @@ public record PlayerState(
             int maxChatMessageLength,
             boolean neteaseEnabled,
             boolean bilibiliEnabled,
+            boolean soundcloudEnabled,
+            boolean ytmusicEnabled,
             boolean voteSkipEnabled,
             double voteSkipThreshold,
             int voteSkipWaitTime

@@ -3,9 +3,11 @@
 package org.thornex.musicparty.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.thornex.musicparty.config.AppProperties;
+import org.thornex.musicparty.event.RuntimeConfigChangedEvent;
 
 import java.time.Instant;
 import java.util.Map;
@@ -23,6 +25,7 @@ public class AuthController {
     private final AtomicReference<String> roomPassword = new AtomicReference<>(null);
     private final String adminPassword;
     private final AppProperties.AuthConfig authConfig;
+    private final ApplicationEventPublisher eventPublisher;
 
     // IP限流记录
     private final ConcurrentHashMap<String, FailedAttempt> ipAttempts = new ConcurrentHashMap<>();
@@ -38,14 +41,16 @@ public class AuthController {
         }
     }
 
-    public AuthController(AppProperties appProperties) {
+    public AuthController(AppProperties appProperties, ApplicationEventPublisher eventPublisher) {
         // 从配置中获取管理员密码
         this.adminPassword = appProperties.getAdminPassword();
         this.authConfig = appProperties.getAuth();
+        this.eventPublisher = eventPublisher;
     }
 
     public void resetRoomPassword() {
         roomPassword.set(null); // 恢复到未初始化状态
+        publishRuntimeConfigChanged();
     }
 
     // 🟢 新增：管理员强制设置密码
@@ -53,6 +58,11 @@ public class AuthController {
         // 无论当前状态如何，强制覆写
         // 如果传入 null，视为 "" (无密码)
         roomPassword.set(newPassword == null ? "" : newPassword);
+        publishRuntimeConfigChanged();
+    }
+
+    public void restoreRoomPassword(boolean initialized, String password) {
+        roomPassword.set(initialized ? (password == null ? "" : password) : null);
     }
 
     /**
@@ -89,6 +99,7 @@ public class AuthController {
 
         // 保存（可能是空字符串）
         roomPassword.set(newPassword);
+        publishRuntimeConfigChanged();
         return ResponseEntity.ok(Map.of("message", "Password set successfully"));
     }
 
@@ -188,5 +199,9 @@ public class AuthController {
 
     public String getRawPassword() {
         return roomPassword.get();
+    }
+
+    private void publishRuntimeConfigChanged() {
+        eventPublisher.publishEvent(new RuntimeConfigChangedEvent(this));
     }
 }

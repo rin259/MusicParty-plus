@@ -20,7 +20,7 @@
 
         <!-- 失败状态 -->
         <div v-else-if="item.status === 'FAILED'" class="text-xs font-mono font-bold text-red-500">
-          DOWNLOAD FAILED
+          SOURCE UNAVAILABLE
         </div>
         <div class="text-[10px] text-medical-300 bg-medical-50 px-1 border border-medical-100">
           {{ userStore.resolveName(item.enqueuedBy.token, item.enqueuedBy.name) }}

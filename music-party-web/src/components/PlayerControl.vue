@@ -1,10 +1,10 @@
 <template>
-  <div class="h-24 bg-white border-t border-medical-200 flex items-center px-4 md:px-8 relative z-50 shadow-lg">
+  <div class="min-h-24 md:h-24 bg-white border-t border-medical-200 flex items-center px-3 md:px-8 py-2 md:py-0 relative z-50 shadow-lg">
     <!-- 封面 -->
     <div
         id="tutorial-source"
         @click="openSourcePage"
-        class="w-16 h-16 md:w-20 md:h-20 -mt-6 md:mt-0 shadow-lg border-2 border-white chamfer-br flex-shrink-0 relative z-10 bg-medical-800 cursor-pointer group overflow-hidden"
+        class="w-14 h-14 md:w-20 md:h-20 mt-0 shadow-lg border-2 border-white chamfer-br flex-shrink-0 relative z-10 bg-medical-800 cursor-pointer group overflow-hidden"
         title="Open Source Page"
     >
       <CoverImage :src="nowPlaying?.music.coverUrl" class="w-full h-full transition-transform duration-300 group-hover:scale-110 group-hover:opacity-50" />
@@ -16,7 +16,7 @@
     </div>
 
     <!-- 中间：信息与进度 -->
-    <div class="flex-1 ml-4 mr-4 md:mr-8 flex flex-col justify-center min-w-0">
+    <div class="flex-1 ml-3 mr-0 md:mr-8 flex flex-col justify-center min-w-0">
       <div class="flex justify-between items-end mb-1">
         <div class="overflow-hidden w-full">
           <!-- 标题显示逻辑与样式 -->
@@ -46,21 +46,37 @@
         <div class="hidden md:block font-mono text-xs text-medical-800/60 flex-shrink-0 ml-2">
            <span v-if="player.isLoading" class="text-accent animate-pulse">SYNCING SERVER...</span>
            <span v-if="player.isBuffering" class="animate-pulse text-accent">BUFFERING...</span>
-           <span v-else>{{ formatDuration(player.localProgress) }} / {{ formatDuration(nowPlaying?.music.duration || 0) }}</span>
+           <span v-else>{{ formatDuration(displayProgress) }} / {{ formatDuration(nowPlaying?.music.duration || 0) }}</span>
         </div>
       </div>
 
       <!-- 进度条 -->
-      <div class="h-1 bg-medical-200 w-full relative">
+      <div
+          ref="progressTrackRef"
+          class="group/progress h-5 w-full relative flex items-center cursor-pointer touch-none select-none"
+          role="slider"
+          aria-label="播放进度"
+          :aria-valuemin="0"
+          :aria-valuemax="nowPlaying?.music.duration || 0"
+          :aria-valuenow="Math.round(displayProgress)"
+          tabindex="0"
+          @pointerdown="startSeek"
+          @pointermove="moveSeek"
+          @pointerup="commitSeek"
+          @pointercancel="cancelSeek"
+          @keydown.left.prevent="seekByKeyboard(-5000)"
+          @keydown.right.prevent="seekByKeyboard(5000)"
+      >
+        <div class="h-1.5 bg-medical-200 w-full relative overflow-visible">
 
         <div
             v-for="(marker, index) in likeMarkers"
             :key="index"
-            class="absolute z-20 transition-all duration-300 transform -translate-y-1/2 top-1/2"
+            class="absolute z-20 transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 top-1/2"
             :style="{ left: (marker / (nowPlaying?.music.duration || 1)) * 100 + '%' }"
         >
           <Zap
-              class="w-3 h-3 drop-shadow-md "
+              class="w-3 h-3 drop-shadow-md animate-[pulse_1.5s_ease-in-out_infinite]"
               :class="'text-accent fill-accent'"
           />
         </div>
@@ -72,13 +88,18 @@
         >
           <div
               v-if="!player.isErrorState"
-              class="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 rotate-45 transition-all duration-300 bg-accent"
+              class="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 rotate-45 transition-all duration-150 bg-accent group-hover/progress:scale-150"
+              :class="isSeeking ? 'scale-150 shadow-[0_0_8px_rgba(249,115,22,0.65)]' : ''"
           ></div>
+        </div>
+        <div v-if="isSeeking" class="absolute bottom-full mb-1 -translate-x-1/2 rounded-sm bg-medical-900 px-2 py-1 font-mono text-[10px] text-white shadow-lg" :style="{ left: progressPercent + '%' }">
+          {{ formatDuration(seekPreview) }}
+        </div>
         </div>
       </div>
       
       <!-- 移动端简易控制 -->
-      <div class="flex md:hidden justify-end gap-3 mt-2">
+      <div class="flex md:hidden justify-end gap-2 mt-2 flex-wrap">
         <button id="tutorial-download-mobile" @click="downloadCurrentMusic" class="p-2 bg-medical-50 border border-medical-200 rounded-sm text-medical-500 active:bg-medical-200">
           <Download class="w-4 h-4" />
         </button>
@@ -90,7 +111,8 @@
         >
           <ListOrdered v-if="player.playMode === 'SEQUENTIAL'" class="w-4 h-4" />
           <Shuffle v-else-if="player.playMode === 'SHUFFLE'" class="w-4 h-4" />
-          <Repeat1 v-else class="w-4 h-4" />
+          <Repeat1 v-else-if="player.playMode === 'REPEAT_ONE'" class="w-4 h-4" />
+          <Repeat v-else class="w-4 h-4" />
         </button>
          <button id="tutorial-pause-mobile" @click="player.togglePause" :disabled="player.isPauseLocked && !player.isPaused" class="p-2 bg-medical-100 rounded-sm disabled:opacity-50">
              <Lock v-if="player.isPauseLocked && !player.isPaused" class="w-4 h-4 text-medical-400" />
@@ -126,7 +148,8 @@
         <button id="tutorial-random" @click="player.cyclePlayMode" :disabled="player.isPlayModeLocked" :class="['text-medical-400', player.isPlayModeLocked ? 'opacity-50 cursor-not-allowed' : '']" :title="modeTitle">
             <ListOrdered v-if="player.playMode === 'SEQUENTIAL'" class="w-5 h-5" />
             <Shuffle v-else-if="player.playMode === 'SHUFFLE'" class="w-5 h-5" />
-            <Repeat1 v-else class="w-5 h-5" />
+            <Repeat1 v-else-if="player.playMode === 'REPEAT_ONE'" class="w-5 h-5" />
+            <Repeat v-else class="w-5 h-5" />
         </button>
         
         <button 
@@ -201,13 +224,17 @@ import { usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
 import { useUserStore } from '../stores/user';
 import { formatDuration } from '../utils/format';
-import { Download, ListOrdered, Repeat1, Shuffle, SkipForward, Play, Pause, Volume2, Volume1, VolumeX, ExternalLink, Zap, Lock } from 'lucide-vue-next';
+import { Download, ListOrdered, Repeat1, Repeat, Shuffle, SkipForward, Play, Pause, Volume2, Volume1, VolumeX, ExternalLink, Zap, Lock } from 'lucide-vue-next';
 import CoverImage from './CoverImage.vue';
 import { useToast } from '../composables/useToast';
+import { positionFromPointer } from '../logic/audioSync';
 
 const player = usePlayerStore();
 const ui = useUiStore();
 const volumeTrackRef = ref(null);
+const progressTrackRef = ref(null);
+const isSeeking = ref(false);
+const seekPreview = ref(0);
 const { info, error } = useToast();
 
 const nowPlaying = computed(() => player.nowPlaying);
@@ -218,6 +245,7 @@ const modeTitle = computed(() => {
         case 'SEQUENTIAL': return '顺序播放';
         case 'SHUFFLE': return '随机播放';
         case 'REPEAT_ONE': return '单曲循环';
+        case 'LIST_LOOP': return '列表循环';
         default: return '';
     }
 });
@@ -259,8 +287,44 @@ const skipBtnTitle = computed(() => {
 // 计算进度百分比
 const progressPercent = computed(() => {
   if (!nowPlaying.value || nowPlaying.value.music.duration === 0) return 0;
-  return Math.min(100, (player.localProgress / nowPlaying.value.music.duration) * 100);
+  return Math.min(100, (displayProgress.value / nowPlaying.value.music.duration) * 100);
 });
+
+const displayProgress = computed(() => isSeeking.value ? seekPreview.value : player.localProgress);
+
+const updateSeekPreview = (event) => {
+  if (!progressTrackRef.value || !nowPlaying.value) return;
+  const rect = progressTrackRef.value.getBoundingClientRect();
+  seekPreview.value = positionFromPointer(event.clientX, rect.left, rect.width, nowPlaying.value.music.duration);
+};
+
+const startSeek = (event) => {
+  if (!nowPlaying.value || !player.connected) return;
+  isSeeking.value = true;
+  progressTrackRef.value?.setPointerCapture(event.pointerId);
+  updateSeekPreview(event);
+};
+
+const moveSeek = (event) => {
+  if (isSeeking.value) updateSeekPreview(event);
+};
+
+const commitSeek = (event) => {
+  if (!isSeeking.value) return;
+  updateSeekPreview(event);
+  isSeeking.value = false;
+  player.seekTo(seekPreview.value);
+};
+
+const cancelSeek = () => {
+  isSeeking.value = false;
+};
+
+const seekByKeyboard = (deltaMs) => {
+  if (!nowPlaying.value || !player.connected) return;
+  const target = Math.max(0, Math.min(nowPlaying.value.music.duration, player.localProgress + deltaMs));
+  player.seekTo(target);
+};
 
 // --- 音量逻辑 ---
 const lastVolume = ref(0.5);
@@ -324,7 +388,13 @@ const downloadCurrentMusic = async () => {
 const openSourcePage = () => {
   if (!nowPlaying.value) return;
   const { platform, id } = nowPlaying.value.music;
-  let url = platform === 'netease' ? `https://music.163.com/#/song?id=${id}` : `https://www.bilibili.com/video/${id}`;
+  const urls = {
+    netease: `https://music.163.com/#/song?id=${id}`,
+    bilibili: `https://www.bilibili.com/video/${id}`,
+    soundcloud: `https://soundcloud.com/tracks/${id}`,
+    ytmusic: `https://music.youtube.com/watch?v=${id}`
+  };
+  const url = urls[platform];
   if (url) window.open(url, '_blank');
 };
 

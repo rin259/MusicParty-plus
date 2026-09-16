@@ -27,6 +27,12 @@ app:
       base-url: "https://api.bilibili.com"
       sessdata: ${BILIBILI_SESSDATA:}
       enabled: ${BILIBILI_ENABLED:true}
+    soundcloud:
+      enabled: ${SOUNDCLOUD_ENABLED:true}
+      search-limit: ${SOUNDCLOUD_SEARCH_LIMIT:30}
+    ytmusic:
+      enabled: ${YTMUSIC_ENABLED:true}
+      search-limit: ${YTMUSIC_SEARCH_LIMIT:30}
     queue:
       max-size: ${QUEUE_MAX_SIZE:1000}
       history-size: ${QUEUE_HISTORY_SIZE:50}
@@ -39,6 +45,11 @@ app:
       max-message-length: ${CHAT_MAX_LENGTH:200}
     cache:
       max-size: ${CACHE_MAX_SIZE:1GB}
+    yt-dlp:
+      enabled: ${YT_DLP_ENABLED:true}
+      path: ${YT_DLP_PATH:yt-dlp}
+      timeout-seconds: ${YT_DLP_TIMEOUT_SECONDS:45}
+      download-timeout-seconds: ${YT_DLP_DOWNLOAD_TIMEOUT_SECONDS:900}
     auth:
       rate-limit:
         enabled: ${AUTH_RATE_LIMIT_ENABLED:true}

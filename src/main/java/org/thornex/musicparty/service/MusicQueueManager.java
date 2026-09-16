@@ -26,6 +26,7 @@ public class MusicQueueManager {
     // 使用并发安全的双端队列
     private final Deque<MusicQueueItem> queue = new ConcurrentLinkedDeque<>();
     private final List<Music> playHistory = Collections.synchronizedList(new LinkedList<>());
+    private final List<Music> loopList = Collections.synchronizedList(new ArrayList<>());
 
     // 用于实现“公平随机播放”：记录上一个播放的用户
     private final AtomicReference<String> lastPlayedUserToken = new AtomicReference<>("");
@@ -316,11 +317,13 @@ public class MusicQueueManager {
     public synchronized void clearAll() {
         queue.clear();
         playHistory.clear();
+        loopList.clear();
         lastPlayedUserToken.set("");
     }
 
     public synchronized void clearPendingQueue() {
         queue.clear();
+        loopList.clear();
     }
 
     public List<MusicQueueItem> getQueueSnapshot() {
@@ -340,6 +343,7 @@ public class MusicQueueManager {
         // Clear current
         queue.clear();
         playHistory.clear();
+        loopList.clear();
         lastPlayedUserToken.set("");
 
         // Restore Queue
@@ -350,6 +354,40 @@ public class MusicQueueManager {
         // Restore History
         if (loadedHistory != null) {
             playHistory.addAll(loadedHistory);
+        }
+    }
+
+    public synchronized void addToLoopList(Music music) {
+        if (music != null && loopList.stream().noneMatch(m -> m.id().equals(music.id()))) {
+            loopList.add(music);
+        }
+    }
+
+    public synchronized void removeFromLoopList(String musicId) {
+        loopList.removeIf(m -> m.id().equals(musicId));
+    }
+
+    public synchronized void addToQueueEnd(Music music) {
+        UserSummary systemUser = new UserSummary("SYSTEM", "SYSTEM", "AutoDJ", false);
+        MusicQueueItem item = new MusicQueueItem(
+                UUID.randomUUID().toString(),
+                music,
+                systemUser,
+                QueueItemStatus.PENDING
+        );
+        queue.addLast(item);
+    }
+
+    public synchronized void repopulateFromLoopList() {
+        if (loopList.isEmpty()) return;
+        UserSummary systemUser = new UserSummary("SYSTEM", "SYSTEM", "AutoDJ", false);
+        for (Music music : loopList) {
+            queue.addLast(new MusicQueueItem(
+                    UUID.randomUUID().toString(),
+                    music,
+                    systemUser,
+                    QueueItemStatus.PENDING
+            ));
         }
     }
 
