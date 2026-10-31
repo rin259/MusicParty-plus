@@ -4,10 +4,9 @@
 
     <!-- LAYER 0: 静态背景层 (最底层) -->
     <div class="absolute inset-0 z-0 pointer-events-none">
-      <!-- 点阵谱纸：列=对数频率，行=时间；未点亮的点就是网格 -->
-      <canvas ref="matrixRef" aria-hidden="true" class="absolute inset-0 w-full h-full"></canvas>
       <!-- 随机点光源：16 颗各自绑定一段频带，只做即时响应（不漂移） -->
       <canvas ref="lightsRef" aria-hidden="true" class="absolute inset-0 w-full h-full"></canvas>
+      <div class="absolute inset-0 bg-[linear-gradient(rgb(var(--medical-900)/0.04)_1px,transparent_1px),linear-gradient(90deg,rgb(var(--medical-900)/0.04)_1px,transparent_1px)] bg-[size:40px_40px]"></div>
       <!-- 频谱字标：取时频谱之思想（频率→位置、能量→强度、时间→余辉），落在本站字标上 -->
       <div aria-hidden="true" class="absolute inset-0 flex items-center justify-center select-none">
         <div ref="wordRef" class="spectral-word text-[12vw] font-bold tracking-tighter whitespace-nowrap blur-[3px]">
@@ -249,7 +248,6 @@ import { SpectralWordmark } from '../logic/SpectralWordmark.js';
 import { GlitchGate } from '../logic/Glitch.js';
 import { AudioTelemetry } from '../logic/AudioTelemetry.js';
 import { PointLights } from '../logic/PointLights.js';
-import { DotMatrix } from '../logic/DotMatrix.js';
 import { useUiStore } from '../stores/ui';
 import { formatDuration, PLATFORM_LABEL } from '../logic/searchMerge.js';
 import { Activity, Zap } from 'lucide-vue-next';
@@ -260,7 +258,6 @@ const uiStore = useUiStore();
 const canvasRef = ref(null);
 const wordRef = ref(null);
 const lightsRef = ref(null);
-const matrixRef = ref(null);
 const telemetryRef = ref(null);
 const telemetry = new AudioTelemetry();
 const telemetryBands = [
@@ -271,7 +268,6 @@ const telemetryBands = [
 const glitchGate = new GlitchGate(900);
 const wordmark = new SpectralWordmark();
 const lights = new PointLights();
-const matrix = new DotMatrix();
 const wordLetters = computed(() => Array.from((uiStore.backWords || 'MUSIC PARTY').toUpperCase()));
 const coverBoxRef = ref(null);
 const currentCover = computed(() => player.nowPlaying?.music.coverUrl);
@@ -475,7 +471,6 @@ onMounted(() => {
     wordmark.attach(wordRef.value);
     wordmark.start();
   }
-  if (matrixRef.value) matrix.mount(matrixRef.value);
   if (lightsRef.value) lights.mount(lightsRef.value);
   if (telemetryRef.value) telemetry.attach(telemetryRef.value);
 
@@ -485,7 +480,6 @@ onMounted(() => {
   useEventListener(window, 'music-party:spectrum', (event) => {
     visualizer.setSpectrum(event.detail);
     wordmark.setSpectrum(event.detail);
-    matrix.setSpectrum(event.detail);
     lights.setSpectrum(event.detail);
     telemetry.setSpectrum(event.detail);
   });
@@ -516,7 +510,6 @@ onUnmounted(() => {
   resizeObserver?.disconnect();
   wordmark.unmount();
   lights.unmount();
-  matrix.unmount();
   visualizer.unmount();
   clearInterval(updateInterval);
   danmakuTimers.forEach(clearTimeout);

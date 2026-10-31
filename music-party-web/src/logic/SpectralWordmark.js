@@ -1,14 +1,23 @@
 import { spectrumBandEnergy } from './AudioVisualizer.js';
 
 /**
- * 字標（brand wordmark）—— 已降級為「整體能量水印」。
+ * 頻譜字標（spectral wordmark）—— 取時頻譜之「思想」，不取其形。
  *
- * 2026-11：頻譜的職責移交給點陣譜紙（DotMatrix）。字標不再逐字母映射頻帶，
- * 只保留全體能量的色深/透明度/縱向呼吸；否則同一份頻譜會有兩套編碼。
- * 按讚 → 短促提亮；點歌 → 基調緩升；prefers-reduced-motion → 去掉縱向縮放。
+ * 思想映射：
+ *   位置 → 頻率：字標的第 i 個字母代表一段對數頻帶（左低右高），全寬即全頻譜。
+ *   強度 → 能量：該帶能量決定字母的顏色（中性灰 → 琥珀）、不透明度與縱向高度。
+ *   時間 → 余輝：起音快（0.55）、收得慢（0.16），故每個字母各自留下一道短暫餘輝，
+ *              讀起來是「剛才那一下」而非瞬時閃爍。
+ * 這樣全幅背景仍是本站自己的語言（字標、切角、網格），不是把一張頻譜圖貼上去。
+ *
+ * 另外：按讚 → 全體字母短促提亮（參與者的動作看得見）；點歌 → 基調緩升。
+ * prefers-reduced-motion：保留顏色與不透明度變化，去掉縱向縮放。
  */
-const MIN_HZ = 40;
+const MIN_HZ = 20;
 const MAX_HZ = 16000;
+// 頻譜傾斜（tilt）：0 = 不傾斜；實測 18dB 時常態下 11 字母亮度極差由 0.33 收窄到 0.13，
+// 而鼓點時低頻字母仍能點亮（0.55–0.77），故「均衡」而非「拉平」。
+const TILT_DB = 18;
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -16,11 +25,11 @@ export class SpectralWordmark {
     constructor() {
         this.root = null;
         this.letters = [];
-        this.global = 0;
-        this._globalKey = '';
+        this.level = new Float32Array(0);
+        this.written = [];
         this.flash = 0;
         this.crowd = 0;
-        this.prevLevel = 0;
+        this.prevLow = 0;
         this.animationId = null;
         this.reducedMotion = typeof matchMedia === 'function'
             && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -30,7 +39,8 @@ export class SpectralWordmark {
     attach(root) {
         this.root = root || null;
         this.letters = root ? Array.from(root.querySelectorAll('.spectral-letter')) : [];
-        this._globalKey = '';
+        this.level = new Float32Array(this.letters.length);
+        this.written = new Array(this.letters.length).fill('');
     }
 
     /** 重新量測字母（字標內容可被設定更改） */
@@ -40,18 +50,29 @@ export class SpectralWordmark {
     }
 
     setSpectrum(payload) {
+        const n = this.letters.length;
         const { data, sampleRate, fftSize } = payload || {};
-        if (!this.letters.length || !data?.length) return;
+        if (!n || !data?.length) return;
 
-        const raw = spectrumBandEnergy(data, sampleRate, fftSize, MIN_HZ, MAX_HZ, 80);
-        const target = clamp01(1 - Math.exp(-1.8 * raw));
-        const rate = target > this.global ? 0.55 : 0.16;
-        this.global += (target - this.global) * rate;
-
-        if (target - this.prevLevel > 0.04) {
-            this.flash = Math.min(1.1, this.flash + (target - this.prevLevel) * 3);
+        for (let i = 0; i < n; i++) {
+            const t0 = i / n;
+            const t1 = (i + 1) / n;
+            const fLo = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, t0);
+            const fHi = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, t1);
+            const tilt = Math.pow(10, (TILT_DB * (t1 - 0.5)) / 20);
+            const gain = (30 + 30 * t1) * tilt;        // 高頻天然低：以 tilt 壓低頻、提亮高頻
+            const raw = spectrumBandEnergy(data, sampleRate, fftSize, fLo, fHi, gain);
+            const target = clamp01(1 - Math.exp(-1.8 * raw)); // 軟膝
+            const rate = target > this.level[i] ? 0.55 : 0.16;
+            this.level[i] += (target - this.level[i]) * rate;
         }
-        this.prevLevel = target;
+
+        // 低頻瞬態（鼓點）→ 全體短促提亮
+        const lowNow = (this.level[0] + this.level[1]) / 2;
+        if (lowNow - this.prevLow > 0.04) {
+            this.flash = Math.min(1.1, this.flash + (lowNow - this.prevLow) * 3);
+        }
+        this.prevLow = lowNow;
     }
 
     pulse(strength = 1) {
@@ -86,23 +107,25 @@ export class SpectralWordmark {
         this.crowd *= Math.pow(0.998, dt * 60);
         const boost = 1 + 0.45 * this.flash + 0.2 * this.crowd;
 
+        // 映射研判（2026-10）：同一強度 m 同時驅動「色深」與「不透明度」，故兩者必然正相關。
+        //  色深：中性 → 強調色；淺色主題取較深琥珀（在淺底上才讀得出），深色主題取較亮暖光。
+        //  不透明度：m^0.85（低強度端略抬升，符合知覺）；峰值封頂 0.88，避免搶過封面。
         const dark = document.documentElement.dataset.theme === 'dark'
             || document.documentElement.classList.contains('dark');
         const from = dark ? [64, 70, 84] : [228, 230, 235];
         const to = dark ? [255, 188, 122] : [236, 124, 40];
 
-        const lv = clamp01(this.global * boost);
-        const m = Math.pow(lv, 0.9);
-        const opacity = Math.min(0.88, 0.24 + 0.64 * Math.pow(lv, 0.85));
-        const scaleY = this.reducedMotion ? 1 : 1 + 0.22 * m;
-        const r = Math.round(from[0] + (to[0] - from[0]) * m);
-        const g = Math.round(from[1] + (to[1] - from[1]) * m);
-        const b = Math.round(from[2] + (to[2] - from[2]) * m);
-        const key = `${opacity.toFixed(3)}/${scaleY.toFixed(3)}/${r}/${g}/${b}`;
-        if (key === this._globalKey) return;
-        this._globalKey = key;
-
         for (let i = 0; i < this.letters.length; i++) {
+            const lv = clamp01(this.level[i] * boost);
+            const m = Math.pow(lv, 0.9);
+            const opacity = Math.min(0.88, 0.24 + 0.64 * Math.pow(lv, 0.85));
+            const scaleY = this.reducedMotion ? 1 : 1 + 0.22 * m;
+            const r = Math.round(from[0] + (to[0] - from[0]) * m);
+            const g = Math.round(from[1] + (to[1] - from[1]) * m);
+            const b = Math.round(from[2] + (to[2] - from[2]) * m);
+            const key = `${opacity.toFixed(3)}/${scaleY.toFixed(3)}/${r}/${g}/${b}`;
+            if (key === this.written[i]) continue;
+            this.written[i] = key;
             const el = this.letters[i];
             el.style.opacity = opacity.toFixed(3);
             el.style.transform = `scaleY(${scaleY.toFixed(3)})`;
