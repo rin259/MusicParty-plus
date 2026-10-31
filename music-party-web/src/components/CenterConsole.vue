@@ -9,11 +9,8 @@
       <div class="absolute inset-0 bg-[linear-gradient(rgb(var(--medical-900)/0.04)_1px,transparent_1px),linear-gradient(90deg,rgb(var(--medical-900)/0.04)_1px,transparent_1px)] bg-[size:40px_40px]"></div>
       <!-- 频谱字标：取时频谱之思想（频率→位置、能量→强度、时间→余辉），落在本站字标上 -->
       <div aria-hidden="true" class="absolute inset-0 flex items-center justify-center select-none">
-        <div ref="wordRef" class="spectral-word text-[12vw] font-bold tracking-tighter whitespace-nowrap">
-          <span v-for="(ch, i) in wordLetters" :key="i" class="spectral-cell">
-            <span class="spectral-letter">{{ ch === ' ' ? ' ' : ch }}</span>
-            <span class="spectral-tick" aria-hidden="true"></span>
-          </span>
+        <div ref="wordRef" class="spectral-word text-[12vw] font-bold tracking-tighter whitespace-nowrap blur-[3px]">
+          <span v-for="(ch, i) in wordLetters" :key="i" class="spectral-letter">{{ ch === ' ' ? ' ' : ch }}</span>
         </div>
       </div>
       <!-- 四角标记 -->
@@ -561,29 +558,8 @@ onUnmounted(() => {
   width: 1px;
   background: rgb(var(--medical-900) / 0.45);
 }
-.spectral-word { position: relative; display: flex; align-items: center; justify-content: center; }
-/* 基线：一条 1px 测量线。字标被裁切/遮挡时，线也随之为片段——这是刻意的。 */
-.spectral-word::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -10px;
-  height: 1px;
-  background: rgb(var(--medical-900) / 0.10);
-}
-.spectral-cell { position: relative; display: inline-block; }
-.spectral-letter { display: inline-block; transform-origin: center; color: rgb(var(--medical-200)); opacity: .34; filter: blur(3px); will-change: transform, opacity; }
-.spectral-tick {
-  position: absolute;
-  left: 50%;
-  bottom: -10px;
-  width: 6px;
-  height: 4px;
-  transform: translateX(-50%);
-  background: rgb(var(--medical-900));
-  opacity: .12;
-}
+.spectral-word { display: flex; align-items: center; justify-content: center; }
+.spectral-letter { display: inline-block; transform-origin: center; color: rgb(var(--medical-200)); opacity: .34; }
 .danmaku-item { animation: danmaku-life 7.2s linear both; }
 @keyframes danmaku-life {
   0% { transform: translateY(22px); opacity: 0; }

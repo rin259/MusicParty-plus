@@ -39,7 +39,6 @@ export class SpectralWordmark {
     attach(root) {
         this.root = root || null;
         this.letters = root ? Array.from(root.querySelectorAll('.spectral-letter')) : [];
-        this.ticks = root ? Array.from(root.querySelectorAll('.spectral-tick')) : [];
         this.level = new Float32Array(this.letters.length);
         this.written = new Array(this.letters.length).fill('');
     }
@@ -120,24 +119,17 @@ export class SpectralWordmark {
             const lv = clamp01(this.level[i] * boost);
             const m = Math.pow(lv, 0.9);
             const opacity = Math.min(0.88, 0.24 + 0.64 * Math.pow(lv, 0.85));
-            // 不用 scaleY（会把字形拉长）；改为基线上浮，最大 3.5px
-            const lift = this.reducedMotion ? 0 : -3.5 * m;
-            const tickOpacity = 0.10 + 0.55 * lv;
+            const scaleY = this.reducedMotion ? 1 : 1 + 0.22 * m;
             const r = Math.round(from[0] + (to[0] - from[0]) * m);
             const g = Math.round(from[1] + (to[1] - from[1]) * m);
             const b = Math.round(from[2] + (to[2] - from[2]) * m);
-            const key = `${opacity.toFixed(3)}/${lift.toFixed(2)}/${r}/${g}/${b}/${tickOpacity.toFixed(3)}`;
+            const key = `${opacity.toFixed(3)}/${scaleY.toFixed(3)}/${r}/${g}/${b}`;
             if (key === this.written[i]) continue;
             this.written[i] = key;
             const el = this.letters[i];
             el.style.opacity = opacity.toFixed(3);
-            el.style.transform = `translateY(${lift.toFixed(2)}px)`;
+            el.style.transform = `scaleY(${scaleY.toFixed(3)})`;
             el.style.color = `rgb(${r} ${g} ${b})`;
-            const tick = this.ticks[i];
-            if (tick) {
-                tick.style.opacity = tickOpacity.toFixed(3);
-                tick.style.backgroundColor = `rgb(${r} ${g} ${b})`;
-            }
         }
     }
 }
