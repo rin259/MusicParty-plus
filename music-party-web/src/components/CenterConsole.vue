@@ -14,10 +14,10 @@
         </div>
       </div>
       <!-- 四角标记 -->
-      <div class="absolute top-8 left-8 w-8 h-8 border-t-2 border-l-2 border-medical-300"></div>
-      <div class="absolute top-8 right-8 w-8 h-8 border-t-2 border-r-2 border-medical-300"></div>
-      <div class="absolute bottom-8 left-8 w-8 h-8 border-b-2 border-l-2 border-medical-300"></div>
-      <div class="absolute bottom-8 right-8 w-8 h-8 border-b-2 border-r-2 border-medical-300"></div>
+      <div class="absolute top-10 left-10 w-8 h-8 border-t-2 border-l-2 border-medical-300"></div>
+      <div class="absolute top-10 right-10 w-8 h-8 border-t-2 border-r-2 border-medical-300"></div>
+      <div class="absolute bottom-10 left-10 w-8 h-8 border-b-2 border-l-2 border-medical-300"></div>
+      <div class="absolute bottom-10 right-10 w-8 h-8 border-b-2 border-r-2 border-medical-300"></div>
     </div>
 
     <!-- LAYER 1: 动态视觉层 (Canvas) -->
@@ -39,7 +39,7 @@
       <!-- 左侧：同步歌词 -->
       <div class="absolute font-mono transition-all duration-300
                   inset-x-0 bottom-7 flex flex-col items-center justify-end h-64 pb-2
-                  md:inset-auto md:bottom-8 md:left-10 md:items-start md:justify-end md:h-auto md:w-80
+                  md:inset-auto md:bottom-10 md:left-10 md:items-start md:justify-end md:h-auto md:w-80
       ">
         <div class="hidden md:block text-[10px] text-accent-text mb-1 tracking-widest border-b border-accent/30 pb-1 w-16">
           {{ parsedLyrics.length ? 'LYRIC_SYSTEM' : 'TRACK_DATA' }}
