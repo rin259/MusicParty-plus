@@ -181,8 +181,18 @@ public class BilibiliMusicApiService implements IMusicApiService {
                             });
                 });
 
+        // 0 命中重试：B 站风控/边缘节点偶尔返回 200 + 空 result，冷一次就恢复。
+        // 只重试一次（250ms 后），仍为空则如实返回空列表；代价是「真的没有结果」的查询会多打一次上游。
+        Mono<List<Music>> withEmptyRetry = requestMono.flatMap(list -> {
+            if (list != null && !list.isEmpty()) {
+                return Mono.just(list);
+            }
+            log.info("Bilibili search returned 0 for '{}', retrying once", keyword);
+            return Mono.delay(Duration.ofMillis(250)).then(requestMono);
+        });
+
         // 添加重试机制
-        return requestMono.retryWhen(Retry.max(1) // 最多重试 1 次
+        return withEmptyRetry.retryWhen(Retry.max(1) // 最多重试 1 次
                         .filter(throwable -> throwable instanceof WbiSignatureException) // 只针对签名异常重试
                         .doBeforeRetry(retrySignal -> {
                             log.warn("Detected WBI signature error, refreshing key and retrying...");
