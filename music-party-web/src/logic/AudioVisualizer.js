@@ -467,8 +467,9 @@ export class AudioVisualizer {
         // 2a. Ambient wash riding on overall energy. Gradient rebuilt only when
         // energy moved past a threshold (A3).
         if (this._washGrad === null || Math.abs(this.energy - this._washEnergy) > 0.02) {
-            const washRadius = Math.min(maxField, 300 + this.energy * 100);
-            const washAlpha = this.isPlaying ? 0.026 + this.energy * 0.044 : 0.009;
+            // 2026-10：只收紧约 25%（不删除）——保留暖场气质，但让字标/遥测透出来。
+            const washRadius = Math.min(maxField, 285 + this.energy * 85);
+            const washAlpha = this.isPlaying ? 0.019 + this.energy * 0.033 : 0.007;
             this._washGrad = ctx.createRadialGradient(center, center, this.center * 0.16, center, center, washRadius);
             this._washGrad.addColorStop(0, `rgba(249, 115, 22, ${washAlpha})`);
             this._washGrad.addColorStop(0.55, `rgba(249, 115, 22, ${washAlpha * 0.45})`);
@@ -483,8 +484,8 @@ export class AudioVisualizer {
 
         // 2b. Bass-driven hot core hugging the cover edge.
         if (this._coreGrad === null || Math.abs(bassPulse - this._corePulse) > 0.015) {
-            const coreRadius = Math.min(maxField, 120 + bassPulse * 130 + this.energy * 50);
-            const coreAlpha = this.isPlaying ? 0.03 + bassPulse * 0.118 : 0.012;
+            const coreRadius = Math.min(maxField, 112 + bassPulse * 112 + this.energy * 42);
+            const coreAlpha = this.isPlaying ? 0.022 + bassPulse * 0.090 : 0.009;
             this._coreGrad = ctx.createRadialGradient(center, center, 10, center, center, coreRadius);
             this._coreGrad.addColorStop(0, `rgba(255, 196, 120, ${coreAlpha})`);
             this._coreGrad.addColorStop(0.45, `rgba(249, 115, 22, ${coreAlpha * 0.5})`);
