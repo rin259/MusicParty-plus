@@ -47,6 +47,9 @@ export class PointLights {
         this.crowd = 0;
         this.animationId = null;
         this._last = 0;
+        // prefers-reduced-motion：draw() 已按此暂停游走，但此前从未赋值。
+        this.reducedMotion = typeof matchMedia === 'function'
+            && matchMedia('(prefers-reduced-motion: reduce)').matches;
         this.lights = this.seed();
         // 兩套調色板：淺色/深色各一套，繪製時依當前主題取用（避免白燈在淺底上隱形）
         this.palettes = {
