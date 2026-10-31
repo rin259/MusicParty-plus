@@ -18,6 +18,8 @@ import { spectrumBandEnergy } from './AudioVisualizer.js';
 const COUNT = 24;
 const MIN_HZ = 20;
 const MAX_HZ = 16000;
+// 与 SpectralWordmark 的 TILT_DB 保持一致：只补高频的自然衰减，不改其它任何视觉参数。
+const TILT_DB = 18;
 
 const rand = (a, b) => a + Math.random() * (b - a);
 
@@ -118,8 +120,11 @@ export class PointLights {
         for (let i = 0; i < COUNT; i++) {
             const t = this.lights[i].band;
             const fLo = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, t);
-            const fHi = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, Math.min(1, t + 1 / COUNT));
-            const gain = 34 + 46 * t;
+            const bandEnd = Math.min(1, t + 1 / COUNT);
+            const fHi = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, bandEnd);
+            // 18dB tilt：低端 −9dB、高端 +9dB；位置/半径/alpha 一律不动。
+            const tilt = Math.pow(10, (TILT_DB * (bandEnd - 0.5)) / 20);
+            const gain = (34 + 46 * bandEnd) * tilt;
             const raw = spectrumBandEnergy(data, sampleRate, fftSize, fLo, fHi, gain);
             const target = Math.min(1, 1 - Math.exp(-1.8 * raw));
             const rate = target > this.levels[i] ? 0.5 : 0.18;
