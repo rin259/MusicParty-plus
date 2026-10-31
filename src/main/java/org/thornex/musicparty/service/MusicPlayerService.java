@@ -205,7 +205,7 @@ public class MusicPlayerService {
 
         // Handle failed items
         if (nextItem.status() == QueueItemStatus.FAILED ||
-                (statusMap.get(nextItem.music().id()) == QueueItemStatus.FAILED)) {
+                (statusMap.get(MusicQueueManager.musicKey(nextItem.music())) == QueueItemStatus.FAILED)) {
             log.warn("Skipping failed song: {}", nextItem.music().name());
             eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.ERROR_LOAD, "SYSTEM", nextItem.music().name()));
             playNextInQueue(); // Recursively try next
@@ -485,49 +485,95 @@ public class MusicPlayerService {
             Integer voteSkipWaitTime
     ) {}
 
+    // B 站视频上限：与前端列表的 >10MIN 标记保持一致，且必须服务端兜底
+    // （直接粘贴 BV / URL 点歌不会经过前端列表的过滤）。
+    private static final long MAX_BILIBILI_TRACK_MS = 10 * 60 * 1000L;
+
+    /** 点歌回执：优先走个人频道；旧客户端（无 requestId）仍走原来的全房间系统消息。 */
+    private void sendEnqueueResult(String sessionId, String requestId, String platform, String musicId,
+                                   String status, String message) {
+        if (requestId != null && sessionId != null) {
+            eventPublisher.publishEvent(new EnqueueResultEvent(this, sessionId,
+                    new EnqueueResult(requestId, platform, musicId, status, message)));
+            return;
+        }
+        eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR,
+                PlayerAction.SYSTEM_MESSAGE, getUserToken(sessionId), message));
+    }
+
+    private void sendImportProgress(String sessionId, ImportProgress progress) {
+        if (progress.requestId() == null || sessionId == null) return;
+        eventPublisher.publishEvent(new ImportProgressEvent(this, sessionId, progress));
+    }
+
     public void enqueue(EnqueueRequest request, String sessionId) {
         Optional<User> userOpt = userService.getUser(sessionId);
         if (userOpt.isEmpty()) return;
         User enqueuer = userOpt.get();
+        String requestId = request.requestId();
 
         if (!isPlatformEnabled(request.platform())) {
-            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "添加失败: 此音乐源已被禁用"));
+            sendEnqueueResult(sessionId, requestId, request.platform(), request.musicId(),
+                    EnqueueResult.DISABLED, "添加失败: 此音乐源已被禁用");
             return;
         }
 
-        // Check user song limit
         long userSongCount = queueManager.getQueueSnapshot().stream()
                 .filter(item -> item.enqueuedBy().token().equals(enqueuer.getToken()))
                 .count();
+        int maxUserSongs = appProperties.getQueue().getMaxUserSongs();
 
-        if (userSongCount >= appProperties.getQueue().getMaxUserSongs()) {
-            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "添加失败: 您的点歌数量已达上限 (" + appProperties.getQueue().getMaxUserSongs() + "首)"));
+        if (userSongCount >= maxUserSongs) {
+            sendEnqueueResult(sessionId, requestId, request.platform(), request.musicId(),
+                    EnqueueResult.LIMIT, "添加失败: 您的点歌数量已达上限 (" + maxUserSongs + "首)");
             return;
         }
 
         IMusicApiService service = getApiService(request.platform());
         service.getPlayableMusic(request.musicId())
                 .subscribe(playableMusic -> {
-                            Music music = new Music(playableMusic.id(), playableMusic.name(), playableMusic.artists(), playableMusic.duration(), playableMusic.platform(), playableMusic.coverUrl());
+                            if ("bilibili".equalsIgnoreCase(request.platform())
+                                    && playableMusic.duration() > MAX_BILIBILI_TRACK_MS) {
+                                sendEnqueueResult(sessionId, requestId, request.platform(), request.musicId(),
+                                        EnqueueResult.TOO_LONG, "添加失败: B 站视频超过 10 分钟，不支持点歌");
+                                return;
+                            }
+
+                            Music music = new Music(playableMusic.id(), playableMusic.name(), playableMusic.artists(),
+                                    playableMusic.duration(), playableMusic.platform(), playableMusic.coverUrl());
 
                             QueueItemStatus initialStatus = usesLocalCache(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
                             if (usesLocalCache(request.platform())) {
                                 service.prefetchMusic(music.id());
                             }
 
-                            MusicQueueItem newItem = queueManager.add(music, new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()), initialStatus);
+                            MusicQueueManager.AddResult added = queueManager.add(music,
+                                    new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()),
+                                    initialStatus);
 
-                            if (newItem != null) {
-                                queueManager.addToLoopList(music);
-                                log.info("{} enqueued: {}", enqueuer.getName(), music.name());
-                                broadcastQueueUpdate();
-                                eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.SUCCESS, PlayerAction.ADD, enqueuer.getToken(), music.name()));
+                            if (!added.ok()) {
+                                String status = added.failure() == MusicQueueManager.AddFailure.QUEUE_FULL
+                                        ? EnqueueResult.QUEUE_FULL : EnqueueResult.DUPLICATE;
+                                String message = added.failure() == MusicQueueManager.AddFailure.QUEUE_FULL
+                                        ? "添加失败: 队列已满" : "这首歌已在队列中";
+                                sendEnqueueResult(sessionId, requestId, request.platform(), request.musicId(), status, message);
+                                return;
                             }
+
+                            queueManager.addToLoopList(music);
+                            log.info("{} enqueued: {}", enqueuer.getName(), music.name());
+                            broadcastQueueUpdate();
+                            sendEnqueueResult(sessionId, requestId, request.platform(), request.musicId(),
+                                    EnqueueResult.QUEUED, "已加入队列");
+                            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.SUCCESS,
+                                    PlayerAction.ADD, enqueuer.getToken(), music.name()));
                         },
                         error -> {
                             log.error("Enqueue failed for musicId: {}", request.musicId(), error);
-                            String msg = error.getMessage().contains("Could not get Bilibili video info") ? "无效资源或API受限" : error.getMessage();
-                            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "添加失败: " + msg));
+                            String raw = error.getMessage() == null ? "未知错误" : error.getMessage();
+                            String msg = raw.contains("Could not get Bilibili video info") ? "无效资源或API受限" : raw;
+                            sendEnqueueResult(sessionId, requestId, request.platform(), request.musicId(),
+                                    EnqueueResult.FAILED, "添加失败: " + msg);
                         });
     }
 
@@ -558,13 +604,15 @@ public class MusicPlayerService {
         Optional<User> userOpt = userService.getUser(sessionId);
         if (userOpt.isEmpty()) return;
         User enqueuer = userOpt.get();
+        String requestId = request.requestId();
 
         if (!isPlatformEnabled(request.platform())) {
             eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "导入失败: 此音乐源已被禁用"));
+            sendImportProgress(sessionId, new ImportProgress(requestId, request.platform(), request.playlistId(),
+                    "playlist", 0, 0, 0, 0, true, "导入失败: 此音乐源已被禁用"));
             return;
         }
 
-        // Check user song limit
         long currentCount = queueManager.getQueueSnapshot().stream()
                 .filter(item -> item.enqueuedBy().token().equals(enqueuer.getToken()))
                 .count();
@@ -572,33 +620,53 @@ public class MusicPlayerService {
 
         if (currentCount >= maxUserSongs) {
             eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "导入失败: 您的点歌数量已达上限"));
+            sendImportProgress(sessionId, new ImportProgress(requestId, request.platform(), request.playlistId(),
+                    "playlist", 0, 0, 0, 0, true, "导入失败: 点歌数量已达上限"));
             return;
         }
 
-        // Calculate remaining quota
         int remainingQuota = (int) (maxUserSongs - currentCount);
         int importLimit = Math.min(appProperties.getPlayer().getMaxPlaylistImportSize(), remainingQuota);
 
         IMusicApiService service = getApiService(request.platform());
         service.getPlaylistMusics(request.playlistId(), 0, importLimit)
                 .subscribe(musics -> {
-                    int count = 0;
+                    int total = musics.size();
+                    int done = 0;
+                    int added = 0;
+                    int skipped = 0;
                     QueueItemStatus initialStatus = usesLocalCache(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
 
                     for (Music music : musics) {
                         if (usesLocalCache(request.platform())) {
                             service.prefetchMusic(music.id());
                         }
-                        MusicQueueItem newItem = queueManager.add(music, new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()), initialStatus);
-                        if (newItem != null) {
+                        MusicQueueManager.AddResult result = queueManager.add(music,
+                                new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()),
+                                initialStatus);
+                        if (result.ok()) {
                             queueManager.addToLoopList(music);
-                            count++;
+                            added++;
+                        } else {
+                            skipped++;
+                        }
+                        done++;
+                        if (done % 5 == 0 && done != total) {
+                            sendImportProgress(sessionId, new ImportProgress(requestId, request.platform(),
+                                    request.playlistId(), "playlist", done, total, added, skipped, false, null));
                         }
                     }
 
-                    log.info("{} enqueued {} songs from playlist", enqueuer.getName(), count);
+                    log.info("{} enqueued {} songs from playlist ({} skipped)", enqueuer.getName(), added, skipped);
                     broadcastQueueUpdate();
-                    eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.SUCCESS, PlayerAction.IMPORT_PLAYLIST, enqueuer.getToken(), String.valueOf(count)));
+                    sendImportProgress(sessionId, new ImportProgress(requestId, request.platform(), request.playlistId(),
+                            "playlist", done, total, added, skipped, true, importSummary(added, skipped)));
+                    eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.SUCCESS, PlayerAction.IMPORT_PLAYLIST, enqueuer.getToken(), String.valueOf(added)));
+                },
+                error -> {
+                    log.error("Playlist import failed: {}", request.playlistId(), error);
+                    sendImportProgress(sessionId, new ImportProgress(requestId, request.platform(), request.playlistId(),
+                            "playlist", 0, 0, 0, 0, true, "导入失败: " + safeMessage(error)));
                 });
     }
 
@@ -606,9 +674,12 @@ public class MusicPlayerService {
         Optional<User> userOpt = userService.getUser(sessionId);
         if (userOpt.isEmpty()) return;
         User enqueuer = userOpt.get();
+        String requestId = request.requestId();
 
         if (!isPlatformEnabled(request.platform())) {
             eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "导入失败: 此音乐源已被禁用"));
+            sendImportProgress(sessionId, new ImportProgress(requestId, request.platform(), request.playlistId(),
+                    "album", 0, 0, 0, 0, true, "导入失败: 此音乐源已被禁用"));
             return;
         }
 
@@ -619,6 +690,8 @@ public class MusicPlayerService {
 
         if (currentCount >= maxUserSongs) {
             eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.SYSTEM_MESSAGE, enqueuer.getToken(), "导入失败: 您的点歌数量已达上限"));
+            sendImportProgress(sessionId, new ImportProgress(requestId, request.platform(), request.playlistId(),
+                    "album", 0, 0, 0, 0, true, "导入失败: 点歌数量已达上限"));
             return;
         }
 
@@ -628,25 +701,54 @@ public class MusicPlayerService {
         IMusicApiService service = getApiService(request.platform());
         service.getAlbumMusics(request.playlistId())
                 .subscribe(musics -> {
-                    int count = 0;
+                    int total = Math.min(musics.size(), importLimit);
+                    int done = 0;
+                    int added = 0;
+                    int skipped = 0;
                     QueueItemStatus initialStatus = usesLocalCache(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
 
                     for (Music music : musics) {
-                        if (count >= importLimit) break;
+                        if (done >= importLimit) break;
                         if (usesLocalCache(request.platform())) {
                             service.prefetchMusic(music.id());
                         }
-                        MusicQueueItem newItem = queueManager.add(music, new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()), initialStatus);
-                        if (newItem != null) {
+                        MusicQueueManager.AddResult result = queueManager.add(music,
+                                new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()),
+                                initialStatus);
+                        if (result.ok()) {
                             queueManager.addToLoopList(music);
-                            count++;
+                            added++;
+                        } else {
+                            skipped++;
+                        }
+                        done++;
+                        if (done % 5 == 0 && done != total) {
+                            sendImportProgress(sessionId, new ImportProgress(requestId, request.platform(),
+                                    request.playlistId(), "album", done, total, added, skipped, false, null));
                         }
                     }
 
-                    log.info("{} enqueued {} songs from album", enqueuer.getName(), count);
+                    log.info("{} enqueued {} songs from album ({} skipped)", enqueuer.getName(), added, skipped);
                     broadcastQueueUpdate();
-                    eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.SUCCESS, PlayerAction.IMPORT_PLAYLIST, enqueuer.getToken(), String.valueOf(count)));
+                    sendImportProgress(sessionId, new ImportProgress(requestId, request.platform(), request.playlistId(),
+                            "album", done, total, added, skipped, true, importSummary(added, skipped)));
+                    eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.SUCCESS, PlayerAction.IMPORT_PLAYLIST, enqueuer.getToken(), String.valueOf(added)));
+                },
+                error -> {
+                    log.error("Album import failed: {}", request.playlistId(), error);
+                    sendImportProgress(sessionId, new ImportProgress(requestId, request.platform(), request.playlistId(),
+                            "album", 0, 0, 0, 0, true, "导入失败: " + safeMessage(error)));
                 });
+    }
+
+    private static String importSummary(int added, int skipped) {
+        if (skipped == 0) return "已入队 " + added + " 首";
+        return "已入队 " + added + " 首，跳过 " + skipped + " 首（重复 / 队列上限 / 超出配额）";
+    }
+
+    private static String safeMessage(Throwable error) {
+        String message = error == null ? null : error.getMessage();
+        return (message == null || message.isBlank()) ? "上游无响应" : message;
     }
 
     public synchronized void topSong(String queueId, String sessionId) {
@@ -674,7 +776,7 @@ public class MusicPlayerService {
     public void removeSongFromQueue(String queueId, String sessionId) {
         Optional<MusicQueueItem> removedItem = queueManager.remove(queueId);
         if (removedItem.isPresent()) {
-            queueManager.removeFromLoopList(removedItem.get().music().id());
+            queueManager.removeFromLoopList(removedItem.get().music());
             log.info("Removed song from queue by {}", getUserName(sessionId));
             broadcastQueueUpdate();
             eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.INFO, PlayerAction.REMOVE, getUserToken(sessionId), removedItem.get().music().name()));
@@ -974,11 +1076,20 @@ public class MusicPlayerService {
         if (queueItem.isPresent()) {
             log.debug("Download status changed for {}, updating queue UI.", event.getMusicId());
             broadcastQueueUpdate();
-            if (localCacheService.getStatus(event.getMusicId()) == CacheStatus.FAILED) {
+            boolean failed = localCacheService.getStatus(event.getMusicId()) == CacheStatus.FAILED;
+            if (failed) {
                 eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR,
                         PlayerAction.ERROR_LOAD, "SYSTEM", queueItem.get().music().name()));
             }
-            if (currentMusic.get() == null) {
+            PlayableMusic current = currentMusic.get();
+            if (failed && current != null && cacheIdFor(current).equals(event.getMusicId())) {
+                // 当前曲目取源失败：立即换下一首。旧逻辑仅在「无曲目」时前进，
+                // 于是当前曲失败会把播放器永久留在「获取源」状态。
+                log.warn("Current track {} failed to load; advancing to next.", event.getMusicId());
+                playNextInQueue();
+                return;
+            }
+            if (current == null) {
                 playNextInQueue();
             }
         }
@@ -1105,9 +1216,9 @@ public class MusicPlayerService {
         Map<String, QueueItemStatus> statusMap = new HashMap<>();
         for (MusicQueueItem item : queueManager.getQueueSnapshot()) {
             if (usesLocalCache(item.music().platform())) {
-                statusMap.put(item.music().id(), mapCacheStatusToEnum(localCacheService.getStatus(cacheIdFor(item.music()))));
+                statusMap.put(MusicQueueManager.musicKey(item.music()), mapCacheStatusToEnum(localCacheService.getStatus(cacheIdFor(item.music()))));
             } else {
-                statusMap.put(item.music().id(), QueueItemStatus.READY);
+                statusMap.put(MusicQueueManager.musicKey(item.music()), QueueItemStatus.READY);
             }
         }
         return statusMap;
@@ -1138,6 +1249,10 @@ public class MusicPlayerService {
     }
 
     private String cacheIdFor(Music music) {
+        return "bilibili".equals(music.platform()) ? music.id() : music.platform() + "_" + music.id();
+    }
+
+    private String cacheIdFor(PlayableMusic music) {
         return "bilibili".equals(music.platform()) ? music.id() : music.platform() + "_" + music.id();
     }
 

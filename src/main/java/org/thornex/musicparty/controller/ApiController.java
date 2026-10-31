@@ -1,12 +1,17 @@
 package org.thornex.musicparty.controller;
 
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.*;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.Music;
 import org.thornex.musicparty.dto.Playlist;
 import org.thornex.musicparty.dto.UserSearchResult;
 import org.thornex.musicparty.dto.AlbumSearchResult;
+import org.thornex.musicparty.dto.ResolvedLink;
+import org.thornex.musicparty.dto.SourceHealth;
 import org.thornex.musicparty.exception.ApiRequestException;
+import org.thornex.musicparty.service.LinkResolverService;
+import org.thornex.musicparty.service.SourceHealthService;
 import org.thornex.musicparty.service.api.IMusicApiService;
 import reactor.core.publisher.Mono;
 
@@ -20,11 +25,16 @@ public class ApiController {
 
     private final Map<String, IMusicApiService> apiServiceMap;
     private final AppProperties appProperties;
+    private final SourceHealthService sourceHealthService;
+    private final LinkResolverService linkResolverService;
 
-    public ApiController(List<IMusicApiService> apiServices, AppProperties appProperties) {
+    public ApiController(List<IMusicApiService> apiServices, AppProperties appProperties,
+                         SourceHealthService sourceHealthService, LinkResolverService linkResolverService) {
         this.apiServiceMap = apiServices.stream()
                 .collect(Collectors.toMap(IMusicApiService::getPlatformName, Function.identity()));
         this.appProperties = appProperties;
+        this.sourceHealthService = sourceHealthService;
+        this.linkResolverService = linkResolverService;
     }
 
     @GetMapping("/config")
@@ -59,8 +69,42 @@ public class ApiController {
     @GetMapping("/search/{platform}/{keyword}")
     public Mono<List<Music>> searchMusic(@PathVariable String platform, @PathVariable String keyword,
                                          @RequestParam(defaultValue = "0") int offset,
-                                         @RequestParam(defaultValue = "30") int limit) {
+                                         @RequestParam(defaultValue = "30") int limit,
+                                         HttpServletResponse response) {
+        noStore(response);
         return getService(platform).searchMusic(keyword, offset, limit);
+    }
+
+    /**
+     * 关键词走 query 参数：旧路径把关键词放在 path 里，歌名含 "/"（如 AC/DC）
+     * 会被 Spring 拆段变 404，编码成 %2F 又被容器拒绝为 400。
+     */
+    @GetMapping("/search")
+    public Mono<List<Music>> searchMusicByQuery(@RequestParam String platform,
+                                                @RequestParam(name = "q") String keyword,
+                                                @RequestParam(defaultValue = "0") int offset,
+                                                @RequestParam(defaultValue = "30") int limit,
+                                                HttpServletResponse response) {
+        noStore(response);
+        return getService(platform).searchMusic(keyword, offset, limit);
+    }
+
+    /** 搜索结果不可缓存：否则切回同一源时浏览器会直接把旧结果当新结果（4ms/30 hits）。 */
+    private static void noStore(HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store, max-age=0");
+        response.setHeader("Pragma", "no-cache");
+    }
+
+    /** 四源健康探测（60s 缓存），供搜索界面在发起搜索前展示真实可达性与时延。 */
+    @GetMapping("/sources/health")
+    public Mono<List<SourceHealth>> sourcesHealth() {
+        return sourceHealthService.health();
+    }
+
+    /** 粘贴链接解析：四个源各自的 URL 形态收敛到一处。 */
+    @GetMapping("/resolve")
+    public Mono<ResolvedLink> resolveLink(@RequestParam String url) {
+        return linkResolverService.resolve(url);
     }
 
     @GetMapping("/user/playlists/{platform}/{userId}")
@@ -93,6 +137,15 @@ public class ApiController {
 
     @GetMapping("/search/albums/{platform}/{keyword}")
     public Mono<List<AlbumSearchResult>> searchAlbums(@PathVariable String platform, @PathVariable String keyword) {
+        return getService(platform).searchAlbums(keyword);
+    }
+
+    /** 专辑搜索同样改走 query：专辑名含 "/" 不会再被路径拆段。 */
+    @GetMapping("/search/albums")
+    public Mono<List<AlbumSearchResult>> searchAlbumsByQuery(@RequestParam String platform,
+                                                             @RequestParam(name = "q") String keyword,
+                                                             HttpServletResponse response) {
+        noStore(response);
         return getService(platform).searchAlbums(keyword);
     }
 

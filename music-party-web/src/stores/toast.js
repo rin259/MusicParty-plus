@@ -29,6 +29,34 @@ export const useToastStore = defineStore('toast', () => {
         if (index !== -1) toasts.value.splice(index, 1);
     };
 
+    // 点赞专用：时间窗内的连续点赞堆叠为同一条，右上角 ×N 计数。
+    // 渐消逻辑与普通 toast 完全一致（同一 duration 定时器 + remove + leave 过渡），
+    // 仅在堆叠命中时重置计时器，等最后一点赞完再照常淡出。
+    const like = (message, duration = 3000) => {
+        const existing = toasts.value.find(t => t.stack === 'like');
+        if (existing) {
+            existing.count = (existing.count || 1) + 1;
+            existing.message = message;
+            clearTimeout(existing._timer);
+            existing._timer = setTimeout(() => remove(existing.id), existing.duration);
+            return existing;
+        }
+
+        const id = idCounter++;
+        const toast = {
+            id,
+            title: 'LIKE',
+            message,
+            type: 'info',
+            duration,
+            count: 1,
+            stack: 'like'
+        };
+        toasts.value.push(toast);
+        toast._timer = setTimeout(() => remove(toast.id), duration);
+        return toast;
+    };
+
     const success = (message, title = 'SUCCESS') => add({ title, message, type: 'success' });
     const error = (message, title = 'ERROR') => add({ title, message, type: 'error' });
     const info = (message, title = 'INFO') => add({ title, message, type: 'info' });
@@ -38,6 +66,7 @@ export const useToastStore = defineStore('toast', () => {
         toasts,
         add,
         remove,
+        like,
         success,
         error,
         info,

@@ -39,6 +39,10 @@ public class StreamBroadcaster {
         return clients.size();
     }
 
+    public boolean hasClient(OutputStream os) {
+        return clients.contains(os);
+    }
+
     public void broadcast(byte[] data, int length) {
         if (clients.isEmpty()) return;
 

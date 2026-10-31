@@ -1,12 +1,12 @@
 <template>
-  <div v-if="!passed" class="fixed inset-0 z-[200] bg-medical-50 flex items-center justify-center p-4">
-    <div class="bg-white p-8 shadow-2xl border border-medical-200 w-full max-w-md chamfer-br relative">
+  <div v-if="!passed" class="fixed inset-0 z-[130] bg-medical-50 flex items-center justify-center p-4">
+    <div ref="dialogRef" role="dialog" aria-modal="true" aria-labelledby="room-gate-title" class="bg-surface-1 p-8 shadow-2xl border border-medical-200 w-full max-w-md chamfer-br relative">
       <!-- 装饰 -->
-      <div class="absolute top-0 left-0 w-2 h-full bg-medical-900"></div>
+      <div class="absolute top-0 left-0 w-full h-0.5 bg-surface-strong"></div>
 
       <div class="mb-6">
-        <h2 class="text-2xl font-black text-medical-900 tracking-tighter">
-          {{ isSetupMode ? 'INITIALIZE SYSTEM' : 'PbSECURITY ACCESS' }}
+        <h2 id="room-gate-title" class="text-2xl font-bold text-medical-900 tracking-tighter">
+          {{ isSetupMode ? 'INITIALIZE SYSTEM' : 'ROOM SECURITY ACCESS' }}
         </h2>
         <p class="text-xs font-mono text-medical-500 mt-1">
           {{ isSetupMode ? 'PLEASE CONFIGURE ROOM ACCESS.' : 'RESTRICTED AREA. ENTER PASSCODE.' }}
@@ -19,8 +19,9 @@
             v-model="inputPassword"
             type="password"
             :placeholder="isSetupMode ? 'SET NEW PASSWORD' : 'INPUT PASSWORD'"
+            :aria-label="isSetupMode ? '设置房间密码' : '输入房间密码'"
             @keyup.enter="handleAction"
-            class="w-full bg-medical-50 border border-medical-200 p-3 outline-none focus:border-accent font-mono text-center tracking-widest text-lg text-medical-900 placeholder:text-medical-400"
+            class="w-full min-h-12 bg-medical-50 border border-medical-200 p-3 outline-none focus:border-accent font-mono text-center tracking-widest text-lg text-medical-900 placeholder:text-medical-500"
             autofocus
         />
 
@@ -28,7 +29,7 @@
             v-if="!isSetupMode || setupType === 'password'"
             @click="handleAction"
             :disabled="loading"
-            class="w-full bg-medical-900 text-white font-bold py-3 hover:bg-accent transition-colors disabled:opacity-50"
+            class="w-full min-h-11 bg-surface-strong text-white font-bold py-3 hover:bg-accent hover:text-accent-fg transition-colors disabled:opacity-50"
         >
           {{ loading ? 'VERIFYING...' : (isSetupMode ? 'CONFIRM PASSWORD' : 'UNLOCK') }}
         </button>
@@ -36,20 +37,20 @@
         <div v-if="isSetupMode && setupType === 'initial'" class="space-y-3">
           <button
               @click="setupType = 'password'"
-              class="w-full bg-medical-900 text-white font-bold py-3 hover:bg-accent transition-colors chamfer-br"
+              class="w-full min-h-11 bg-surface-strong text-white font-bold py-3 hover:bg-accent hover:text-accent-fg transition-colors chamfer-br"
           >
             SET PASSWORD PROTECTION
           </button>
 
           <div class="relative flex py-2 items-center">
             <div class="flex-grow border-t border-medical-200"></div>
-            <span class="flex-shrink-0 mx-4 text-medical-300 text-xs font-mono">OR</span>
+            <span class="flex-shrink-0 mx-4 text-medical-500 text-xs font-mono">OR</span>
             <div class="flex-grow border-t border-medical-200"></div>
           </div>
 
           <button
               @click="setupNoPassword"
-              class="w-full bg-white border border-medical-300 text-medical-500 font-bold py-3 hover:bg-medical-100 transition-colors hover:text-medical-900"
+              class="w-full min-h-11 bg-surface-1 border border-medical-300 text-medical-600 font-bold py-3 hover:bg-medical-100 transition-colors hover:text-medical-900"
           >
             NO PASSWORD (PUBLIC)
           </button>
@@ -58,14 +59,14 @@
         <button
             v-if="isSetupMode && setupType === 'password'"
             @click="setupType = 'initial'"
-            class="w-full text-xs text-medical-400 hover:text-medical-900 mt-2 underline"
+            class="w-full min-h-11 text-xs text-medical-600 hover:text-medical-900 mt-2 underline"
         >
           &lt; BACK
         </button>
 
       </div>
 
-      <div v-if="errorMsg" class="mt-4 text-center text-red-500 font-mono text-xs animate-pulse">
+      <div v-if="errorMsg" role="alert" class="mt-4 text-center text-danger font-mono text-xs animate-pulse">
         > ERROR: {{ errorMsg }}
       </div>
     </div>
@@ -73,9 +74,10 @@
 </template>
 
 <script setup>
-import {ref, onMounted} from 'vue';
+import {ref, computed, onMounted} from 'vue';
 import {authApi} from '../api/auth';
 import {STORAGE_KEYS} from '../constants/keys';
+import { useFocusTrap } from '../composables/useFocusTrap';
 
 const emit = defineEmits(['unlocked']);
 
@@ -85,6 +87,8 @@ const setupType = ref('initial'); // 'initial' | 'password'
 const inputPassword = ref('');
 const errorMsg = ref('');
 const loading = ref(false);
+const dialogRef = ref(null);
+useFocusTrap(computed(() => !passed.value), dialogRef);
 
 const checkStatus = async () => {
   loading.value = true;

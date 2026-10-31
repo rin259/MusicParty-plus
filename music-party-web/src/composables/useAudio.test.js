@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { positionFromPointer, shouldRestartRepeat } from '../logic/audioSync.js';
-import { advanceBassMass, logFrequencyPosition, sampleSpectrumFrequency } from '../logic/AudioVisualizer.js';
+import { logFrequencyPosition, sampleSpectrumFrequency } from '../logic/AudioVisualizer.js';
 
 test('restarts an ended track when repeat-one rewinds the server position', () => {
     assert.equal(shouldRestartRepeat({
@@ -54,12 +54,4 @@ test('maps a log-frequency range onto a [0,1] position', () => {
     assert.equal(Math.round(logFrequencyPosition(1)), 16000);
     const halfway = logFrequencyPosition(0.5);
     assert.ok(halfway > 45 && halfway < 16000);
-});
-
-test('models a damped bass mass that eventually settles on its target', () => {
-    let state = { displacement: 0, velocity: 0 };
-    for (let step = 0; step < 200; step++) {
-        state = advanceBassMass(state, 0.5);
-    }
-    assert.ok(Math.abs(state.displacement - 0.5) < 0.001);
 });

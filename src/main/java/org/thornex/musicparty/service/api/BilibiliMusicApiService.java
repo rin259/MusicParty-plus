@@ -3,6 +3,7 @@ package org.thornex.musicparty.service.api;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.util.UriComponentsBuilder;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.Music;
@@ -18,6 +19,7 @@ import reactor.core.publisher.Mono;
 import com.fasterxml.jackson.databind.JsonNode;
 import reactor.util.retry.Retry;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.stream.StreamSupport;
 
@@ -32,6 +34,16 @@ public class BilibiliMusicApiService implements IMusicApiService {
     private static final String PLATFORM = "bilibili";
     private final BilibiliWbiService wbiService;
     private final YtDlpResolver ytDlpResolver;
+    // 实测(2026-10-14)：仅发 SESSDATA 会被 B 站风控 412（playurl/网页尤甚），
+    // 附上 buvid3 设备指纹后全通。每个 JVM 进程稳定一份。
+    private final String buvid3 = UUID.randomUUID().toString().toUpperCase() + "infoc";
+    private static final String BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+    /** Cookie 头统一出口：SESSDATA(若有) + buvid3 设备指纹。 */
+    private String cookieHeader() {
+        String device = "buvid3=" + buvid3;
+        return sessdata.isBlank() ? device : "SESSDATA=" + sessdata + "; " + device;
+    }
 
     private static class WbiSignatureException extends RuntimeException {
         public WbiSignatureException(String message) { super(message); }
@@ -40,7 +52,7 @@ public class BilibiliMusicApiService implements IMusicApiService {
     public BilibiliMusicApiService(WebClient webClient, AppProperties appProperties, LocalCacheService localCacheService, BilibiliWbiService wbiService, YtDlpResolver ytDlpResolver) {
         this.webClient = webClient;
         this.baseUrl = appProperties.getBilibili().getBaseUrl();
-        this.sessdata = appProperties.getBilibili().getSessdata();
+        this.sessdata = normalizeSessdata(appProperties.getBilibili().getSessdata());
         this.localCacheService = localCacheService;
         this.wbiService = wbiService;
         this.ytDlpResolver = ytDlpResolver;
@@ -53,9 +65,23 @@ public class BilibiliMusicApiService implements IMusicApiService {
     }
 
     public void updateSessdata(String newSessdata) {
-        this.sessdata = newSessdata;
-        this.wbiService.updateSessdata(newSessdata);
+        this.sessdata = normalizeSessdata(newSessdata);
+        this.wbiService.updateSessdata(this.sessdata);
         log.info("Bilibili API Service SESSDATA updated.");
+    }
+
+    /**
+     * 管理端可能粘贴完整 cookie 对（"SESSDATA=xxx"），直接拼接会发出
+     * "Cookie: SESSDATA=SESSDATA=xxx" 这种废头，反而触发 B 站 412 风控。
+     * 此处统一剥掉前缀，保证各处拿到的是裸值。
+     */
+    private static String normalizeSessdata(String raw) {
+        if (raw == null) return "";
+        String value = raw.trim();
+        if (value.regionMatches(true, 0, "SESSDATA=", 0, "SESSDATA=".length())) {
+            value = value.substring("SESSDATA=".length()).trim();
+        }
+        return value;
     }
 
     public String getSessdata() {
@@ -69,7 +95,7 @@ public class BilibiliMusicApiService implements IMusicApiService {
     private WebClient.RequestHeadersSpec<?> buildBilibiliRequest(String uri) {
         return webClient.get()
                 .uri(uri)
-                .header("Cookie", "SESSDATA=" + this.sessdata)
+                .header("Cookie", cookieHeader())
                 .header("Referer", "https://www.bilibili.com/");
     }
 
@@ -100,8 +126,8 @@ public class BilibiliMusicApiService implements IMusicApiService {
 
                     return webClient.get()
                             .uri(builder.build().toUri()) // 使用编码后的 URI
-                            .header("Cookie", "SESSDATA=" + sessdata)
-                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                            .header("Cookie", cookieHeader())
+                            .header("User-Agent", BROWSER_UA)
                             .header("Referer", "https://www.bilibili.com/") // 必须带 Referer
                             .retrieve()
                             .bodyToMono(JsonNode.class)
@@ -240,8 +266,8 @@ public class BilibiliMusicApiService implements IMusicApiService {
 
                                 return webClient.get()
                                         .uri(builder.build().toUri())
-                                        .header("Cookie", "SESSDATA=" + sessdata)
-                                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                                        .header("Cookie", cookieHeader())
+                                        .header("User-Agent", BROWSER_UA)
                                         .header("Referer", "https://www.bilibili.com/video/" + bvid)
                                         .retrieve()
                                         .bodyToMono(JsonNode.class)
@@ -265,12 +291,27 @@ public class BilibiliMusicApiService implements IMusicApiService {
                                             return Mono.just(url);
                                         });
                             })
-                            // 将 retryWhen 应用于整个 wbiService.signParams(...).flatMap(...) 链
-                            .retryWhen(Retry.max(1)
-                                    .filter(throwable -> throwable instanceof WbiSignatureException)
-                                    .doBeforeRetry(retrySignal -> {
-                                        log.warn("WBI signature error on getting play url. Invalidating cache and retrying...");
-                                        wbiService.invalidateCache();
+                            // 统一重试：WBI 签名失效(重签) + B 站风控 412/429(指数退避)。
+                            // 2026-10-13 实测：风控窗口内直叩与 yt-dlp 会同时失败，
+                            // 稍候重试即可自愈，避免直接把失败抛给用户。
+                            .retryWhen(Retry.backoff(3, Duration.ofSeconds(2))
+                                    .jitter(0.5)
+                                    .filter(throwable -> {
+                                        if (throwable instanceof WbiSignatureException) return true;
+                                        if (throwable instanceof WebClientResponseException wcre) {
+                                            int status = wcre.getStatusCode().value();
+                                            return status == 412 || status == 429;
+                                        }
+                                        return false;
+                                    })
+                                    .doBeforeRetry(signal -> {
+                                        if (signal.failure() instanceof WbiSignatureException) {
+                                            log.warn("WBI signature error on getting play url. Invalidating cache and retrying...");
+                                            wbiService.invalidateCache();
+                                        } else {
+                                            log.warn("Bilibili playurl risk-control (412/429), backing off and retrying: {}",
+                                                    signal.failure().getMessage());
+                                        }
                                     })
                             );
                 });

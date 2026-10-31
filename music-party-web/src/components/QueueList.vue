@@ -1,25 +1,36 @@
 <template>
-  <div id="tutorial-queue" class="h-full flex flex-col bg-white border-l border-medical-200">
+  <div id="tutorial-queue" class="h-full flex flex-col bg-surface-1 border-l border-medical-200">
     <div class="p-4 bg-medical-50 border-b border-medical-200 flex justify-between items-center">
-      <h3 class="text-sm font-bold text-medical-900">播放队列 <span class="text-accent text-xs">[{{ queue.length }}]</span></h3>
+      <div class="min-w-0">
+        <h3 class="text-sm font-bold text-medical-900">播放队列 <span class="text-accent-text text-xs">[{{ queue.length }}]</span></h3>
+        <div class="mt-0.5 font-mono text-[9px] tracking-[0.14em] text-medical-500 tabular-nums">
+          READY {{ readyCount }}
+          <span class="mx-1 text-medical-300">|</span>
+          RESOLVING {{ resolvingCount }}
+          <span v-if="failedCount" class="ml-1 text-danger">| FAILED {{ failedCount }}</span>
+        </div>
+      </div>
+      <button v-if="dismissible" @click="$emit('close')" class="flex items-center justify-center w-11 h-11 -mr-2 text-medical-500 hover:text-medical-900" aria-label="关闭播放队列">
+        <X class="w-5 h-5" />
+      </button>
     </div>
 
     <!-- Conditional Rendering: Show empty message -->
-    <div v-if="queue.length === 0" class="flex-1 text-center py-10 text-xs font-mono text-medical-400">
+    <div v-if="queue.length === 0" class="flex-1 text-center py-10 text-xs font-mono text-medical-500">
       QUEUE EMPTY / WAITING FOR INPUT
     </div>
 
     <!-- Shuffle Mode View: Grouped by User (ONLY for Fair Shuffle) -->
     <div v-else-if="player.isShuffle && player.isFairShuffle" class="flex-1 overflow-y-auto p-2">
       <!-- Shuffle Indicator -->
-      <div class="mb-4 bg-accent/10 border border-accent/20 p-2 flex items-center gap-2 rounded-sm text-accent text-xs font-bold">
+      <div class="mb-4 bg-accent/10 border border-accent/20 p-2 flex items-center gap-2 rounded-sm text-accent-text text-xs font-bold">
         <Shuffle class="w-4 h-4" />
         <span>随机播放中</span>
       </div>
 
       <!-- Top Songs (Always at top) -->
       <div v-if="topItems.length > 0" class="mb-4">
-        <div class="text-xs font-mono text-medical-400 mb-2 pl-1">TOP PRIORITY</div>
+        <div class="text-xs font-mono text-medical-500 mb-2 pl-1">TOP PRIORITY</div>
         <QueueItem
             v-for="(item, idx) in topItems"
             :key="item.queueId"
@@ -30,7 +41,7 @@
 
       <!-- User Groups (Drawers) -->
       <div class="space-y-2">
-        <div v-for="group in userGroups" :key="group.token" class="border border-medical-100 bg-white">
+        <div v-for="group in userGroups" :key="group.token" class="border border-medical-100 bg-surface-1">
           <button
               @click="toggleUser(group.token)"
               class="w-full flex items-center justify-between p-3 hover:bg-medical-50 transition-colors"
@@ -43,12 +54,12 @@
                 <div class="text-sm font-bold text-medical-800">
                   {{ userStore.resolveName(group.token, group.name) }}
                 </div>
-                <div class="text-[10px] text-medical-400 font-mono">
+                <div class="text-[10px] text-medical-500 font-mono">
                   {{ group.items.length }} SONGS
                 </div>
               </div>
             </div>
-            <component :is="expandedUsers[group.token] ? ChevronDown : ChevronRight" class="w-4 h-4 text-medical-400" />
+            <component :is="expandedUsers[group.token] ? ChevronDown : ChevronRight" class="w-4 h-4 text-medical-500" />
           </button>
 
           <!-- Drawer Content -->
@@ -78,13 +89,21 @@
 <script setup>
 import { computed, ref } from 'vue';
 import { usePlayerStore } from '../stores/player';
-import { Shuffle, ChevronDown, ChevronRight, User } from 'lucide-vue-next';
+import { Shuffle, ChevronDown, ChevronRight, User, X } from 'lucide-vue-next';
 import { useUserStore } from '../stores/user';
 import QueueItem from './QueueItem.vue';
+
+defineProps({ dismissible: { type: Boolean, default: false } });
+defineEmits(['close']);
 
 const player = usePlayerStore();
 const queue = computed(() => player.queue);
 const userStore = useUserStore();
+
+// 队列的真实解析状态：READY / RESOLVING / FAILED（用于头部微观测）
+const readyCount = computed(() => queue.value.filter((item) => !item.status || item.status === 'READY').length);
+const resolvingCount = computed(() => queue.value.filter((item) => item.status === 'PENDING' || item.status === 'DOWNLOADING').length);
+const failedCount = computed(() => queue.value.filter((item) => item.status === 'FAILED').length);
 
 // --- Shuffle Mode Logic ---
 

@@ -15,12 +15,15 @@ function handleGameEvent(event) {
     const userStore = useUserStore();
     const chatStore = useChatStore();
     const adminStore = useAdminStore();
-    const { show, error } = useToast(); // This now uses the Pinia store wrapper
+    const { show, error, like } = useToast(); // This now uses the Pinia store wrapper
     const userName = event.userId === 'SYSTEM' ? '系统' : userStore.resolveName(event.userId);
 
     // 1. 处理特殊业务逻辑 (非 UI 展示)
     if (event.action === 'LIKE') {
         window.dispatchEvent(new CustomEvent('player:like', { detail: { userId: event.userId } }));
+        // 点赞 toast 堆叠：连续点赞合并为一条，右上角 ×N 计数，淡出节奏不变
+        like(event.message || `${userName} 点赞了`);
+        return;
     }
 
     if (event.action === 'ADMIN_TRIGGER') {
@@ -111,6 +114,18 @@ export const createSocketSubscriptions = () => {
         // 4. 事件通知 (Toast)
         [WS_DEST.TOPIC_EVENTS]: handleGameEvent,
         [WS_DEST.USER_EVENTS]: handleGameEvent,
+
+        // 4b. 点歌回执 / 导入进度（只发给自己）
+        [WS_DEST.USER_ENQUEUE_RESULT]: (result) => {
+            const handled = playerStore.applyEnqueueResult(result);
+            if (handled && handled.status !== 'QUEUED') {
+                const { error } = useToast();
+                error(handled.message || '添加失败');
+            }
+        },
+        [WS_DEST.USER_IMPORT_PROGRESS]: (progress) => {
+            playerStore.applyImportProgress(progress);
+        },
 
         // 5. 聊天相关
         [WS_DEST.TOPIC_CHAT]: (msg) => chatStore.addMessage(msg),

@@ -10,6 +10,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -33,6 +34,7 @@ public class YtDlpResolver {
     private final long timeoutSeconds;
     private final long downloadTimeoutSeconds;
     private final ObjectMapper objectMapper;
+    private static final String BUVID3 = java.util.UUID.randomUUID().toString().toUpperCase() + "infoc";
 
     public YtDlpResolver(AppProperties appProperties, ObjectMapper objectMapper) {
         this.executable = appProperties.getYtDlp().getPath();
@@ -60,6 +62,11 @@ public class YtDlpResolver {
 
     public Mono<TrackMetadata> resolveSoundCloudMetadata(String trackId) {
         return resolveMetadata("https://api.soundcloud.com/tracks/" + trackId, "soundcloud");
+    }
+
+    /** 粘贴 SoundCloud 单曲页链接时，先解析出数字 ID，再走正常的点歌链路。 */
+    public Mono<TrackMetadata> resolveSoundCloudUrl(String url) {
+        return resolveMetadata(url, "soundcloud");
     }
 
     public Mono<Void> validateSoundCloudAudio(String sourceUrl) {
@@ -152,9 +159,12 @@ public class YtDlpResolver {
                 "--format", "ba[ext=m4a]/ba/b", "--retries", "2", "--fragment-retries", "3",
                 "--socket-timeout", "15", "--get-url", "--add-header", "Referer: https://www.bilibili.com/"
         ));
-        if (sessdata != null && !sessdata.isBlank()) {
-            command.add("--add-header");
-            command.add("Cookie: SESSDATA=" + sessdata);
+        String cookieValue = normalizeSessdata(sessdata);
+        if (!cookieValue.isBlank()) {
+            // 用 --cookies 文件替代 --add-header Cookie：后者已被 yt-dlp 弃用，
+            // 且会与 yt-dlp 自身的 cookie 管理冲突，导致 B 站返回降级数据（No video formats found）。
+            command.add("--cookies");
+            command.add(writeBilibiliCookieFile(cookieValue).toString());
         }
         command.add("https://www.bilibili.com/video/" + bvid);
         String output = runCommand(command, "Bilibili audio URL");
@@ -162,6 +172,35 @@ public class YtDlpResolver {
                 .filter(line -> line.startsWith("http://") || line.startsWith("https://"))
                 .reduce((first, last) -> last)
                 .orElseThrow(() -> new IllegalStateException("yt-dlp returned no Bilibili media URL"));
+    }
+
+    private static String normalizeSessdata(String raw) {
+        if (raw == null) return "";
+        String value = raw.trim();
+        if (value.regionMatches(true, 0, "SESSDATA=", 0, "SESSDATA=".length())) {
+            value = value.substring("SESSDATA=".length()).trim();
+        }
+        return value;
+    }
+
+    private Path writeBilibiliCookieFile(String sessdata) throws Exception {
+        Path dataDir = Path.of("data");
+        Files.createDirectories(dataDir);
+        Path cookieFile = dataDir.resolve("bilibili-cookies.txt");
+        // 实测(2026-10-14)：仅带 SESSDATA 反被 B 站 412（有登录态而无设备指纹最可疑），
+        // 附上 buvid3 后网页与取流全通。buvid3 每个 JVM 进程稳定一份。
+        String content = "# Netscape HTTP Cookie File\n"
+                + ".bilibili.com\tTRUE\t/\tTRUE\t0\tSESSDATA\t" + sessdata + "\n"
+                + ".bilibili.com\tTRUE\t/\tTRUE\t0\tbuvid3\t" + BUVID3 + "\n";
+        if (!Files.exists(cookieFile) || !Files.readString(cookieFile).equals(content)) {
+            Files.writeString(cookieFile, content, StandardCharsets.UTF_8);
+            try {
+                Files.setPosixFilePermissions(cookieFile, PosixFilePermissions.fromString("rw-------"));
+            } catch (UnsupportedOperationException ignored) {
+                // 非 POSIX 文件系统，忽略权限设置
+            }
+        }
+        return cookieFile;
     }
 
     private String runJsonCommand(List<String> arguments) throws Exception {

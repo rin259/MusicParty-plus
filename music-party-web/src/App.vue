@@ -1,7 +1,7 @@
 <!-- src/App.vue -->
 <template>
   <!-- 全局 Toast 挂载点 -->
-  <ToastNotification ref="toastInstance" />
+  <ToastNotification />
 
   <div class="h-screen w-screen overflow-hidden font-sans transition-colors duration-500">
     <AudioEngine />
@@ -10,12 +10,12 @@
 
     <!-- 2. 启动页 (Start Screen) -->
     <!-- 注意：点击 Connect 后，我们先不销毁它，直到 socket 连接成功，或者直接切换布局 -->
-    <div v-if="userStore.isAuthPassed && !hasStarted" class="absolute inset-0 z-[100] bg-medical-50 flex flex-col items-center justify-center space-y-8">
-      <div class="text-4xl font-black tracking-tighter text-medical-900">MUSIC PARTY</div>
-      <div class="font-mono text-xs text-medical-400 tracking-widest">SYSTEM READY</div>
+    <div v-if="userStore.isAuthPassed && !hasStarted" class="absolute inset-0 z-40 bg-medical-50 flex flex-col items-center justify-center space-y-8">
+      <h1 class="text-4xl font-bold tracking-tighter text-medical-900">MUSIC PARTY</h1>
+      <p class="font-mono text-xs text-medical-500 tracking-widest">SYSTEM READY</p>
       <button
           @click="startGame"
-          class="px-12 py-4 bg-medical-900 text-white font-bold text-xl hover:bg-accent transition-colors chamfer-br"
+          class="px-12 py-4 min-h-12 bg-surface-strong text-white font-bold text-xl hover:bg-accent hover:text-accent-fg transition-colors chamfer-br"
       >
         CONNECT
       </button>
@@ -47,13 +47,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref } from 'vue';
 import { useEventListener } from '@vueuse/core';
 import { usePlayerStore } from './stores/player';
 import { useUserStore } from './stores/user';
 import { useUiStore } from './stores/ui';
 import { useAdminStore } from './stores/admin';
-import { useToast } from './composables/useToast';
+import { useChatStore } from './stores/chat';
 
 // Components
 import MainLayout from './components/layout/MainLayout.vue';
@@ -75,8 +75,25 @@ const uiStore = useUiStore();
 const adminStore = useAdminStore();
 const hasStarted = ref(false);
 const showSearch = ref(false);
-const toastInstance = ref(null);
-const { register } = useToast();
+const chatStore = useChatStore();
+
+// 键盘可达性(antislop R-32)：Escape 自上而下关闭最上层浮层
+useEventListener(window, 'keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (adminStore.showAuthModal) { adminStore.showAuthModal = false; return; }
+  if (userStore.showNameModal) { userStore.showNameModal = false; return; }
+  if (adminStore.showDashboard) { adminStore.showDashboard = false; return; }
+  if (showSearch.value) { showSearch.value = false; return; }
+  if (chatStore.isOpen) chatStore.toggleChat();
+});
+
+// Cmd/Ctrl+K：随处唤起搜索（房间内、无更高层浮层时）
+useEventListener(window, 'keydown', (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'k') return;
+  if (!hasStarted.value || adminStore.showAuthModal || adminStore.showDashboard || userStore.showNameModal) return;
+  e.preventDefault();
+  showSearch.value = true;
+});
 
 const startGame = () => {
   hasStarted.value = true;
@@ -91,16 +108,7 @@ useEventListener(document, 'visibilitychange', () => {
 });
 
 const handleSearchClick = () => {
-  // 简单的搜索逻辑代理
-  if (userStore.isGuest) {
-    userStore.setPostNameAction(() => { showSearch.value = true; });
-    userStore.showNameModal = true;
-  } else {
-    showSearch.value = true;
-  }
+  // 游客也可先逛：只在「加入队列」时才要求起名，并保留这次点歌意图。
+  showSearch.value = true;
 };
-
-onMounted(() => {
-  if (toastInstance.value) register(toastInstance.value);
-});
 </script>

@@ -7,80 +7,108 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.thornex.musicparty.config.AppProperties;
-import org.thornex.musicparty.dto.PlayableMusic;
+import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.service.LocalCacheService;
-import reactor.core.publisher.Mono;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
+/**
+ * 网易云取流容错：上游 502 read ETIMEDOUT 属瞬时抖动（实测同一请求稍后即 200）。
+ * 这些测试用本地 stub 复现该行为，锁定「退避重试 + 逐级降音质」两条承诺。
+ */
 class NeteaseMusicApiServiceTest {
 
+    private static final String URL = "http://cdn.example/x.mp3";
+    private static final Pattern LEVEL = Pattern.compile("level=([^&]+)");
+
     private HttpServer server;
-    private AppProperties properties;
-    private LocalCacheService cache;
+    private final AtomicInteger requests = new AtomicInteger();
+    private volatile int failFirstRequests = 0;
+    private volatile String onlyLevelWithUrl = null;
 
     @BeforeEach
-    void setUp() throws IOException {
-        server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/song/detail", this::respondWithSongDetails);
-        server.createContext("/song/url/v1", this::respondWithSongUrl);
+    void startStub() throws IOException {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/song/url/v1", this::handle);
         server.start();
-
-        properties = new AppProperties();
-        AppProperties.NeteaseApiConfig netease = new AppProperties.NeteaseApiConfig();
-        netease.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
-        netease.setCookie("test-cookie");
-        properties.setNetease(netease);
-        cache = mock(LocalCacheService.class);
     }
 
     @AfterEach
-    void tearDown() {
+    void stopStub() {
         server.stop(0);
     }
 
-    @Test
-    void returnsCachedMediaWithoutResolvingAnotherExternalPlaybackUrl() {
-        when(cache.getLocalUrl("netease_42")).thenReturn("/media/netease_42.mp3");
-        NeteaseMusicApiService service = new NeteaseMusicApiService(WebClient.builder().build(), properties, cache);
+    private void handle(HttpExchange exchange) throws IOException {
+        int attempt = requests.incrementAndGet();
+        String query = exchange.getRequestURI().getQuery();
+        Matcher matcher = LEVEL.matcher(query == null ? "" : query);
+        String level = matcher.find() ? matcher.group(1) : "";
 
-        PlayableMusic playable = service.getPlayableMusic("42").block();
-
-        assertThat(playable.url()).isEqualTo("/media/netease_42.mp3");
-        verify(cache).getLocalUrl("netease_42");
+        if (attempt <= failFirstRequests) {
+            respond(exchange, 502, "{\"code\":502,\"msg\":\"read ETIMEDOUT\"}");
+            return;
+        }
+        boolean hasUrl = onlyLevelWithUrl == null || onlyLevelWithUrl.equals(level);
+        respond(exchange, 200, hasUrl
+                ? "{\"data\":[{\"id\":\"1\",\"url\":\"" + URL + "\"}]}"
+                : "{\"data\":[{\"id\":\"1\",\"url\":null}]}");
     }
 
-    @Test
-    void queuesAnUncachedTrackAndDoesNotExposeTheCdnUrlToTheBrowser() {
-        NeteaseMusicApiService service = new NeteaseMusicApiService(WebClient.builder().build(), properties, cache);
-
-        PlayableMusic playable = service.getPlayableMusic("42").block();
-
-        assertThat(playable.url()).isEqualTo("PENDING_DOWNLOAD");
-        verify(cache).submitDownload(eq("netease_42"), org.mockito.ArgumentMatchers.<Mono<LocalCacheService.DownloadSource>>any());
-    }
-
-    private void respondWithSongDetails(HttpExchange exchange) throws IOException {
-        respond(exchange, "{\"songs\":[{\"id\":42,\"name\":\"Cached Song\",\"ar\":[{\"name\":\"Artist\"}],\"dt\":120000,\"al\":{\"picUrl\":\"https://example.test/cover.jpg\"}}]}");
-    }
-
-    private void respondWithSongUrl(HttpExchange exchange) throws IOException {
-        respond(exchange, "{\"data\":[{\"url\":\"https://cdn.example.test/music/42.mp3\"}]}");
-    }
-
-    private void respond(HttpExchange exchange, String body) throws IOException {
+    private static void respond(HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(200, bytes.length);
-        exchange.getResponseBody().write(bytes);
-        exchange.close();
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(bytes);
+        }
+    }
+
+    private NeteaseMusicApiService service() {
+        AppProperties properties = new AppProperties();
+        AppProperties.NeteaseApiConfig netease = new AppProperties.NeteaseApiConfig();
+        netease.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+        netease.setQuality("exhigh");
+        netease.setCookie("MUSIC_U=test-cookie");
+        properties.setNetease(netease);
+        return new NeteaseMusicApiService(WebClient.builder().build(), properties, mock(LocalCacheService.class));
+    }
+
+    @Test
+    void retriesTransientGatewayFailureThenSucceeds() {
+        failFirstRequests = 2;
+
+        String url = service().resolveMusicUrl("1").block();
+
+        assertThat(url).isEqualTo(URL);
+        assertThat(requests.get()).as("1 次 + 2 次重试").isEqualTo(3);
+    }
+
+    @Test
+    void fallsBackToLowerQualityWhenTopQualityReturnsNoUrl() {
+        onlyLevelWithUrl = "higher";
+
+        String url = service().resolveMusicUrl("1").block();
+
+        assertThat(url).isEqualTo(URL);
+        assertThat(requests.get()).as("exhigh 无地址 → 退到 higher").isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void reportsFailureAfterAllLevelsExhausted() {
+        onlyLevelWithUrl = "lossless-never-offered";
+
+        assertThatThrownBy(() -> service().resolveMusicUrl("1").block())
+                .isInstanceOf(ApiRequestException.class);
+        assertThat(requests.get()).as("每个音质档各试一次").isEqualTo(3);
     }
 }

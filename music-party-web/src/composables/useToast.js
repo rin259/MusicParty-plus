@@ -10,6 +10,7 @@ export function useToast() {
     };
 
     const show = (options) => store.add(options);
+    const like = (message, duration) => store.like(message, duration);
     const success = (message) => store.success(message);
     const error = (message) => store.error(message);
     const info = (message) => store.info(message);
@@ -18,6 +19,7 @@ export function useToast() {
     return {
         register,
         show,
+        like,
         success,
         error,
         info,

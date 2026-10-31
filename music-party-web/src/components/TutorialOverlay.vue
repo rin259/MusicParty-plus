@@ -1,13 +1,13 @@
 <template>
-  <div v-if="isActive" class="fixed inset-0 z-[9999] pointer-events-auto">
+  <div v-if="isActive" class="fixed inset-0 z-[120] pointer-events-auto">
     <!-- 背景遮罩 (半透明黑) -->
-    <div class="absolute inset-0 bg-black/50 transition-opacity duration-500"></div>
+    <div class="absolute inset-0 bg-scrim/60 transition-opacity duration-500"></div>
 
     <!-- 聚光灯效果 (可选，或者直接显示高亮框) -->
     <!-- 我们使用一个绝对定位的高亮框来框住目标元素 -->
     <div
         v-if="targetRect"
-        class="absolute border-2 border-accent shadow-[0_0_20px_rgba(var(--accent),0.5)] transition-all duration-300 ease-out pointer-events-none"
+        class="absolute border-2 border-accent shadow-[0_0_20px_rgb(var(--accent))] transition-all duration-300 ease-out pointer-events-none"
         :style="{
           top: targetRect.top - 4 + 'px',
           left: targetRect.left - 4 + 'px',
@@ -27,12 +27,16 @@
     <div
         v-if="currentStep"
         ref="tooltipRef"
-        class="absolute bg-white border border-medical-200 p-4 shadow-xl transition-all duration-300 chamfer-br flex flex-col gap-3"
+        role="dialog"
+        aria-modal="true"
+        aria-label="新手引导"
+        tabindex="-1"
+        class="absolute bg-surface-1 border border-medical-200 p-4 shadow-xl transition-all duration-300 chamfer-br flex flex-col gap-3 focus:outline-none"
         :style="tooltipStyle"
     >
       <div class="flex items-center justify-between border-b border-medical-100 pb-2">
-        <span class="text-xs font-mono font-bold text-accent">TUTORIAL_SYSTEM // {{ currentStepIndex + 1 }}/{{ steps.length }}</span>
-        <button @click="skipTutorial" class="text-xs text-medical-400 hover:text-medical-900 font-mono">[SKIP]</button>
+        <span class="text-xs font-mono font-bold text-accent-text">TUTORIAL_SYSTEM // {{ currentStepIndex + 1 }}/{{ steps.length }}</span>
+        <button @click="skipTutorial" class="min-h-9 px-2 -mr-2 text-xs text-medical-600 hover:text-medical-900 font-mono" aria-label="跳过新手引导">[SKIP]</button>
       </div>
       
       <div class="text-sm font-bold text-medical-900 leading-relaxed">
@@ -42,7 +46,7 @@
       <div class="flex justify-end pt-2">
         <button
             @click="nextStep"
-            class="px-4 py-1.5 bg-medical-900 text-white text-xs font-bold hover:bg-accent transition-colors chamfer-br"
+            class="px-4 py-2 min-h-11 bg-surface-strong text-white text-xs font-bold hover:bg-accent hover:text-accent-fg transition-colors chamfer-br"
         >
           {{ currentStepIndex === steps.length - 1 ? 'FINISH' : 'NEXT >' }}
         </button>
@@ -50,7 +54,7 @@
 
       <!-- 连接线 (简单的视觉装饰) -->
       <div 
-        class="absolute w-4 h-4 bg-white border-l border-b border-medical-200 transform rotate-45"
+        class="absolute w-4 h-4 bg-surface-1 border-l border-b border-medical-200 transform rotate-45"
         :class="arrowClass"
         :style="{ left: 'var(--arrow-left)' }"
       ></div>
@@ -60,7 +64,8 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch } from 'vue';
-import { useWindowSize } from '@vueuse/core';
+import { useWindowSize, useEventListener } from '@vueuse/core';
+import { useFocusTrap } from '../composables/useFocusTrap';
 
 const isActive = ref(false);
 const currentStepIndex = ref(0);
@@ -81,6 +86,7 @@ const steps = [
   },
   {
     targetId: 'tutorial-search',
+    mobileTargetId: 'tutorial-search-mobile',
     content: '点击搜索按钮寻找歌曲。在此处也可以通过搜索用户名来查看平台账号歌单。'
   },
   {
@@ -130,6 +136,15 @@ const currentDisplayContent = computed(() => {
 const tooltipRef = ref(null);
 const tooltipStyle = ref({});
 const arrowClass = ref('');
+
+// 既已宣告 aria-modal，就必须把键盘锁在浮层内——否则 Tab 会跑到底层控件，
+// 与其余 5 个浮层（房间门／改名／管理登录／搜索／管理台）不一致。
+// 初始焦点落在对话框本体（供读屏播报 aria-label），Tab 再进入 [SKIP]／NEXT。
+useFocusTrap(
+  computed(() => isActive.value && !!currentStep.value),
+  tooltipRef,
+  { initialFocus: () => tooltipRef.value }
+);
 
 // 检查元素是否可见（且有大小）
 const isElementVisible = (el) => {
@@ -227,9 +242,9 @@ const updatePosition = async () => {
 
   // 箭头样式
   if (arrowPos === 'top') {
-    arrowClass.value = `-top-2 bg-white border-t border-l border-medical-200 rotate-45`;
+    arrowClass.value = `-top-2 bg-surface-1 border-t border-l border-medical-200 rotate-45`;
   } else {
-    arrowClass.value = `-bottom-2 bg-white border-b border-r border-medical-200 rotate-45`;
+    arrowClass.value = `-bottom-2 bg-surface-1 border-b border-r border-medical-200 rotate-45`;
   }
   
   // 计算箭头相对于 tooltip 的水平位置
@@ -240,6 +255,10 @@ const updatePosition = async () => {
   // 将箭头位置注入 style
   tooltipStyle.value['--arrow-left'] = `${clampedArrowLeft}px`;
 };
+
+useEventListener(window, 'keydown', (e) => {
+  if (isActive.value && e.key === 'Escape') skipTutorial();
+});
 
 const nextStep = () => {
   if (currentStepIndex.value < steps.length - 1) {

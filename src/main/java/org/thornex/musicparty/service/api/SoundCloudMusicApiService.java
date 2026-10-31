@@ -1,5 +1,7 @@
 package org.thornex.musicparty.service.api;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.Music;
@@ -15,13 +17,32 @@ import java.util.regex.Pattern;
 
 @Service
 public class SoundCloudMusicApiService extends YtDlpMusicApiService {
+    private static final Logger log = LoggerFactory.getLogger(SoundCloudMusicApiService.class);
     private static final Pattern HANDLE_PATTERN = Pattern.compile("[A-Za-z0-9_-]{1,64}");
 
-    public SoundCloudMusicApiService(LocalCacheService localCacheService, YtDlpResolver resolver, AppProperties properties) {
-        super("soundcloud", localCacheService, resolver, properties.getSoundcloud().getSearchLimit());
+    private final SoundCloudSearchClient searchClient;
+
+    public SoundCloudMusicApiService(LocalCacheService localCacheService, YtDlpResolver resolver,
+                                     AppProperties properties, SoundCloudSearchClient searchClient) {
+        super("soundcloud", localCacheService, resolver, properties.getSoundcloud().getSearchLimit(),
+                properties.getSoundcloud().getFetchLimit());
+        this.searchClient = searchClient;
     }
 
-    @Override protected Mono<List<YtDlpResolver.TrackMetadata>> search(String keyword, int limit) { return resolver.searchSoundCloud(keyword, limit); }
+    @Override
+    protected Mono<List<YtDlpResolver.TrackMetadata>> searchPage(String keyword, int offset, int limit) {
+        return searchClient.search(keyword, offset, limit)
+                .onErrorResume(error -> {
+                    log.warn("SoundCloud api-v2 search failed for '{}', falling back to yt-dlp: {}",
+                            keyword, error.getMessage());
+                    return super.searchPage(keyword, offset, limit);
+                });
+    }
+
+    @Override protected Mono<List<YtDlpResolver.TrackMetadata>> search(String keyword, int limit) {
+        return searchClient.search(keyword, 0, limit)
+                .onErrorResume(error -> resolver.searchSoundCloud(keyword, limit));
+    }
     @Override protected Mono<YtDlpResolver.TrackMetadata> resolveMetadata(String musicId) { return resolver.resolveSoundCloudMetadata(musicId); }
 
     @Override

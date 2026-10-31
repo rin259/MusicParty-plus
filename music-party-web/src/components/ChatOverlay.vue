@@ -6,7 +6,7 @@
   -->
   <div
       :style="{ left: x + 'px', top: y + 'px' }"
-      class="fixed z-[100] flex flex-col items-center touch-none pointer-events-none"
+      class="fixed z-[55] flex flex-col items-center touch-none pointer-events-none"
   >
 
     <!--
@@ -24,7 +24,9 @@
     >
       <div
           v-if="chatStore.isOpen"
-          class="pointer-events-auto bg-white border border-medical-200 shadow-2xl flex flex-col chamfer-br overflow-hidden"
+          role="dialog"
+          aria-label="聊天窗口"
+          class="pointer-events-auto bg-surface-1 border border-medical-200 shadow-2xl flex flex-col chamfer-br overflow-hidden"
           :class="dynamicWindowClasses"
           @mousedown.stop
           @touchstart.stop
@@ -42,19 +44,21 @@
           <div class="font-mono text-xs font-bold text-medical-500 flex items-center gap-2">
             <MessageSquare class="w-3 h-3"/> CHAT
           </div>
-          <button @click="chatStore.toggleChat" class="text-medical-400 hover:text-medical-900 p-1 cursor-pointer">
+          <button @click="chatStore.toggleChat" class="flex items-center justify-center w-11 h-11 -mr-2 text-medical-500 hover:text-medical-900 cursor-pointer" aria-label="关闭聊天">
             <X class="w-4 h-4"/>
           </button>
         </div>
 
         <!-- 2. Tabs 切换栏 -->
-        <div class="flex border-b border-medical-200 bg-medical-50/50">
+        <div class="flex border-b border-medical-200 bg-medical-50/50" role="tablist" aria-label="聊天视图">
           <button
             v-for="tab in ['CHAT', 'SYSTEM INFO']"
               :key="tab"
+              role="tab"
+              :aria-selected="activeTab === tab"
               @click="activeTab = tab"
-              class="flex-1 py-2 text-[10px] font-bold font-mono transition-colors relative"
-              :class="activeTab === tab ? 'text-medical-900 bg-white' : 'text-medical-400 hover:text-medical-600 hover:bg-medical-100'"
+              class="flex-1 py-2 min-h-11 text-[11px] font-bold font-mono transition-colors relative"
+              :class="activeTab === tab ? 'text-medical-900 bg-surface-1' : 'text-medical-600 hover:text-medical-800 hover:bg-medical-100'"
           >
             {{ tab }}
             <!-- 激活指示条 -->
@@ -67,13 +71,14 @@
             ref="msgListRef"
             @scroll="handleScroll"
             class="flex-1 overflow-y-auto p-3 space-y-4 bg-medical-50/30 chat-scroll"
+            aria-live="polite"
         >
           <!-- Loading More Indicator -->
           <div v-if="chatStore.isLoadingMore" class="flex justify-center py-2">
-            <Loader2 class="w-4 h-4 animate-spin text-accent/50" />
+            <Loader2 class="w-4 h-4 animate-spin text-accent-text/50" />
           </div>
 
-          <div v-if="processedMessages.length === 0" class="text-center py-8 text-[10px] text-medical-300 font-mono">
+          <div v-if="processedMessages.length === 0" class="text-center py-8 text-[10px] text-medical-500 font-mono">
             > NO RECORDS IN {{ activeTab }}
           </div>
 
@@ -83,7 +88,7 @@
           >
             <!-- 时间戳 (如果与上一条间隔超过3分钟则显示) -->
             <div v-if="item.showTime" class="flex justify-center mb-3">
-              <span class="text-[9px] font-mono text-medical-300 bg-medical-100/50 px-2 py-0.5 rounded-sm">
+              <span class="text-[10px] font-mono text-medical-500 bg-medical-100/50 px-2 py-0.5 rounded-sm">
                 {{ formatTime(item.msg.timestamp) }}
               </span>
             </div>
@@ -95,14 +100,14 @@
                 class="flex flex-col text-sm group"
                 :class="isSelf(item.msg) ? 'items-end' : 'items-start'"
             >
-              <div class="flex items-center gap-2 text-[10px] text-medical-400 mb-0.5 font-sans">
+              <div class="flex items-center gap-2 text-[11px] text-medical-500 mb-0.5 font-sans">
                 <span v-if="!isSelf(item.msg)">{{ userStore.resolveName(item.msg.userId, item.msg.userName) }}</span>
               </div>
               <div
                   class="max-w-[90%] px-3 py-1.5 text-xs break-words relative shadow-sm leading-relaxed select-text cursor-text"
                   :class="isSelf(item.msg)
-                    ? 'bg-medical-900 text-white rounded-l-md rounded-tr-md'
-                    : 'bg-white border border-medical-200 text-medical-800 rounded-r-md rounded-tl-md'"
+                    ? 'bg-surface-strong text-white rounded-l-md rounded-tr-md'
+                    : 'bg-surface-1 border border-medical-200 text-medical-800 rounded-r-md rounded-tl-md'"
               >
                 {{ item.msg.content }}
               </div>
@@ -111,10 +116,10 @@
             <!-- 情况B: 系统日志 (SYSTEM) -->
             <div
                 v-else-if="item.msg.type === 'SYSTEM'"
-                class="flex items-start gap-2 text-xs text-medical-500/80 px-2 opacity-80"
+                class="flex items-start gap-2 text-xs text-medical-600 px-2"
             >
               <Terminal class="w-3 h-3 mt-0.5 flex-shrink-0 opacity-50"/>
-              <span class="font-sans text-[10px] leading-relaxed break-all select-text cursor-text">
+              <span class="font-sans text-xs leading-relaxed break-all select-text cursor-text">
                 {{ item.msg.content }}
               </span>
             </div>
@@ -124,7 +129,7 @@
                 v-else-if="item.msg.type === 'LIKE'"
                 class="flex justify-center my-1"
             >
-              <div class="bg-accent/5 border border-accent/20 text-accent px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-1 shadow-sm">
+              <div class="bg-accent/5 border border-accent/20 text-accent-text px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-sm">
                 <Zap class="w-3 h-3 fill-accent stroke-accent"/>
                 <span>{{ item.msg.content }}</span>
               </div>
@@ -135,7 +140,7 @@
                 v-else-if="item.msg.type === 'PLAY_START'"
                 class="flex justify-center my-2"
             >
-               <div class="bg-medical-100/80 border border-medical-300 text-medical-600 px-3 py-1 rounded-md text-[10px] font-mono flex items-center gap-2 shadow-sm">
+               <div class="bg-medical-100/80 border border-medical-300 text-medical-600 px-3 py-1 rounded-sm text-[10px] font-mono flex items-center gap-2 shadow-sm">
                  <span class="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
                  <span>{{ item.msg.content }}</span>
                </div>
@@ -145,18 +150,20 @@
         </div>
 
         <!-- 4. Input Area (仅在 Chat Tab 显示) -->
-        <div v-if="activeTab === 'CHAT'" class="p-2 bg-white border-t border-medical-200 flex gap-2 flex-shrink-0">
+        <div v-if="activeTab === 'CHAT'" class="p-2 bg-surface-1 border-t border-medical-200 flex gap-2 flex-shrink-0">
           <input
               v-model="inputContent"
               @keyup.enter="send"
               @mousedown.stop
               @touchstart.stop
               placeholder="TYPE MESSAGE..."
-              class="flex-1 bg-medical-50 border border-medical-200 px-2 py-1.5 text-xs outline-none focus:border-accent font-sans transition-colors rounded-sm text-medical-900 placeholder-medical-300"
+              aria-label="输入聊天内容"
+              class="flex-1 min-h-11 bg-medical-50 border border-medical-200 px-2 py-1.5 text-xs outline-none focus:border-accent font-sans transition-colors rounded-sm text-medical-900 placeholder:text-medical-500"
           />
           <button
               @click="send"
-              class="bg-accent hover:bg-accent-hover text-white px-3 py-1.5 transition-colors rounded-sm flex items-center justify-center shadow-sm shadow-accent/20"
+              class="bg-accent hover:bg-accent-hover text-accent-fg px-3 py-1.5 min-w-11 min-h-11 transition-colors rounded-sm flex items-center justify-center shadow-sm shadow-accent/20"
+              aria-label="发送"
           >
             <Send class="w-4 h-4" />
           </button>
@@ -164,28 +171,31 @@
 
         <!-- System Tab 底部占位 -->
         <div v-else class="h-6 bg-medical-50 border-t border-medical-200 flex items-center justify-center">
-          <span class="text-[9px] font-mono text-medical-300">SYSTEM LOG READ-ONLY</span>
+          <span class="text-[10px] font-mono text-medical-500">SYSTEM LOG READ-ONLY</span>
         </div>
       </div>
     </Transition>
 
     <!-- Floating trigger doubles as the drag handle. -->
-    <div
+    <button
         id="tutorial-chat"
+        type="button"
         v-if="!isMobile || !chatStore.isOpen"
         ref="dragHandle"
         @pointerdown="handlePointerDown"
         @click="handleClick"
-        class="pointer-events-auto w-10 h-10 border flex items-center justify-center transition-all cursor-move select-none rounded-sm relative overflow-hidden"
+        :aria-label="chatStore.unreadCount > 0 ? `打开聊天，${chatStore.unreadCount} 条未读` : '打开聊天'"
+        :aria-expanded="chatStore.isOpen"
+        class="pointer-events-auto w-11 h-11 border flex items-center justify-center transition-all cursor-move select-none rounded-sm relative overflow-hidden"
         :class="chatStore.unreadCount > 0
             ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(249,115,22,0.6)] scale-110'
-            : 'bg-white border-medical-200 text-medical-500 shadow-lg hover:text-medical-900 hover:border-medical-300'"
+            : 'bg-surface-1 border-medical-200 text-medical-500 shadow-lg hover:text-medical-900 hover:border-medical-300'"
     >
       <span v-if="chatStore.unreadCount > 0" class="font-bold font-mono text-sm relative z-10 animate-pulse">
         {{ chatStore.unreadCount > 99 ? '99+' : chatStore.unreadCount }}
       </span>
       <MessageSquare v-else class="w-5 h-5 relative z-10"/>
-    </div>
+    </button>
 
   </div>
 </template>
@@ -218,12 +228,12 @@ const windowHeaderRef = ref(null);
 
 const activeTab = ref('CHAT'); // 'CHAT' | 'SYSTEM'
 
-const BUTTON_SIZE = 40;
+const BUTTON_SIZE = 44;
 const MARGIN = 10;
 
 // === 1. 拖拽逻辑 (主控制器) ===
 const { x, y } = useDraggable(dragHandle, {
-  initialValue: { x: window.innerWidth - 60, y: window.innerHeight - 150 },
+  initialValue: { x: window.innerWidth - 60, y: window.innerHeight - 210 },
   preventDefault: true,
   onMove: (position) => {
     position.x = clamp(position.x, MARGIN, window.innerWidth - BUTTON_SIZE - MARGIN);

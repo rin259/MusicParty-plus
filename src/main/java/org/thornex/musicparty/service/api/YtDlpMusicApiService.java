@@ -9,23 +9,41 @@ import org.thornex.musicparty.service.LocalCacheService;
 import org.thornex.musicparty.service.YtDlpResolver;
 import reactor.core.publisher.Mono;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 
 abstract class YtDlpMusicApiService implements IMusicApiService {
     private final String platform;
     private final LocalCacheService localCacheService;
     protected final YtDlpResolver resolver;
     private final int searchLimit;
-    private final Map<String, YtDlpResolver.TrackMetadata> metadataById = new ConcurrentHashMap<>();
-    private final Map<String, List<YtDlpResolver.TrackMetadata>> searchCache = new ConcurrentHashMap<>();
+    private final int fallbackFetchLimit;
+    // 有界 LRU：此前两个 ConcurrentHashMap 无上限，长期运行会持续吃内存。
+    private final Map<String, YtDlpResolver.TrackMetadata> metadataById = Collections.synchronizedMap(
+            new LinkedHashMap<>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, YtDlpResolver.TrackMetadata> eldest) {
+                    return size() > 256;
+                }
+            });
+    private final Map<String, List<YtDlpResolver.TrackMetadata>> searchCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(32, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, List<YtDlpResolver.TrackMetadata>> eldest) {
+                    return size() > 64;
+                }
+            });
 
-    protected YtDlpMusicApiService(String platform, LocalCacheService localCacheService, YtDlpResolver resolver, int searchLimit) {
+    protected YtDlpMusicApiService(String platform, LocalCacheService localCacheService, YtDlpResolver resolver,
+                                   int searchLimit, int fallbackFetchLimit) {
         this.platform = platform;
         this.localCacheService = localCacheService;
         this.resolver = resolver;
         this.searchLimit = searchLimit;
+        this.fallbackFetchLimit = Math.max(searchLimit, fallbackFetchLimit);
     }
 
     @Override public String getPlatformName() { return platform; }
@@ -37,23 +55,34 @@ abstract class YtDlpMusicApiService implements IMusicApiService {
 
     @Override
     public Mono<List<Music>> searchMusic(String keyword, int offset, int limit) {
+        return searchPage(keyword, offset, limit)
+                .doOnNext(tracks -> tracks.forEach(track -> metadataById.put(track.id(), track)))
+                .map(tracks -> tracks.stream().map(this::toMusic).toList());
+    }
+
+    /**
+     * Fetches a single page of results.
+     *
+     * <p>The default implementation keeps the historical yt-dlp behaviour: one larger
+     * batch per keyword is fetched, cached, and sliced locally. Subclasses backed by
+     * an offset/continuation aware HTTP API override this so that scrolling can keep
+     * pulling fresh pages instead of being capped by the first fetch.
+     */
+    protected Mono<List<YtDlpResolver.TrackMetadata>> searchPage(String keyword, int offset, int limit) {
         String cacheKey = keyword.toLowerCase();
         List<YtDlpResolver.TrackMetadata> cached = searchCache.get(cacheKey);
         if (cached != null) {
-            return Mono.just(paginate(cached, offset, limit));
+            return Mono.just(slice(cached, offset, limit));
         }
-        return search(keyword, 10)
-                .doOnNext(tracks -> {
-                    tracks.forEach(track -> metadataById.put(track.id(), track));
-                    searchCache.put(cacheKey, tracks);
-                })
-                .map(tracks -> paginate(tracks, offset, limit));
+        return search(keyword, fallbackFetchLimit)
+                .doOnNext(tracks -> searchCache.put(cacheKey, tracks))
+                .map(tracks -> slice(tracks, offset, limit));
     }
 
-    private List<Music> paginate(List<YtDlpResolver.TrackMetadata> tracks, int offset, int limit) {
-        int from = Math.min(offset, tracks.size());
-        int to = Math.min(offset + limit, tracks.size());
-        return tracks.subList(from, to).stream().map(this::toMusic).toList();
+    private List<YtDlpResolver.TrackMetadata> slice(List<YtDlpResolver.TrackMetadata> tracks, int offset, int limit) {
+        int from = Math.min(Math.max(offset, 0), tracks.size());
+        int to = Math.min(Math.max(offset, 0) + Math.max(limit, 0), tracks.size());
+        return new ArrayList<>(tracks.subList(from, to));
     }
 
     @Override

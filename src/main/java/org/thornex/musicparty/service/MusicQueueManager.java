@@ -33,18 +33,28 @@ public class MusicQueueManager {
 
     // --- Public API for Queue Manipulation ---
 
-    /**
-     * 向队列末尾添加一首歌曲
-     */
-    public synchronized MusicQueueItem add(Music music, UserSummary enqueuedBy, QueueItemStatus initialStatus) {
-        // 检查队列是否已满
-        if (queue.size() >= appProperties.getQueue().getMaxSize()) {
-            return null;
-        }
+    /** 去重键：平台 + 曲目 ID。Netease 与 SoundCloud 都是纯数字 ID，只比 id 会误判。 */
+    public static String musicKey(Music music) {
+        if (music == null) return "";
+        return (music.platform() == null ? "" : music.platform()) + ":" + music.id();
+    }
 
-        // 防止重复添加
-        if (isMusicInQueue(music.id())) {
-            return null;
+    public enum AddFailure { QUEUE_FULL, DUPLICATE }
+
+    public record AddResult(MusicQueueItem item, AddFailure failure) {
+        public boolean ok() { return item != null; }
+    }
+
+    /**
+     * 向队列末尾添加一首歌曲。
+     * 返回失败原因（队列满 / 重复）而不是静默 null —— 调用方必须据此给出反馈。
+     */
+    public synchronized AddResult add(Music music, UserSummary enqueuedBy, QueueItemStatus initialStatus) {
+        if (queue.size() >= appProperties.getQueue().getMaxSize()) {
+            return new AddResult(null, AddFailure.QUEUE_FULL);
+        }
+        if (isMusicInQueue(music)) {
+            return new AddResult(null, AddFailure.DUPLICATE);
         }
 
         MusicQueueItem newItem = new MusicQueueItem(
@@ -54,7 +64,7 @@ public class MusicQueueManager {
                 initialStatus // 存储枚举的名称
         );
         queue.addLast(newItem);
-        return newItem;
+        return new AddResult(newItem, null);
     }
 
     /**
@@ -358,13 +368,14 @@ public class MusicQueueManager {
     }
 
     public synchronized void addToLoopList(Music music) {
-        if (music != null && loopList.stream().noneMatch(m -> m.id().equals(music.id()))) {
+        if (music != null && loopList.stream().noneMatch(m -> musicKey(m).equals(musicKey(music)))) {
             loopList.add(music);
         }
     }
 
-    public synchronized void removeFromLoopList(String musicId) {
-        loopList.removeIf(m -> m.id().equals(musicId));
+    public synchronized void removeFromLoopList(Music music) {
+        if (music == null) return;
+        loopList.removeIf(m -> musicKey(m).equals(musicKey(music)));
     }
 
     public synchronized void addToQueueEnd(Music music) {
@@ -391,12 +402,13 @@ public class MusicQueueManager {
         }
     }
 
-    private boolean isMusicInQueue(String musicId) {
-        return queue.stream().anyMatch(item -> item.music().id().equals(musicId));
+    private boolean isMusicInQueue(Music music) {
+        String key = musicKey(music);
+        return queue.stream().anyMatch(item -> musicKey(item.music()).equals(key));
     }
 
     private boolean isReadyOrFailed(Map<String, QueueItemStatus> statusMap, MusicQueueItem item) {
-        QueueItemStatus status = statusMap.getOrDefault(item.music().id(), QueueItemStatus.PENDING);
+        QueueItemStatus status = statusMap.getOrDefault(musicKey(item.music()), QueueItemStatus.PENDING);
         return status == QueueItemStatus.READY || status == QueueItemStatus.FAILED;
     }
 

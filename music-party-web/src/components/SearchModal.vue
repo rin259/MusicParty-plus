@@ -1,57 +1,114 @@
 <template>
-  <div v-if="isOpen" class="fixed inset-0 z-[60] bg-medical-900/80 backdrop-blur-sm flex items-center justify-center p-2 md:p-4">
-    <div class="w-full max-w-4xl bg-medical-50 h-[90dvh] md:h-[80vh] flex flex-col shadow-2xl relative chamfer-br max-h-full overflow-hidden">
+  <div v-if="isOpen" class="fixed inset-0 z-[80] bg-scrim/80 backdrop-blur-sm flex items-center justify-center p-2 md:p-4">
+    <div
+        ref="dialogRef"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="search-modal-title"
+        class="w-full max-w-4xl bg-medical-50 h-[90dvh] md:h-[80vh] flex flex-col shadow-2xl relative chamfer-br max-h-full overflow-hidden"
+    >
 
       <!-- 关闭按钮 -->
-      <button @click="closeModal" class="absolute top-0 right-0 p-4 hover:text-accent z-50">
+      <button @click="closeModal" class="absolute top-0 right-0 flex items-center justify-center w-12 h-12 hover:text-accent-text z-50" aria-label="关闭搜索">
         <X class="w-6 h-6" />
       </button>
 
       <!-- 头部 -->
-      <div class="p-3 md:p-6 border-b border-medical-200 bg-white flex-shrink-0">
-        <h2 class="text-lg md:text-2xl font-bold font-mono mb-3 md:mb-4 text-medical-900 flex items-center gap-2">
-          <Search class="w-5 h-5 text-accent"/> 添加歌曲
-        </h2>
+      <div class="p-3 md:p-5 border-b border-medical-200 bg-surface-1 flex-shrink-0">
+        <div class="mb-2.5 flex items-baseline justify-between gap-3 pr-10">
+          <h2 id="search-modal-title" class="text-lg md:text-xl font-bold font-mono text-medical-900 flex items-center gap-2">
+            <Search class="w-5 h-5 text-accent-text" aria-hidden="true"/> 添加歌曲
+          </h2>
+          <span class="font-mono text-[9px] tracking-[0.16em] text-medical-500 tabular-nums">
+            QUOTA {{ player.mySongCount }}/{{ player.mySongLimit || '—' }}
+            <span class="mx-1 text-medical-300">|</span>
+            QUEUE {{ player.queue.length }}
+          </span>
+        </div>
 
         <!-- 平台切换 TAB -->
-        <div class="grid grid-cols-2 md:flex gap-1 mb-3 md:mb-4">
+        <div class="grid grid-cols-3 md:flex gap-1 mb-2.5" role="tablist" aria-label="音乐平台">
           <button
               v-for="p in platforms" :key="p.id"
+              role="tab"
+              :aria-selected="platform === p.id"
               @click="switchPlatform(p.id)"
               :disabled="!isPlatformEnabled(p.id)"
-              class="min-w-0 px-3 md:px-6 py-2 text-xs md:text-sm font-bold uppercase transition-all"
+              class="min-w-0 min-h-9 px-2 md:px-4 py-1.5 text-[11px] md:text-xs font-bold uppercase transition-all"
               :class="[
-                platform === p.id ? 'bg-medical-900 text-white clip-tab' : 'bg-medical-200 text-medical-500 hover:bg-medical-300',
-                !isPlatformEnabled(p.id) ? 'opacity-30 cursor-not-allowed grayscale' : ''
+                platform === p.id ? 'bg-ink text-ink-fg clip-tab' : 'bg-medical-200 text-medical-700 hover:bg-medical-300',
+                !isPlatformEnabled(p.id) ? 'opacity-40 cursor-not-allowed grayscale' : ''
               ]"
           >
             {{ p.label }}
           </button>
         </div>
 
+        <!-- 源总线：可达性 / 时延 / 结果数 -->
+        <SourceBus
+            class="mb-2.5"
+            :platforms="enabledPlatforms"
+            :sources="sources"
+            :health="health"
+            :probing="healthLoading"
+            :active="platform"
+            :summary="summary"
+            @select="switchPlatform"
+        />
+
         <!-- 搜索框 -->
         <div class="flex gap-2">
           <input
+              ref="searchInputRef"
               v-model="keyword"
-              @keyup.enter="doSearch"
-              placeholder="搜索音乐..."
-              class="flex-1 border p-3 outline-none transition-colors duration-300 font-sans bg-medical-100 border-medical-200 focus:border-accent text-medical-900 placeholder:text-medical-400"
+              @compositionstart="isComposing = true"
+              @compositionend="isComposing = false"
+              @keydown.enter="onEnter"
+              @input="activeIndex = -1"
+              @keydown.down.prevent="moveActive(1)"
+              @keydown.up.prevent="moveActive(-1)"
+              placeholder="搜索歌曲、歌手，或粘贴链接 / BV 号…"
+              aria-label="搜索音乐"
+              class="flex-1 min-h-10 border p-2.5 outline-none transition-colors duration-300 font-sans bg-medical-100 border-medical-200 focus:border-accent text-medical-900 placeholder:text-medical-500"
           />
           <button
               v-if="platform === 'netease'"
               @click="albumSearchMode = !albumSearchMode"
-              class="px-3 py-2 text-xs font-bold transition-colors flex-shrink-0"
-              :class="albumSearchMode ? 'bg-accent text-white' : 'bg-medical-200 text-medical-500 hover:bg-medical-300'"
+              class="flex items-center justify-center min-w-10 min-h-10 px-2.5 py-2 text-xs font-bold transition-colors flex-shrink-0"
+              :class="albumSearchMode ? 'bg-accent text-accent-fg' : 'bg-medical-200 text-medical-700 hover:bg-medical-300'"
               title="搜索专辑"
+              aria-label="搜索专辑"
+              :aria-pressed="albumSearchMode"
           >
             <Disc class="w-4 h-4" />
           </button>
           <button
               @click="handleSearchAction"
-              class="text-white px-3 md:px-6 py-2 font-bold transition-colors text-xs md:text-base flex-shrink-0 font-sans bg-accent hover:bg-accent-hover"
+              :disabled="loading && platform === 'all'"
+              class="text-accent-fg px-3 md:px-5 py-2 font-bold transition-colors text-xs md:text-sm flex-shrink-0 font-sans bg-accent hover:bg-accent-hover min-h-10 disabled:opacity-60"
           >
-            搜索
+            {{ looksLikeLink(keyword) ? '点歌' : '搜索' }}
           </button>
+        </div>
+
+        <!-- 搜索状态：真实的命中 / 归并 / 源进度 / 耗时 -->
+        <div class="mt-1.5 flex items-center justify-between gap-3 font-mono text-[9px] tracking-[0.12em] text-medical-500 tabular-nums">
+          <span class="truncate">
+            <template v-if="loading">
+              SEARCHING {{ summary.done }}/{{ summary.sources }} · {{ Math.round(summary.elapsedMs) }}ms
+            </template>
+            <template v-else-if="summary.hits > 0">
+              HITS {{ summary.hits }} · MERGED {{ summary.merged }} · {{ summary.done }}/{{ summary.sources }} SRC · {{ Math.round(summary.elapsedMs) }}ms
+            </template>
+            <template v-else-if="lastQuery">
+              NO MATCHES FOR “{{ lastQuery }}”
+            </template>
+            <template v-else>
+              跨源搜索：一次查 {{ enabledPlatforms.length }} 个源；也可粘贴网易云 / B站 / YouTube / SoundCloud 链接
+            </template>
+          </span>
+          <span v-if="slowSources.length" class="shrink-0 text-accent-text">SLOW {{ slowSources.join('·') }}</span>
+          <span v-else-if="filteredOut > 0" class="shrink-0">DEDUP −{{ filteredOut }}</span>
         </div>
       </div>
 
@@ -59,10 +116,10 @@
       <div class="flex-1 overflow-hidden flex flex-col md:flex-row relative">
 
         <!-- 左侧：我的歌单 / 绑定 -->
-        <div v-if="supportsPlaylists" class="md:w-1/3 md:h-auto flex-shrink-0 border-b md:border-b-0 md:border-r border-medical-200 flex-col bg-white transition-all"
+        <div v-if="supportsPlaylists" class="md:w-1/3 md:h-auto flex-shrink-0 border-b md:border-b-0 md:border-r border-medical-200 flex-col bg-surface-1 transition-all"
              :class="mobileView === 'playlists' ? 'flex w-full h-full' : 'hidden md:flex'"
         >
-          <div class="p-2 md:p-3 bg-medical-100 text-xs font-bold text-medical-500 flex justify-between items-center font-sans">
+          <div class="p-2 md:p-3 bg-medical-100 text-xs font-bold text-medical-600 flex justify-between items-center font-sans">
             <span>用户歌单</span>
           </div>
 
@@ -71,39 +128,39 @@
             <div v-if="!bindings[platform]" class="p-4 border border-dashed border-medical-300 bg-medical-50">
               <div class="text-xs text-medical-500 mb-2 text-center font-sans">{{ platform === 'soundcloud' ? '绑定公开主页以获取公开 Sets' : '绑定用户以获取用户歌单' }}</div>
               <div class="flex gap-1">
-                <input v-model="searchUserKeyword" @keyup.enter="searchUser" :placeholder="platform === 'soundcloud' ? '输入 @handle 或主页 URL' : '搜索用户名'" class="flex-1 min-w-0 bg-white border border-medical-200 p-1 text-sm outline-none focus:border-accent font-sans" />
-                <button @click="searchUser" class="bg-accent hover:bg-accent-hover p-1 transition-colors"><Search class="w-4 h-4 text-white"/></button>
+                <input v-model="searchUserKeyword" @keyup.enter="searchUser" :placeholder="platform === 'soundcloud' ? '输入 @handle 或主页 URL' : '搜索用户名'" aria-label="搜索用户" class="flex-1 min-w-0 min-h-11 bg-surface-1 border border-medical-200 p-2 text-sm outline-none focus:border-accent font-sans text-medical-900 placeholder:text-medical-500" />
+                <button @click="searchUser" class="flex items-center justify-center w-11 h-11 bg-accent hover:bg-accent-hover transition-colors flex-shrink-0" aria-label="搜索用户"><Search class="w-4 h-4 text-accent-fg"/></button>
               </div>
               <!-- 搜索结果列表 -->
               <div v-if="userSearchResults.length > 0" class="mt-2 max-h-40 overflow-y-auto space-y-1 border-t border-medical-200 pt-2">
-                <div v-for="user in userSearchResults" :key="user.id" @click="bindUser(user)" class="flex items-center gap-2 p-1 hover:bg-accent/10 cursor-pointer group">
-                  <img v-if="user.avatarUrl" :src="user.avatarUrl" class="w-6 h-6 rounded-full bg-medical-200"/>
-                  <div v-else class="w-6 h-6 rounded-full bg-accent/20 text-accent flex items-center justify-center text-xs font-bold">{{ user.name.slice(0, 1) }}</div>
+                <button v-for="user in userSearchResults" :key="user.id" @click="bindUser(user)" class="w-full min-h-11 flex items-center gap-2 p-1 hover:bg-accent/10 cursor-pointer group text-left">
+                  <img v-if="user.avatarUrl" :src="user.avatarUrl" alt="" class="w-6 h-6 rounded-full bg-medical-200"/>
+                  <div v-else class="w-6 h-6 rounded-full bg-accent/20 text-accent-text flex items-center justify-center text-xs font-bold">{{ user.name.slice(0, 1) }}</div>
                   <span class="text-xs font-bold truncate flex-1 text-medical-900">{{ user.name }}</span>
-                </div>
+                </button>
               </div>
-              <div v-if="isSearchingUser" class="text-center py-2"><Loader2 class="w-4 h-4 animate-spin mx-auto text-accent"/></div>
+              <div v-if="isSearchingUser" class="text-center py-2"><Loader2 class="w-4 h-4 animate-spin mx-auto text-accent-text"/></div>
             </div>
 
             <!-- 已绑定：歌单列表 -->
             <template v-else>
-              <div class="flex justify-between items-center px-2 py-1 bg-medical-50 border-b border-medical-100">
-                <span class="text-[10px] font-mono text-medical-400">ID: {{ bindings[platform] }}</span>
-                <button @click="playerStore.bindAccount(platform, '')" class="text-[10px] text-red-400 hover:underline">UNLINK</button>
+              <div class="flex justify-between items-center px-2 py-1 bg-medical-50 border-b border-medical-200">
+                <span class="text-[10px] font-mono text-medical-500">ID: {{ bindings[platform] }}</span>
+                <button @click="player.bindAccount(platform, '')" class="text-[11px] font-bold text-danger hover:underline px-2 min-h-9">UNLINK</button>
               </div>
               
               <div v-if="isPlaylistsLoading" class="flex justify-center py-8">
-                <Loader2 class="w-6 h-6 animate-spin text-accent" />
+                <Loader2 class="w-6 h-6 animate-spin text-accent-text" />
               </div>
               
-              <div v-else v-for="pl in playlists" :key="pl.id" @click="handleSelectPlaylist(pl.id)" class="flex items-center gap-3 p-2 hover:bg-medical-50 cursor-pointer group transition-colors border-l-2 border-transparent hover:border-accent">
+              <button v-else v-for="pl in playlists" :key="pl.id" @click="handleSelectPlaylist(pl.id)" class="w-full min-h-14 flex items-center gap-3 p-2 hover:bg-medical-100 cursor-pointer group transition-colors text-left">
                 <div class="w-10 h-10 bg-medical-200 flex-shrink-0 overflow-hidden"><CoverImage :src="pl.coverImgUrl" class="w-full h-full" /></div>
                 <div class="overflow-hidden">
-                  <div class="text-sm font-bold truncate group-hover:text-accent text-medical-900">{{ pl.name }}</div>
-                  <div class="text-xs font-mono text-medical-400">{{ pl.platform === 'soundcloud' ? 'PUBLIC SET' : `${pl.trackCount} TRACKS` }}</div>
+                  <div class="text-sm font-bold truncate group-hover:text-accent-text text-medical-900">{{ pl.name }}</div>
+                  <div class="text-xs font-mono text-medical-500">{{ pl.platform === 'soundcloud' ? 'PUBLIC SET' : `${pl.trackCount} TRACKS` }}</div>
                 </div>
-                <ChevronRight class="w-4 h-4 text-medical-300 md:hidden ml-auto" />
-              </div>
+                <ChevronRight class="w-4 h-4 text-medical-500 md:hidden ml-auto" />
+              </button>
             </template>
           </div>
         </div>
@@ -111,43 +168,44 @@
         <!-- 右侧：歌曲列表 -->
         <div class="bg-medical-50 flex-col min-h-0" :class="[supportsPlaylists ? 'md:flex-1' : 'flex-1', mobileView === 'songs' || !supportsPlaylists ? 'flex w-full h-full' : 'hidden md:flex']">
           <!-- 移动端返回条 -->
-          <div class="md:hidden flex items-center gap-2 p-3 bg-white border-b border-medical-200 flex-shrink-0">
-            <button @click="mobileView = 'playlists'" class="p-1 -ml-1 text-medical-500 hover:text-medical-900"><ArrowLeft class="w-5 h-5" /></button>
+          <div class="md:hidden flex items-center gap-2 p-2 bg-surface-1 border-b border-medical-200 flex-shrink-0">
+            <button v-if="supportsPlaylists" @click="mobileView = 'playlists'" class="flex items-center justify-center w-11 h-11 -ml-1 text-medical-500 hover:text-medical-900" aria-label="返回歌单"><ArrowLeft class="w-5 h-5" /></button>
             <span class="font-bold text-sm text-medical-800">{{ albumSearchMode ? 'ALBUM SEARCH' : (listMode === 'search' ? 'SEARCH RESULTS' : 'PLAYLIST DETAILS') }}</span>
           </div>
 
           <div ref="contentScrollRef" @scroll="onContentScroll" class="flex-1 overflow-y-auto p-2 md:p-4">
-            <div v-if="loading" class="text-center py-10 font-mono text-accent animate-pulse">> LOADING DATA STREAM...</div>
+            <div v-if="loading && songs.length === 0" class="text-center py-10 font-mono text-accent-text animate-pulse">> LOADING DATA STREAM...</div>
 
             <!-- 专辑搜索结果 -->
             <div v-else-if="albumSearchMode && listMode === 'search' && !currentAlbumId" class="space-y-1">
-              <div v-if="albums.length === 0" class="text-center py-10 text-medical-400 text-xs font-mono">NO ALBUMS FOUND</div>
-              <div v-for="album in albums" :key="album.id" @click="handleSelectAlbum(album)" class="flex items-center p-3 border border-transparent transition-all bg-white hover:border-medical-300 hover:shadow-sm cursor-pointer group">
+              <div v-if="albums.length === 0" class="text-center py-10 text-medical-500 text-xs font-mono">NO ALBUMS FOUND / 换个专辑名试试</div>
+              <button v-for="album in albums" :key="album.id" @click="handleSelectAlbum(album)" class="w-full min-h-14 flex items-center p-3 border border-transparent transition-all bg-surface-1 hover:border-medical-300 hover:shadow-sm cursor-pointer group text-left">
                 <div class="w-10 h-10 bg-medical-200 flex-shrink-0 overflow-hidden mr-3"><CoverImage :src="album.coverUrl" class="w-full h-full" /></div>
                 <div class="min-w-0 flex-1">
                   <div class="text-sm font-bold truncate text-medical-900">{{ album.name }}</div>
                   <div class="text-xs text-medical-500 truncate">{{ album.artist }} · {{ album.trackCount }} TRACKS</div>
                 </div>
-                <ChevronRight class="w-4 h-4 text-medical-300 ml-2" />
-              </div>
+                <ChevronRight class="w-4 h-4 text-medical-500 ml-2" />
+              </button>
             </div>
 
             <!-- 专辑内歌曲列表 -->
             <div v-else-if="albumSearchMode && currentAlbumId">
-              <div class="mb-4 p-4 bg-white border border-medical-200 shadow-sm">
+              <div class="mb-4 p-4 bg-surface-1 border border-medical-200 shadow-sm">
                 <div class="flex justify-between items-center gap-3">
                   <div class="min-w-0">
-                    <button @click="currentAlbumId = null" class="text-xs text-accent hover:underline mb-1 flex items-center gap-1"><ArrowLeft class="w-3 h-3" /> 返回专辑列表</button>
+                    <button @click="currentAlbumId = null" class="text-xs text-accent-text hover:underline mb-1 flex items-center gap-1"><ArrowLeft class="w-3 h-3" /> 返回专辑列表</button>
                     <div class="font-bold text-lg truncate">{{ currentAlbumName }}</div>
-                    <div class="text-xs text-medical-400 font-mono">{{ songs.length }} LOADED</div>
+                    <div class="text-xs text-medical-500 font-mono">{{ songs.length }} LOADED</div>
                   </div>
-                  <button @click="handleImportAlbum" class="flex-shrink-0 bg-medical-900 text-white px-4 py-2 text-sm font-bold hover:bg-accent transition-colors flex items-center gap-2 font-sans">
+                  <button @click="handleImportAlbum" class="flex-shrink-0 bg-surface-strong text-white px-3 py-2 text-sm font-bold hover:bg-accent hover:text-accent-fg transition-colors flex items-center gap-2 font-sans min-h-10">
                     <ListPlus class="w-4 h-4"/> <span class="hidden sm:inline">导入全部</span>
                   </button>
                 </div>
+                <ImportMeter :job="importJob" />
               </div>
               <div class="space-y-1">
-                <div v-for="song in songs" :key="song.id" class="flex items-center p-3 border border-transparent transition-all group bg-white hover:border-medical-300 hover:shadow-sm">
+                <div v-for="(song, i) in songs" :key="rowKey(song)" class="flex items-center p-3 border border-transparent transition-all group bg-surface-1 hover:border-medical-300 hover:shadow-sm" :class="{ 'border-accent/40 bg-accent/[0.03]': activeIndex === i }" @mouseenter="activeIndex = i">
                   <div class="flex-1 w-0 flex items-center gap-3">
                     <div class="w-8 h-8 bg-medical-200 flex-shrink-0 relative overflow-hidden"><CoverImage :src="song.coverUrl" class="w-full h-full" /></div>
                     <div class="min-w-0 flex-1">
@@ -155,51 +213,66 @@
                       <div class="text-xs text-medical-500 truncate">{{ song.artists.join(' / ') }}</div>
                     </div>
                   </div>
-                  <button @click="handleAddClick(song)" class="ml-2 p-2 flex-shrink-0 transition-all duration-300"
-                    :class="[
-                      isInQueue(song.id) ? 'text-green-500 cursor-default' :
-                      pendingIds.has(song.id) ? 'text-accent cursor-wait' :
-                      'text-medical-300 hover:text-accent'
-                    ]"
-                    :disabled="pendingIds.has(song.id) || isInQueue(song.id)">
-                    <Loader2 v-if="pendingIds.has(song.id)" class="w-5 h-5 animate-spin" />
-                    <Check v-else-if="isInQueue(song.id)" class="w-5 h-5" />
-                    <PlusCircle v-else class="w-5 h-5"/>
-                  </button>
+                  <AddButton :song="song" :state="rowState(song)" :queued="inQueue(song)" :blocked="isUnplayable(song)" @add="handleAddClick(song)" />
                 </div>
               </div>
             </div>
 
             <!-- 歌单操作头 -->
-            <div v-else-if="currentPlaylistId && listMode === 'playlist'" class="mb-4 p-4 bg-white border border-medical-200 shadow-sm">
+            <div v-else-if="currentPlaylistId && listMode === 'playlist'" class="mb-4 p-4 bg-surface-1 border border-medical-200 shadow-sm">
               <div class="flex justify-between items-center gap-3">
                 <div class="min-w-0">
-                  <div class="text-xs font-sans text-medical-400">用户歌单</div>
+                  <div class="text-xs font-sans text-medical-500">用户歌单</div>
                   <div class="font-bold text-lg truncate text-medical-900">{{ currentPlaylistId }}</div>
-                  <div class="text-xs text-medical-400 font-mono">{{ songs.length }} LOADED</div>
+                  <div class="text-xs text-medical-500 font-mono">{{ songs.length }} LOADED</div>
                 </div>
-                <button @click="handleImportPlaylist" class="flex-shrink-0 bg-medical-900 text-white px-4 py-2 text-sm font-bold hover:bg-accent transition-colors flex items-center gap-2 font-sans">
+                <button @click="handleImportPlaylist" class="flex-shrink-0 bg-surface-strong text-white px-3 py-2 text-sm font-bold hover:bg-accent hover:text-accent-fg transition-colors flex items-center gap-2 font-sans min-h-10">
                   <ListPlus class="w-4 h-4"/> <span class="hidden sm:inline">导入全部</span>
                 </button>
               </div>
+              <ImportMeter :job="importJob" />
               <div v-if="platform === 'netease'" class="relative mt-3">
-                <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-medical-400" />
-                <input v-model="playlistKeyword" placeholder="在此歌单中搜索歌曲或歌手" class="w-full border border-medical-200 bg-medical-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-accent" />
+                <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-medical-500" />
+                <input v-model="playlistKeyword" placeholder="在此歌单中搜索歌曲或歌手" class="w-full min-h-10 border border-medical-200 bg-medical-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-accent" />
               </div>
             </div>
 
             <!-- 歌曲列表渲染 -->
             <div class="space-y-1">
-              <div v-if="displayedSongs.length === 0 && !loading" class="text-center py-10 text-medical-400 text-xs font-mono">{{ playlistKeyword ? 'NO MATCHES FOUND' : 'NO DATA FOUND' }}</div>
-              <div v-for="song in displayedSongs" :key="song.id" class="flex items-center p-3 border border-transparent transition-all group" :class="isUnplayable(song) ? 'opacity-50 grayscale bg-medical-50 cursor-not-allowed' : 'bg-white hover:border-medical-300 hover:shadow-sm'">
+              <div v-if="displayedSongs.length === 0 && !loading" class="text-center py-12 px-6">
+                <div class="font-mono text-xs text-medical-500 mb-2">{{ playlistKeyword ? 'NO MATCHES FOUND' : 'NO DATA FOUND' }}</div>
+                <div class="text-sm text-medical-600 leading-relaxed">
+                  {{ playlistKeyword ? '换个关键词，或清空筛选再看整张歌单。' : (supportsPlaylists ? '在左侧绑定账号导入歌单，或直接搜索歌名。' : '输入歌名或歌手，按回车搜索；也可以直接粘贴链接。') }}
+                </div>
+              </div>
+              <div
+                  v-for="(song, i) in displayedSongs"
+                  :key="rowKey(song)"
+                  class="flex items-center p-3 border border-transparent transition-all group"
+                  :class="[
+                    isUnplayable(song) ? 'opacity-50 grayscale bg-medical-50 cursor-not-allowed' : 'bg-surface-1 hover:border-medical-300 hover:shadow-sm',
+                    activeIndex === i ? 'border-accent/40 bg-accent/[0.03]' : ''
+                  ]"
+                  @mouseenter="activeIndex = i"
+              >
                 <div class="flex-1 w-0 flex items-center gap-3">
                   <div class="w-8 h-8 bg-medical-200 flex-shrink-0 relative overflow-hidden"><CoverImage :src="song.coverUrl" class="w-full h-full" /></div>
                   <div class="min-w-0 flex-1">
                     <div class="text-sm font-bold truncate text-medical-900">{{ song.name }}</div>
                     <div class="text-xs text-medical-500 truncate">{{ song.artists.join(' / ') }}</div>
+                    <div class="mt-1 flex items-center gap-1.5 font-mono text-[9px] text-medical-500">
+                      <span class="border border-medical-200 bg-medical-50 px-1 leading-4 text-medical-600">{{ PLATFORM_LABEL[song.platform] || song.platform }}</span>
+                      <span class="tabular-nums">{{ song.duration > 0 ? formatDuration(song.duration) : '—:—' }}</span>
+                      <span v-if="(song._sources?.length || 0) > 1" class="text-accent-text">+{{ song._sources.length - 1 }} SRC</span>
+                      <span v-if="ingestLabel(song)" class="text-accent-text">{{ ingestLabel(song) }}</span>
+                    </div>
+                    <div v-if="rowState(song)?.state === 'failed'" class="mt-0.5 max-w-full truncate text-[9px] font-mono text-danger" :title="rowState(song)?.message">
+                      {{ rowState(song)?.message }}
+                    </div>
                   </div>
                 </div>
-                <div v-if="isUnplayable(song)" class="ml-2 flex-shrink-0"><span class="px-1.5 py-0.5 text-[10px] font-mono font-bold text-medical-400 border border-medical-300 bg-medical-100 rounded-sm">>10MIN</span></div>
+
+                <div v-if="isUnplayable(song)" class="ml-2 flex-shrink-0"><span class="px-1.5 py-0.5 text-[10px] font-mono font-bold text-medical-500 border border-medical-300 bg-medical-100 rounded-sm">>10MIN</span></div>
 
                 <a
                     v-if="listMode === 'playlist' && getSourceUrl(song)"
@@ -207,46 +280,30 @@
                     target="_blank"
                     rel="noopener noreferrer"
                     @click.stop
-                    class="ml-2 p-2 flex-shrink-0 text-medical-400 hover:text-accent transition-colors"
+                    class="ml-2 p-2 flex-shrink-0 text-medical-500 hover:text-accent-text transition-colors"
                     title="打开原曲页面"
                     aria-label="打开原曲页面"
                 >
                   <ExternalLink class="w-4 h-4" />
                 </a>
 
-                <button
-                    v-if="!isUnplayable(song)"
-                    @click="handleAddClick(song)"
-                    class="ml-2 p-2 flex-shrink-0 transition-all duration-300"
-                    :class="[
-                        isInQueue(song.id) ? 'text-green-500 cursor-default' :
-                        pendingIds.has(song.id) ? 'text-accent cursor-wait' :
-                        'text-medical-300 hover:text-accent'
-                    ]"
-                    :disabled="pendingIds.has(song.id) || isInQueue(song.id)"
-                >
-                  <!-- 状态 1: 正在添加 -->
-                  <Loader2 v-if="pendingIds.has(song.id)" class="w-5 h-5 animate-spin" />
-
-                  <!-- 状态 2: 已经在队列中 -->
-                  <Check v-else-if="isInQueue(song.id)" class="w-5 h-5" />
-
-                  <!-- 状态 3: 普通添加按钮 -->
-                  <PlusCircle v-else class="w-5 h-5"/>
-                </button>
+                <AddButton :song="song" :state="rowState(song)" :queued="inQueue(song)" :blocked="isUnplayable(song)" @add="handleAddClick(song)" />
               </div>
             </div>
 
-            <!-- 加载更多 -->
+            <!-- 加载更多 / 结束 -->
             <div v-if="listMode === 'search' && !albumSearchMode" class="py-4 text-center">
-              <div v-if="loading && songs.length > 0" class="flex justify-center text-accent"><Loader2 class="w-6 h-6 animate-spin" /></div>
-              <div v-else-if="!hasMoreSearch && songs.length > 0" class="text-xs font-mono text-medical-400">-- END OF RESULTS --</div>
+              <div v-if="loading && songs.length > 0" class="flex justify-center text-accent-text"><Loader2 class="w-6 h-6 animate-spin" /></div>
+              <div v-else-if="platform === 'all' && songs.length > 0" class="text-[10px] font-mono tracking-[0.16em] text-medical-500">
+                {{ summary.merged }} MERGED FROM {{ summary.hits }} HITS · 选择单个源可继续翻页
+              </div>
+              <div v-else-if="!hasMoreSearch && songs.length > 0" class="text-xs font-mono text-medical-500">-- END OF RESULTS --</div>
             </div>
 
             <!-- 加载更多 -->
             <div v-if="listMode === 'playlist' && !loading" class="py-4 text-center">
-              <div v-if="isLoadingMore" class="flex justify-center text-accent"><Loader2 class="w-6 h-6 animate-spin" /></div>
-              <div v-else-if="!hasMore && songs.length > 0" class="text-xs font-mono text-medical-400">-- END OF PLAYLIST --</div>
+              <div v-if="isLoadingMore" class="flex justify-center text-accent-text"><Loader2 class="w-6 h-6 animate-spin" /></div>
+              <div v-else-if="!hasMore && songs.length > 0" class="text-xs font-mono text-medical-500">-- END OF PLAYLIST --</div>
             </div>
           </div>
         </div>
@@ -258,16 +315,33 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue';
 import { usePlayerStore } from '../stores/player';
+import { useUserStore } from '../stores/user';
 import { useSearchLogic } from '../composables/useSearchLogic';
 import { usePlaylistLogic } from '../composables/usePlaylistLogic';
-import { X, Search, PlusCircle, ListPlus, Loader2, ArrowLeft, ChevronRight, Check, ExternalLink, Disc } from 'lucide-vue-next';
+import { X, Search, ListPlus, Loader2, ArrowLeft, ChevronRight, ExternalLink, Disc } from 'lucide-vue-next';
 import CoverImage from './CoverImage.vue';
+import SourceBus from './SourceBus.vue';
+import AddButton from './search/AddButton.vue';
+import ImportMeter from './search/ImportMeter.vue';
 import { musicApi } from '../api/music';
+import { useFocusTrap } from '../composables/useFocusTrap';
+import { useToast } from '../composables/useToast';
+import { formatDuration, looksLikeLink, PLATFORM_LABEL, songKey as mergeKey } from '../logic/searchMerge.js';
 
 const props = defineProps(['isOpen']);
 const emit = defineEmits(['close']);
-const playerStore = usePlayerStore();
+
+const dialogRef = ref(null);
+const searchInputRef = ref(null);
+useFocusTrap(computed(() => props.isOpen), dialogRef, {
+  initialFocus: () => searchInputRef.value
+});
+const player = usePlayerStore();
+const userStore = useUserStore();
+const { info, error: toastError } = useToast();
+
 const platforms = [
+  { id: 'all', label: '全部' },
   { id: 'netease', label: '网易云' },
   { id: 'bilibili', label: 'Bilibili' },
   { id: 'soundcloud', label: 'SoundCloud' },
@@ -275,37 +349,38 @@ const platforms = [
 ];
 
 const isPlatformEnabled = (p) => {
-  if (p === 'netease') return playerStore.config?.neteaseEnabled !== false;
-  if (p === 'bilibili') return playerStore.config?.bilibiliEnabled !== false;
-  if (p === 'soundcloud') return playerStore.config?.soundcloudEnabled !== false;
-  if (p === 'ytmusic') return playerStore.config?.ytmusicEnabled !== false;
+  if (p === 'all') return ['netease', 'bilibili', 'soundcloud', 'ytmusic'].some((id) => isPlatformEnabled(id));
+  if (p === 'netease') return player.config?.neteaseEnabled !== false;
+  if (p === 'bilibili') return player.config?.bilibiliEnabled !== false;
+  if (p === 'soundcloud') return player.config?.soundcloudEnabled !== false;
+  if (p === 'ytmusic') return player.config?.ytmusicEnabled !== false;
   return true;
 };
 
-// 1. 引入搜索逻辑
+const enabledPlatforms = computed(() => ['netease', 'bilibili', 'soundcloud', 'ytmusic'].filter(isPlatformEnabled));
+
+// 1. 搜索逻辑
 const {
-  platform, keyword, songs, loading, listMode, hasMore: hasMoreSearch, doSearch, loadMore
-} = useSearchLogic(emit);
+  platform, keyword, songs, loading, listMode, hasMore: hasMoreSearch,
+  sources, health, healthLoading, summary, lastQuery, doSearch, loadMore, probeHealth
+} = useSearchLogic();
 
 const supportsPlaylists = computed(() => ['netease', 'bilibili', 'soundcloud'].includes(platform.value));
 
-const handleSearchAction = async () => {
-  if (albumSearchMode.value && platform.value === 'netease') {
-    await searchAlbums();
-  } else {
-    await doSearch();
-  }
-  mobileView.value = 'songs';
-};
+const filteredOut = computed(() => Math.max(0, (summary.value.hits || 0) - (summary.value.merged || 0)));
+const SLOW_LABEL = { netease: 'NET', bilibili: 'BILI', soundcloud: 'SC', ytmusic: 'YT' };
+const slowSources = computed(() => Object.entries(sources.value)
+  .filter(([, s]) => s.state === 'loading' ? s.slow : (s.slow || ((s.latencyMs || 0) > 2500 && s.state === 'ok')))
+  .map(([p]) => SLOW_LABEL[p] || p));
 
-// 2. 引入歌单逻辑 (注入依赖)
+// 2. 歌单逻辑
 const {
   playlists, currentPlaylistId, searchUserKeyword, userSearchResults,
   isSearchingUser, isPlaylistsLoading, hasMore, isLoadingMore, bindings,
   searchUser, bindUser, loadPlaylist, handleScroll, loadRemainingSongs
 } = usePlaylistLogic(platform, songs, listMode, loading);
 
-// 3. 专辑搜索状态
+// 3. 专辑搜索
 const albumSearchMode = ref(false);
 const albums = ref([]);
 const currentAlbumId = ref(null);
@@ -342,14 +417,16 @@ const handleSelectAlbum = async (album) => {
 };
 
 const handleImportAlbum = () => {
-  playerStore.enqueueAlbum(platform.value, currentAlbumId.value);
-  closeModal();
+  if (userStore.isGuest) return promptNameThen(() => handleImportAlbum());
+  player.enqueueAlbum(platform.value, currentAlbumId.value);
 };
 
 // 4. UI 状态
 const mobileView = ref('playlists');
 const playlistKeyword = ref('');
 const contentScrollRef = ref(null);
+const activeIndex = ref(-1);
+const isComposing = ref(false);
 const MAX_DURATION = 10 * 60 * 1000;
 const SCROLL_STORAGE_KEY = 'mp_search_scroll_positions';
 const savedScrollPositions = ref(loadScrollPositions());
@@ -366,11 +443,124 @@ const displayedSongs = computed(() => {
   });
 });
 
-// 4. 交互胶水代码
 const isUnplayable = (song) => {
-  return platform.value === 'bilibili' && song.duration > MAX_DURATION;
+  return (song.platform || platform.value) === 'bilibili' && song.duration > MAX_DURATION;
 };
 
+const rowKey = (song) => mergeKey(song);
+
+// === 行级点歌状态机 ===
+const rowState = (song) => player.enqueueStates[rowKey(song)] || null;
+const inQueue = (song) => player.isInQueue(song.platform, song.id);
+const isNowPlaying = (song) => player.nowPlaying?.music?.id === song.id
+  && player.nowPlaying?.music?.platform === song.platform;
+
+const ingestLabel = (song) => {
+  if (isNowPlaying(song)) return 'ON AIR';
+  const state = rowState(song);
+  if (state?.state === 'submitting') return 'SUBMITTING';
+  if (!inQueue(song)) return state?.state === 'failed' ? 'FAILED' : '';
+  const item = player.queue.find((q) => q.music?.id === song.id && q.music?.platform === song.platform);
+  if (!item) return 'QUEUED';
+  if (item.status === 'FAILED') return 'SOURCE FAILED';
+  if (item.status === 'READY') return 'READY';
+  return 'RESOLVING';
+};
+
+const promptNameThen = (action) => {
+  userStore.setPostNameAction(action);
+  userStore.showNameModal = true;
+};
+
+const handleAddClick = (song) => {
+  if (isUnplayable(song)) {
+    toastError('B 站视频超过 10 分钟，不支持点歌');
+    return;
+  }
+  if (inQueue(song) || rowState(song)?.state === 'submitting') return;
+  if (player.mySongLimit && player.mySongCount >= player.mySongLimit) {
+    toastError(`你的点歌已达上限 ${player.mySongLimit} 首`);
+    return;
+  }
+  if (userStore.isGuest) {
+    promptNameThen(() => handleAddClick(song));
+    return;
+  }
+  player.enqueue(song.platform, song.id);
+};
+
+// === 搜索 / 链接 ===
+const onEnter = (event) => {
+  if (isComposing.value || event?.isComposing) return;
+  if (activeIndex.value >= 0 && displayedSongs.value[activeIndex.value]) {
+    handleAddClick(displayedSongs.value[activeIndex.value]);
+    return;
+  }
+  submitSearch();
+};
+
+const submitSearch = async () => {
+  const raw = (keyword.value || '').trim();
+  if (!raw) return;
+  activeIndex.value = -1;
+
+  if (looksLikeLink(raw)) {
+    await resolveAndEnqueue(raw);
+    return;
+  }
+  await doSearch();
+};
+
+const resolveAndEnqueue = async (raw) => {
+  try {
+    const link = await musicApi.resolveLink(raw);
+    const enqueueLink = () => {
+      if (link.kind === 'playlist') {
+        player.enqueuePlaylist(link.platform, link.id);
+        info(`已识别 ${PLATFORM_LABEL[link.platform] || link.platform} 歌单 · 开始导入`);
+      } else if (link.kind === 'album') {
+        player.enqueueAlbum(link.platform, link.id);
+        info(`已识别 ${PLATFORM_LABEL[link.platform] || link.platform} 专辑 · 开始导入`);
+      } else {
+        player.enqueue(link.platform, link.id);
+        info(`已识别 ${PLATFORM_LABEL[link.platform] || link.platform} 单曲 · 已提交`);
+      }
+    };
+    if (userStore.isGuest) {
+      promptNameThen(enqueueLink);
+      return;
+    }
+    enqueueLink();
+  } catch (e) {
+    toastError(e?.response?.data?.message || '无法识别这个链接');
+  }
+};
+
+const handleSearchAction = async () => {
+  if (albumSearchMode.value && platform.value === 'netease') {
+    await searchAlbums();
+  } else {
+    await submitSearch();
+  }
+  mobileView.value = 'songs';
+};
+
+const moveActive = (delta) => {
+  const list = displayedSongs.value;
+  if (!list.length) return;
+  activeIndex.value = Math.max(0, Math.min(list.length - 1, activeIndex.value + delta));
+};
+
+// === 导入进度 ===
+const importJob = computed(() => {
+  const listId = currentAlbumId.value || currentPlaylistId.value;
+  if (!listId) return null;
+  const jobs = Object.values(player.importJobs).filter((job) => job.listId === listId);
+  if (!jobs.length) return null;
+  return jobs.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))[0];
+});
+
+// === 交互胶水 ===
 const handleSelectPlaylist = async (pid) => {
   saveScrollPosition();
   playlistKeyword.value = '';
@@ -380,8 +570,8 @@ const handleSelectPlaylist = async (pid) => {
 };
 
 const handleImportPlaylist = () => {
-  playerStore.enqueuePlaylist(platform.value, currentPlaylistId.value);
-  closeModal();
+  if (userStore.isGuest) return promptNameThen(() => handleImportPlaylist());
+  player.enqueuePlaylist(platform.value, currentPlaylistId.value);
 };
 
 const getSourceUrl = (song) => {
@@ -421,7 +611,6 @@ const onContentScroll = (event) => {
   const el = event.target;
   if (listMode.value === 'search' && !albumSearchMode.value && hasMoreSearch.value && !loading.value) {
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
-      console.log('[scroll] triggering loadMore, scrollHeight:', el.scrollHeight, 'scrollTop:', el.scrollTop, 'clientHeight:', el.clientHeight);
       loadMore();
     }
   }
@@ -433,38 +622,11 @@ const closeModal = () => {
 };
 
 const switchPlatform = (nextPlatform) => {
+  if (!isPlatformEnabled(nextPlatform) && nextPlatform !== 'all') return;
   saveScrollPosition();
   platform.value = nextPlatform;
 };
 
-// 本地维护正在添加中的歌曲 ID 集合
-const pendingIds = ref(new Set());
-
-// 检查歌曲是否已经在队列中
-const isInQueue = (songId) => {
-  return playerStore.queue.some(item => item.music.id === songId);
-};
-
-// 处理点击添加
-const handleAddClick = (song) => {
-  // 防抖：如果正在添加或已在队列，直接忽略
-  if (pendingIds.value.has(song.id) || isInQueue(song.id)) return;
-
-  // 1. 设置 loading 状态
-  pendingIds.value.add(song.id);
-
-  // 2. 发送请求
-  playerStore.enqueue(platform.value, song.id);
-
-  // 3. 设定一个“冷却时间”用于视觉反馈 (2秒)
-  // WebSocket 是异步的，我们不需要一直等到服务器返回，
-  // 这里的 loading 主要是为了告诉用户“操作已受理”并防止连点
-  setTimeout(() => {
-    pendingIds.value.delete(song.id);
-  }, 2000);
-};
-
-// 监听搜索动作 -> 自动切视图
 watch(listMode, (mode) => {
   if (mode === 'search') mobileView.value = 'songs';
   if (props.isOpen) restoreScrollPosition();
@@ -477,8 +639,13 @@ watch(platform, () => {
   listMode.value = 'search';
   playlistKeyword.value = '';
   albumSearchMode.value = false;
+  activeIndex.value = -1;
   mobileView.value = supportsPlaylists.value ? 'playlists' : 'songs';
   if (props.isOpen) restoreScrollPosition();
+  // 已搜过词时，切源立即用同一关键词重搜（用户的预期是「换个源再看」）
+  if (props.isOpen && keyword.value.trim() && !albumSearchMode.value) {
+    doSearch();
+  }
 });
 
 watch(playlistKeyword, (value) => {
@@ -489,8 +656,9 @@ watch(playlistKeyword, (value) => {
 
 watch(() => props.isOpen, async (val) => {
   if (val) {
-    mobileView.value = 'playlists';
+    mobileView.value = supportsPlaylists.value ? 'playlists' : 'songs';
     await restoreScrollPosition();
+    probeHealth();
   } else {
     saveScrollPosition();
   }

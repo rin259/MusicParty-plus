@@ -41,6 +41,9 @@ public class LocalCacheService {
 
     private final WebClient webClient;
     private static final long DOWNLOAD_COOLDOWN_SECONDS = 3;
+    // 单任务硬上限：下载队列串行（concatMap 并发 1），任何一个任务卡住都会堵死后续曲目，
+    // 故此处兜底，任何阶段无进展都不会超过此值。
+    private static final Duration TASK_TIMEOUT = Duration.ofMinutes(4);
 
     // 内存中维护缓存文件的元数据
     private final Map<String, CacheEntry> cacheIndex = new ConcurrentHashMap<>();
@@ -211,7 +214,7 @@ public class LocalCacheService {
                             .headers(httpHeaders -> source.headers().forEach(httpHeaders::add))
                             .retrieve()
                             .bodyToFlux(DataBuffer.class)
-                            .timeout(Duration.ofMinutes(12))
+                            .timeout(Duration.ofMinutes(3))
                             .as(data -> DataBufferUtils.write(data, tempPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING))
                             .then(Mono.fromRunnable(() -> completeDownload(musicId, entry, tempPath, destPath, fileName)))
                             .subscribeOn(Schedulers.boundedElastic())
@@ -230,6 +233,8 @@ public class LocalCacheService {
                         .filter(this::isRetryableDownloadFailure)
                         .doBeforeRetry(signal -> log.warn("Retrying download {} after transient failure (attempt {})",
                                 musicId, signal.totalRetries() + 1)))
+                // 兜底：串行队列里，任何阶段无进展都不得超过 TASK_TIMEOUT
+                .timeout(TASK_TIMEOUT)
                 // 错误处理
                 .doOnError(error -> {
                     log.error("Download Task failed for {}: {}", musicId, error.getMessage());

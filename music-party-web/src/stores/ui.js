@@ -45,7 +45,7 @@ export const useUiStore = defineStore('ui', () => {
         try {
             const config = await client.get('/api/config');
             authorName.value = config.authorName;
-            backWords.value = config.backWords;
+            backWords.value = config.backWords ?? backWords.value;
         } catch (e) {
             console.error('Failed to fetch config', e);
         }

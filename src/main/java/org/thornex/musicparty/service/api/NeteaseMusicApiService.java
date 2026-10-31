@@ -6,6 +6,8 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.AlbumSearchResult;
 import org.thornex.musicparty.dto.Music;
@@ -16,12 +18,16 @@ import org.thornex.musicparty.enums.CacheStatus;
 import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.service.LocalCacheService;
 import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 import com.fasterxml.jackson.databind.JsonNode;
 
+import java.io.IOException;
 import java.net.URI;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.StreamSupport;
 
 @Service
@@ -35,6 +41,12 @@ public class NeteaseMusicApiService implements IMusicApiService {
     private final LocalCacheService localCacheService;
     private volatile String currentCookie;
     private static final String PLATFORM = "netease";
+
+    // 取流容错：上游 502 read ETIMEDOUT 属瞬时抖动，退避重试并逐级降音质
+    private static final int URL_RESOLVE_ATTEMPTS = 4;
+    private static final Duration URL_RESOLVE_BACKOFF = Duration.ofMillis(700);
+    private static final List<String> QUALITY_LADDER = List.of("exhigh", "higher", "standard");
+    private static final String NO_URL_MESSAGE = "网易云未返回可播放音频地址";
 
     public NeteaseMusicApiService(WebClient webClient, AppProperties appProperties, LocalCacheService localCacheService) {
         this.webClient = webClient;
@@ -104,7 +116,7 @@ public class NeteaseMusicApiService implements IMusicApiService {
                 if (paramIdx >= 0) {
                     httpsUrl = httpsUrl.substring(0, paramIdx);
                 }
-                return httpsUrl + "?param=200y200";
+                return httpsUrl + "?param=1024y1024";
             }
             return httpsUrl;
         }
@@ -127,7 +139,7 @@ public class NeteaseMusicApiService implements IMusicApiService {
                 if (paramIdx >= 0) {
                     httpsUrl = httpsUrl.substring(0, paramIdx);
                 }
-                return httpsUrl + "?param=200y200";
+                return httpsUrl + "?param=1024y1024";
             }
         }
         return "";
@@ -163,6 +175,46 @@ public class NeteaseMusicApiService implements IMusicApiService {
     @Override
     public Mono<List<Music>> searchMusic(String keyword, int offset, int limit) {
         ensureConfigured();
+        // /cloudsearch 一次返回 dt（时长）、al.picUrl（封面）与 ar[]（艺人），
+        // 故无需再发 /song/detail；旧实现漏读字段，搜索结果时长恒为 0。
+        return cloudSearch(keyword, offset, limit)
+                .onErrorResume(error -> {
+                    log.warn("cloudsearch failed ({}), falling back to /search + /song/detail", error.getMessage());
+                    return legacySearch(keyword, offset, limit);
+                });
+    }
+
+    private Mono<List<Music>> cloudSearch(String keyword, int offset, int limit) {
+        return webClient.get()
+                .uri(baseUrl + "/cloudsearch?keywords={keyword}&type=1&offset={offset}&limit={limit}&cookie={cookie}",
+                        keyword, offset, limit, getCookie())
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, response -> handleApiError("cloudsearch", response))
+                .bodyToMono(JsonNode.class)
+                .map(jsonNode -> {
+                    List<Music> musicList = new ArrayList<>();
+                    JsonNode songs = jsonNode.path("result").path("songs");
+                    if (!songs.isArray()) return musicList;
+                    for (JsonNode song : songs) {
+                        List<String> artists = new ArrayList<>();
+                        JsonNode artistNode = song.has("ar") ? song.path("ar") : song.path("artists");
+                        artistNode.forEach(artist -> artists.add(artist.path("name").asText()));
+                        String cover = albumCoverUrl(song.path("al"));
+                        musicList.add(new Music(
+                                song.path("id").asText(),
+                                song.path("name").asText(),
+                                artists,
+                                song.path("dt").asLong(),
+                                PLATFORM,
+                                cover
+                        ));
+                    }
+                    return musicList;
+                });
+    }
+
+    /** 旧版搜索：/search 不返回时长与封面，需再查 /song/detail；仅作 cloudsearch 失败时的兜底。 */
+    private Mono<List<Music>> legacySearch(String keyword, int offset, int limit) {
         return webClient.get()
                 .uri(baseUrl + "/search?keywords={keyword}&offset={offset}&limit={limit}&cookie={cookie}", keyword, offset, limit, getCookie())
                 .retrieve()
@@ -183,14 +235,13 @@ public class NeteaseMusicApiService implements IMusicApiService {
                                 song.path("id").asText(),
                                 song.path("name").asText(),
                                 artists,
-                                song.path("dt").asLong(),
+                                song.path("duration").asLong(),
                                 PLATFORM,
                                 ""
                         ));
                         ids.add(song.path("id").asText());
                     }
                     if (ids.isEmpty()) return Mono.just(musicList);
-                    // Batch-fetch song details to get proper cover URLs
                     return webClient.get()
                             .uri(baseUrl + "/song/detail?ids={ids}&cookie={cookie}", String.join(",", ids), getCookie())
                             .retrieve()
@@ -250,15 +301,80 @@ public class NeteaseMusicApiService implements IMusicApiService {
                 )));
     }
 
-    private Mono<String> resolveMusicUrl(String musicId) {
+    /**
+     * 取流地址解析：网易云网关对个别曲目会瞬时返回 502 read ETIMEDOUT
+     * （实测：同一请求数秒后即 200，账号与 cookie 均正常，属上游抖动），
+     * 故此处随身退避重试，并逐级降音质（exhigh → higher → standard）：
+     * 降一档仍可播，也远胜整首失败。
+     */
+    // package-private：供 NeteaseMusicApiServiceTest 直接验证重试/降档行为
+    Mono<String> resolveMusicUrl(String musicId) {
+        List<String> levels = new ArrayList<>();
+        if (StringUtils.hasText(quality)) {
+            levels.add(quality);
+        }
+        for (String level : QUALITY_LADDER) {
+            if (!levels.contains(level)) {
+                levels.add(level);
+            }
+        }
+        return resolveMusicUrl(musicId, levels, 0);
+    }
+
+    private Mono<String> resolveMusicUrl(String musicId, List<String> levels, int index) {
+        if (index >= levels.size()) {
+            return Mono.error(new ApiRequestException(
+                    "网易云未返回可播放音频地址（已试音质：" + String.join("/", levels) + "）"));
+        }
+        String level = levels.get(index);
         return webClient.get()
-                .uri(baseUrl + "/song/url/v1?id={musicId}&level={quality}&cookie={cookie}", musicId, quality, getCookie())
+                .uri(baseUrl + "/song/url/v1?id={musicId}&level={level}&cookie={cookie}", musicId, level, getCookie())
                 .retrieve()
                 .onStatus(HttpStatusCode::isError, response -> handleApiError("get song URL", response))
                 .bodyToMono(JsonNode.class)
-                .map(jsonNode -> jsonNode.path("data").path(0).path("url").asText())
+                // 注意：Jackson 的 asText() 对 null 节点会返回字符串 "null"，
+                // 会被 hasText() 误判为有效地址（不可播曲目因此去下载 “null”）。
+                .map(jsonNode -> {
+                    JsonNode urlNode = jsonNode.path("data").path(0).path("url");
+                    return urlNode.isTextual() ? urlNode.asText() : "";
+                })
                 .filter(StringUtils::hasText)
-                .switchIfEmpty(Mono.error(new ApiRequestException("网易云未返回可播放音频地址")));
+                .switchIfEmpty(Mono.error(new ApiRequestException(NO_URL_MESSAGE)))
+                .retryWhen(Retry.backoff(URL_RESOLVE_ATTEMPTS, URL_RESOLVE_BACKOFF)
+                        .maxBackoff(Duration.ofSeconds(4))
+                        .filter(NeteaseMusicApiService::isTransientFailure)
+                        .doBeforeRetry(signal -> log.warn(
+                                "Netease URL resolve retry {}/{} (id={}, level={}): {}",
+                                signal.totalRetries() + 1, URL_RESOLVE_ATTEMPTS, musicId, level,
+                                signal.failure().getMessage())))
+                // 本档位失败（含「未返回地址」）：退到下一档音质再试
+                .onErrorResume(error -> resolveMusicUrl(musicId, levels, index + 1));
+    }
+
+    /** 网关瞬时故障（5xx / 网关超时 / 连接中断）值得重试；鉴权或参数错误则不必。 */
+    private static boolean isTransientFailure(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            final String message = cause.getMessage();
+            // 連不上（Connection refused / ECONNREFUSED）＝ 服務本身不可用：立即失敗，重試無意義
+            if (message != null && (message.contains("Connection refused") || message.contains("ECONNREFUSED"))) {
+                return false;
+            }
+            if (cause instanceof TimeoutException || cause instanceof IOException
+                    || cause instanceof WebClientRequestException) {
+                return true;
+            }
+            if (cause instanceof WebClientResponseException response) {
+                int status = response.getStatusCode().value();
+                return status == 408 || status == 429 || status >= 500;
+            }
+            if (message != null && (message.contains("ETIMEDOUT")
+                    || message.contains("Connection reset")
+                    || message.contains("timed out")
+                    || message.matches(".*status 5\\d\\d.*"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String cacheId(String musicId) {

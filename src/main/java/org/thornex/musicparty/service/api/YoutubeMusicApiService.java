@@ -11,7 +11,8 @@ import java.util.List;
 @Service
 public class YoutubeMusicApiService extends YtDlpMusicApiService {
     public YoutubeMusicApiService(LocalCacheService localCacheService, YtDlpResolver resolver, AppProperties properties) {
-        super("ytmusic", localCacheService, resolver, properties.getYtmusic().getSearchLimit());
+        super("ytmusic", localCacheService, resolver, properties.getYtmusic().getSearchLimit(),
+                properties.getYtmusic().getFetchLimit());
     }
 
     @Override protected Mono<List<YtDlpResolver.TrackMetadata>> search(String keyword, int limit) { return resolver.searchYoutubeMusic(keyword, limit); }

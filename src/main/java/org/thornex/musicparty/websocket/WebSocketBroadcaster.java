@@ -2,11 +2,16 @@ package org.thornex.musicparty.websocket;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.event.EventListener;
+import org.springframework.messaging.MessageHeaders;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import org.springframework.messaging.simp.SimpMessageType;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 import org.thornex.musicparty.dto.PlayerEvent;
 import org.thornex.musicparty.dto.User;
 import org.thornex.musicparty.enums.PlayerAction;
+import org.thornex.musicparty.event.EnqueueResultEvent;
+import org.thornex.musicparty.event.ImportProgressEvent;
 import org.thornex.musicparty.event.PlayerStateEvent;
 import org.thornex.musicparty.event.QueueUpdateEvent;
 import org.thornex.musicparty.event.SystemMessageEvent;
@@ -40,6 +45,27 @@ public class WebSocketBroadcaster {
     @EventListener
     public void onSeek(SeekEvent event) {
         messagingTemplate.convertAndSend("/topic/player/seek", event.getPositionMs());
+    }
+
+    /** 点歌回执：只投递给发起者，前端据此结束「提交中」并显示真实原因。 */
+    @EventListener
+    public void onEnqueueResult(EnqueueResultEvent event) {
+        messagingTemplate.convertAndSendToUser(event.getSessionId(), "/queue/enqueue",
+                event.getResult(), sessionHeaders(event.getSessionId()));
+    }
+
+    /** 歌单/专辑导入进度：只投递给发起者。 */
+    @EventListener
+    public void onImportProgress(ImportProgressEvent event) {
+        messagingTemplate.convertAndSendToUser(event.getSessionId(), "/queue/import",
+                event.getProgress(), sessionHeaders(event.getSessionId()));
+    }
+
+    private MessageHeaders sessionHeaders(String sessionId) {
+        SimpMessageHeaderAccessor accessor = SimpMessageHeaderAccessor.create(SimpMessageType.MESSAGE);
+        accessor.setSessionId(sessionId);
+        accessor.setLeaveMutable(true);
+        return accessor.getMessageHeaders();
     }
 
     /**

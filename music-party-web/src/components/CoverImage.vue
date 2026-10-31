@@ -3,6 +3,7 @@
     <img
         v-if="!hasError && src"
         :src="src"
+        :alt="alt"
         loading="lazy"
         decoding="async"
         class="w-full h-full object-cover transition-opacity duration-500"
@@ -10,7 +11,7 @@
     />
 
     <!-- 🟢 修改部分开始：使用 SVG 图标代替固定像素的 DIV -->
-    <div v-else class="flex flex-col items-center justify-center w-full h-full text-medical-400/80 p-1">
+    <div v-else class="flex flex-col items-center justify-center w-full h-full text-medical-500/80 p-1">
       <!--
          1. w-1/2 h-1/2: 让图标大小始终占据容器的一半，完美适配 32px 或 300px
          2. stroke-width: 线条稍微细一点，看起来更精致
@@ -34,7 +35,11 @@ import { ref, watch } from 'vue';
 // 🟢 新增：引入图标
 import { ImageOff } from 'lucide-vue-next';
 
-const props = defineProps(['src']);
+const props = defineProps({
+  src: { type: String, default: '' },
+  // 默认空 alt：封面旁边总有歌名，重复朗读没有意义
+  alt: { type: String, default: '' }
+});
 const hasError = ref(false);
 // 当 src 变化时重置错误状态
 watch(() => props.src, () => hasError.value = false);

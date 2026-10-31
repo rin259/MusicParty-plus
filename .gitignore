@@ -38,3 +38,10 @@ build/
 /scripts/publish-image.ps1
 /data/queue-data.json
 .gstack/
+
+### Runtime state / secrets (never commit)
+music_party/cached_media/
+music_party/data/
+/data/
+*.mp3
+*.m4a

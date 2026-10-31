@@ -32,5 +32,7 @@ export const WS_DEST = {
     USER_STATE: '/user/queue/player/state',
     USER_CHAT_HISTORY: '/user/queue/chat/history',
     USER_EVENTS: '/user/queue/events',
-    USER_PRIVATE_CHAT: '/user/queue/chat/private'
+    USER_PRIVATE_CHAT: '/user/queue/chat/private',
+    USER_ENQUEUE_RESULT: '/user/queue/enqueue',
+    USER_IMPORT_PROGRESS: '/user/queue/import'
 };

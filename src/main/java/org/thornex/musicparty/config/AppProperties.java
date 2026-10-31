@@ -67,13 +67,15 @@ public class AppProperties {
         private boolean enabled = true;
         private String path = "yt-dlp";
         private long timeoutSeconds = 45;
-        private long downloadTimeoutSeconds = 900;
+        private long downloadTimeoutSeconds = 180;
     }
 
     @Data
     public static class YtDlpSourceConfig {
         private boolean enabled = true;
         private int searchLimit = 30;
+        /** How many results the yt-dlp fallback pulls in one batch so paging can continue. */
+        private int fetchLimit = 100;
     }
 
     @Data

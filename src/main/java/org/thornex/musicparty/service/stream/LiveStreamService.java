@@ -104,6 +104,11 @@ public class LiveStreamService {
         return ipConnectionCount.size();
     }
 
+    /** 该监听是否仍在 broadcaster 的活跃集合中（客户端断开被移除后为 false）。 */
+    public boolean isListenerActive(OutputStream outputStream) {
+        return broadcaster.hasClient(outputStream);
+    }
+
     public void addListener(OutputStream outputStream, String remoteAddr) {
         hasListeners.set(true);
         broadcaster.addClient(outputStream);

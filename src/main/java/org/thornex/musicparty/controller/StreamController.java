@@ -48,11 +48,17 @@ public class StreamController {
         try {
             os = response.getOutputStream();
             liveStreamService.addListener(os, remoteAddr);
-            
+
+            // 原实现 os.wait() 无限等待且全服务无任何 notify/broadcast 唤醒，
+            // broadcaster 因写失败移除监听后本线程仍永久 park，
+            // 每个听众泄漏一根 Tomcat 线程直至重启。改为：监听被移除即退出，
+            // 60s 一轮保底唤醒兜底。
             synchronized (os) {
-                os.wait(); 
+                while (liveStreamService.isListenerActive(os)) {
+                    os.wait(60_000);
+                }
             }
-            
+
         } catch (IOException | InterruptedException e) {
             log.debug("Stream client disconnected: {}", e.getMessage());
         } finally {

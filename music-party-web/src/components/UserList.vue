@@ -1,8 +1,13 @@
 <template>
   <div class="p-4">
     <div class="mb-4 flex items-center justify-between">
-      <h3 class="text-sm font-bold text-medical-400">在线成员</h3>
-      <div class="text-xs font-mono bg-accent/10 text-accent px-1">{{ users.length }}</div>
+      <h3 class="text-sm font-bold text-medical-500">在线成员</h3>
+      <div class="flex items-center gap-2">
+        <div class="text-xs font-mono font-bold bg-medical-100 text-accent-text px-1.5 py-0.5">{{ users.length }}</div>
+        <button v-if="dismissible" @click="$emit('close')" class="flex items-center justify-center w-11 h-11 -mr-2 text-medical-500 hover:text-medical-900" aria-label="关闭在线成员">
+          <X class="w-5 h-5" />
+        </button>
+      </div>
     </div>
 
     <div class="space-y-3">
@@ -18,13 +23,13 @@
         <div
             class="w-8 h-8 flex items-center justify-center font-bold text-xs transition-colors rounded-none"
             :class="[
-                isEnqueuerById(userStore.userToken) ? 'bg-accent text-white' :
-                isLikedUser(userStore.userToken) ? 'bg-accent text-white' :
-                'bg-medical-900 text-white'
+                isEnqueuerById(userStore.userToken) ? 'bg-accent text-accent-fg' :
+                isLikedUser(userStore.userToken) ? 'bg-accent text-accent-fg' :
+                'bg-surface-strong text-white'
             ]"
         >
           <span v-if="isEnqueuerById(userStore.userToken)">DJ</span>
-          <Zap v-else-if="isLikedUser(userStore.userToken)" class="w-4 h-4 fill-white text-white" />
+          <Zap v-else-if="isLikedUser(userStore.userToken)" class="w-4 h-4 fill-current" />
           <span v-else>ME</span>
         </div>
         <div class="flex-1 min-w-0">
@@ -32,8 +37,9 @@
               v-model="newName"
               @blur="doRename"
               @keyup.enter="doRename"
-              class="w-full bg-transparent border-b border-transparent focus:border-accent outline-none text-sm font-bold"
-              :class="isEnqueuerById(userStore.userToken) ? 'text-accent' : 'text-medical-900'"
+              aria-label="你的昵称，回车保存"
+              class="w-full min-h-11 bg-transparent border-b border-transparent focus:border-accent outline-none text-sm font-bold"
+              :class="isEnqueuerById(userStore.userToken) ? 'text-accent-text' : 'text-medical-900'"
           />
         </div>
 
@@ -59,18 +65,18 @@
         <div
             class="w-8 h-8 flex items-center justify-center font-bold text-xs transition-colors rounded-none"
             :class="[
-                isEnqueuerById(u.token) ? 'bg-accent text-white' :
-                isLikedUser(u.token) ? 'bg-accent text-white' :
-                'bg-medical-200 text-medical-500'
+                isEnqueuerById(u.token) ? 'bg-accent text-accent-fg' :
+                isLikedUser(u.token) ? 'bg-accent text-accent-fg' :
+                'bg-medical-200 text-medical-700'
             ]"
         >
           <span v-if="isEnqueuerById(u.token)">DJ</span>
-          <Zap v-else-if="isLikedUser(u.token)" class="w-4 h-4 fill-white text-white" />
+          <Zap v-else-if="isLikedUser(u.token)" class="w-4 h-4 fill-current" />
           <span v-else>OP</span>
         </div>
         <div
             class="text-sm font-bold truncate flex-1"
-            :class="isEnqueuerById(u.token) ? 'text-accent' : 'text-medical-900'"
+            :class="isEnqueuerById(u.token) ? 'text-accent-text' : 'text-medical-900'"
         >
           {{ u.name }}
         </div>
@@ -88,7 +94,7 @@
     <!-- 直播流人数 -->
     <div v-if="playerStore.streamListenerCount > 0" class="mt-4 pt-3 border-t border-medical-200 border-dashed">
       <div class="flex items-center gap-3 p-2 -mx-2 opacity-60">
-        <div class="w-8 h-8 flex items-center justify-center bg-medical-200 text-medical-500 font-bold text-[10px] rounded-none">
+        <div class="w-8 h-8 flex items-center justify-center bg-medical-200 text-medical-700 font-bold text-[10px] rounded-none">
           LIVE
         </div>
         <div class="text-xs font-bold text-medical-800">
@@ -105,7 +111,10 @@
 import { ref, computed, watch } from 'vue';
 import { useUserStore } from '../stores/user';
 import { usePlayerStore } from '../stores/player';
-import { Zap } from 'lucide-vue-next';
+import { Zap, X } from 'lucide-vue-next';
+
+defineProps({ dismissible: { type: Boolean, default: false } });
+defineEmits(['close']);
 
 const userStore = useUserStore();
 const playerStore = usePlayerStore();
@@ -143,14 +152,14 @@ const isEnqueuerById = (token) => {
   border-radius: 1px;
   /* 使用 transform 性能更好 */
   transform-origin: bottom;
-  animation: bounce infinite ease-in-out;
+  animation: level-meter infinite ease-in-out;
 }
 
 .bar-1 { animation-duration: 0.6s; height: 60%; }
 .bar-2 { animation-duration: 0.8s; height: 100%; }
 .bar-3 { animation-duration: 0.5s; height: 40%; }
 
-@keyframes bounce {
+@keyframes level-meter {
   0%, 100% { transform: scaleY(0.4); }
   50% { transform: scaleY(1); }
 }

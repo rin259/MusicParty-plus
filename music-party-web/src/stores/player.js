@@ -35,6 +35,15 @@ export const usePlayerStore = defineStore('player', () => {
     const isBuffering = ref(false);
     const isErrorState = ref(false);
 
+    // === 点歌可观测性 ===
+    // key = platform:id。提交中 → 服务端回执（QUEUED/FAILED…）→ 队列快照确认。
+    const enqueueStates = ref({});
+    const pendingEnqueues = ref({});   // requestId -> { key, platform, musicId, at, timer }
+    const importJobs = ref({});        // requestId -> ImportProgress
+    const ackTimers = new Map();
+
+    const songKey = (platform, musicId) => `${platform}:${musicId}`;
+
     // 投票切歌相关
     const isVoteSkipEnabled = ref(false);
     const voteSkipThreshold = ref(0.5);
@@ -165,9 +174,91 @@ export const usePlayerStore = defineStore('player', () => {
     const togglePause = () => requireAuth() && checkCooldown() && socketService.send(WS_DEST.PLAYER_PAUSE);
     const cyclePlayMode = () => requireAuth() && checkCooldown() && socketService.send(WS_DEST.PLAYER_SHUFFLE);
 
-    const enqueue = (platform, musicId) => requireAuth() && socketService.send(WS_DEST.ENQUEUE, { platform, musicId });
-    const enqueuePlaylist = (platform, playlistId) => requireAuth() && socketService.send(WS_DEST.ENQUEUE_PLAYLIST, { platform, playlistId });
-    const enqueueAlbum = (platform, albumId) => requireAuth() && socketService.send(WS_DEST.ENQUEUE_ALBUM, { platform, playlistId: albumId });
+    function newRequestId() {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+        return `r-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    const enqueue = (platform, musicId) => {
+        if (!requireAuth()) return null;
+        const requestId = newRequestId();
+        const key = songKey(platform, musicId);
+        enqueueStates.value[key] = { state: 'submitting', message: null, at: Date.now() };
+        pendingEnqueues.value[requestId] = { key, platform, musicId, at: Date.now() };
+        const timer = setTimeout(() => {
+            if (!pendingEnqueues.value[requestId]) return;
+            delete pendingEnqueues.value[requestId];
+            const current = enqueueStates.value[key];
+            if (current && current.state === 'submitting') {
+                enqueueStates.value[key] = { state: 'failed', message: '服务端无响应（15s），请重试', at: Date.now() };
+            }
+        }, 15_000);
+        ackTimers.set(requestId, timer);
+        socketService.send(WS_DEST.ENQUEUE, { platform, musicId, requestId });
+        return requestId;
+    };
+
+    /** 服务端回执：结束 submitting，落到 queued / failed，并记录真实原因。 */
+    const applyEnqueueResult = (result) => {
+        if (!result?.requestId) return null;
+        const pending = pendingEnqueues.value[result.requestId];
+        clearTimeout(ackTimers.get(result.requestId));
+        ackTimers.delete(result.requestId);
+        if (pending) delete pendingEnqueues.value[result.requestId];
+
+        const key = songKey(result.platform, result.musicId || pending?.musicId);
+        const queued = result.status === 'QUEUED';
+        enqueueStates.value[key] = {
+            state: queued ? 'queued' : 'failed',
+            message: result.message || null,
+            code: result.status,
+            at: Date.now()
+        };
+        return result;
+    };
+
+    const enqueuePlaylist = (platform, playlistId) => {
+        if (!requireAuth()) return null;
+        const requestId = newRequestId();
+        importJobs.value[requestId] = {
+            requestId, platform, listId: playlistId, kind: 'playlist',
+            done: 0, total: 0, added: 0, skipped: 0, finished: false,
+            startedAt: Date.now(), message: null
+        };
+        socketService.send(WS_DEST.ENQUEUE_PLAYLIST, { platform, playlistId, requestId });
+        return requestId;
+    };
+
+    const enqueueAlbum = (platform, albumId) => {
+        if (!requireAuth()) return null;
+        const requestId = newRequestId();
+        importJobs.value[requestId] = {
+            requestId, platform, listId: albumId, kind: 'album',
+            done: 0, total: 0, added: 0, skipped: 0, finished: false,
+            startedAt: Date.now(), message: null
+        };
+        socketService.send(WS_DEST.ENQUEUE_ALBUM, { platform, playlistId: albumId, requestId });
+        return requestId;
+    };
+
+    const applyImportProgress = (progress) => {
+        if (!progress?.requestId) return null;
+        const previous = importJobs.value[progress.requestId] || {};
+        // 服务端进度不含 startedAt，合并而非覆盖，否则列表排序会丢失起点。
+        importJobs.value[progress.requestId] = { ...previous, ...progress };
+        return progress;
+    };
+
+    /** 当前用户的已点数量与配额（服务端 config 为准）。 */
+    const mySongCount = computed(() => queue.value.filter(
+        (item) => item.enqueuedBy?.token === userStore.userToken
+    ).length);
+    const mySongLimit = computed(() => config.value.maxUserSongs || 0);
+
+    const isInQueue = (platform, musicId) => queue.value.some(
+        (item) => item.music?.id === musicId
+            && (item.music?.platform || platform) === platform
+    );
     const topSong = (queueId) => requireAuth() && socketService.send(WS_DEST.QUEUE_TOP, { queueId });
     const removeSong = (queueId) => requireAuth() && socketService.send(WS_DEST.QUEUE_REMOVE, { queueId });
 
@@ -206,6 +297,17 @@ export const usePlayerStore = defineStore('player', () => {
         }
     });
 
+    // 队列快照确认：即使回执丢失，只要歌真的进了队列，行状态也应落到 queued。
+    watch(() => queue.value, (list) => {
+        if (!Array.isArray(list) || list.length === 0) return;
+        const present = new Set(list.map((item) => songKey(item.music?.platform, item.music?.id)));
+        for (const [key, state] of Object.entries(enqueueStates.value)) {
+            if (state.state === 'submitting' && present.has(key)) {
+                enqueueStates.value[key] = { state: 'queued', message: '已加入队列', at: Date.now() };
+            }
+        }
+    });
+
     return {
 nowPlaying, queue, isPaused, playMode, isShuffle, isRepeatOne, isListLoop, isFairShuffle, allowOfflineShuffle, config,
         isPauseLocked, isSkipLocked, isPlayModeLocked, connected, isLoading, lyricText,
@@ -214,6 +316,8 @@ nowPlaying, queue, isPaused, playMode, isShuffle, isRepeatOne, isListLoop, isFai
         connect, tryReconnect, getCurrentProgress, syncState,
         playNext, togglePause, cyclePlayMode,
         enqueue, enqueuePlaylist, enqueueAlbum, topSong, removeSong,
+        enqueueStates, pendingEnqueues, importJobs, applyEnqueueResult, applyImportProgress,
+        mySongCount, mySongLimit, isInQueue, songKey,
         bindAccount, renameUser, sendChatMessage, sendLike, seekTo
     };
 });

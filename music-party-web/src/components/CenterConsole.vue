@@ -4,9 +4,14 @@
 
     <!-- LAYER 0: 静态背景层 (最底层) -->
     <div class="absolute inset-0 z-0 pointer-events-none">
-      <div class="absolute inset-0 bg-[linear-gradient(rgba(17,24,39,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(17,24,39,0.03)_1px,transparent_1px)] bg-[size:40px_40px]"></div>
-      <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[12vw] font-black text-medical-200/40 select-none whitespace-nowrap tracking-tighter blur-sm">
-        {{ uiStore.backWords.toUpperCase() }}
+      <!-- 随机点光源：16 颗各自绑定一段频带，只做即时响应（不漂移） -->
+      <canvas ref="lightsRef" aria-hidden="true" class="absolute inset-0 w-full h-full"></canvas>
+      <div class="absolute inset-0 bg-[linear-gradient(rgb(var(--medical-900)/0.04)_1px,transparent_1px),linear-gradient(90deg,rgb(var(--medical-900)/0.04)_1px,transparent_1px)] bg-[size:40px_40px]"></div>
+      <!-- 频谱字标：取时频谱之思想（频率→位置、能量→强度、时间→余辉），落在本站字标上 -->
+      <div aria-hidden="true" class="absolute inset-0 flex items-center justify-center select-none">
+        <div ref="wordRef" class="spectral-word text-[12vw] font-bold tracking-tighter whitespace-nowrap blur-[3px]">
+          <span v-for="(ch, i) in wordLetters" :key="i" class="spectral-letter">{{ ch === ' ' ? ' ' : ch }}</span>
+        </div>
       </div>
       <!-- 四角标记 -->
       <div class="absolute top-8 left-8 w-8 h-8 border-t-2 border-l-2 border-medical-300"></div>
@@ -21,12 +26,12 @@
           ref="canvasRef"
           width="1200"
           height="1200"
-          class="absolute left-1/2 top-1/2 -translate-x-1/4 -translate-y-1/3 w-[160vw] h-[160vw] md:w-[1000px] md:h-[1000px]"
+          class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
       ></canvas>
 
       <!-- 旋转圈圈 (CSS动画) -->
-      <div class="absolute inset-0 w-[320px] h-[320px] m-auto border border-medical-200 rounded-full animate-[spin_10s_linear_infinite] opacity-30 border-dashed"></div>
-      <div class="absolute inset-0 w-[340px] h-[340px] m-auto border border-medical-200 rounded-full animate-[spin_15s_linear_infinite_reverse] opacity-20"></div>
+      <div class="absolute inset-0 w-[320px] h-[320px] m-auto border border-medical-200 rounded-[24%] animate-[spin_10s_linear_infinite] opacity-30 border-dashed"></div>
+      <div class="absolute inset-0 w-[340px] h-[340px] m-auto border border-medical-200 rounded-[24%] animate-[spin_15s_linear_infinite_reverse] opacity-20"></div>
     </div>
 
     <!-- LAYER 2: 信息层 (歌词 & 日志) -->
@@ -36,40 +41,83 @@
                   inset-x-0 bottom-7 flex flex-col items-center justify-end h-64 pb-2
                   md:inset-auto md:bottom-8 md:left-10 md:items-start md:justify-end md:h-auto md:w-80
       ">
-        <div class="hidden md:block text-[10px] text-accent/80 mb-1 tracking-widest border-b border-accent/30 pb-1 w-16">
-          LYRIC_SYSTEM
+        <div class="hidden md:block text-[10px] text-accent-text mb-1 tracking-widest border-b border-accent/30 pb-1 w-16">
+          {{ parsedLyrics.length ? 'LYRIC_SYSTEM' : 'TRACK_DATA' }}
         </div>
-        <div class="w-full space-y-1 text-xs font-normal text-medical-900 leading-tight mix-blend-normal md:mix-blend-multiply md:text-medical-600 flex flex-col md:justify-end min-h-0">
-          <div v-if="parsedLyrics.length === 0" class="opacity-50 flex items-center justify-center md:justify-start">
-            <span class="text-accent/50 mr-2 text-[10px]">></span>NO_DATA_STREAM
-          </div>
+        <div class="w-full space-y-1 text-xs font-normal leading-tight flex flex-col md:justify-end min-h-0">
+          <template v-if="parsedLyrics.length === 0">
+            <!-- 无歌词（B站 / SoundCloud / YouTube 均无歌词）：不留空白，改显示可核对的曲目事实 -->
+            <div v-if="player.nowPlaying" class="w-full font-mono text-[10px]">
+              <div class="mb-1 text-[9px] tracking-[0.16em] text-medical-500">NO LYRIC FOR THIS SOURCE</div>
+              <div
+                  v-for="fact in trackFacts"
+                  :key="fact.k"
+                  class="flex items-baseline justify-between gap-3 border-b border-medical-200/60 py-0.5 last:border-0"
+              >
+                <span class="tracking-[0.12em] text-medical-500">{{ fact.k }}</span>
+                <span class="truncate text-medical-800">{{ fact.v }}</span>
+              </div>
+            </div>
+            <div v-else class="opacity-70 flex items-center justify-center md:justify-start text-medical-500">
+              <span class="text-accent-text mr-2 text-[10px]">></span>NO_DATA_STREAM
+            </div>
+          </template>
           <div
               v-else
               v-for="(line, i) in activeLines"
               :key="line.time"
               class="transition-all duration-300 flex items-center md:justify-start justify-center"
-              :class="i === activeLines.length - 1 ? 'opacity-100 scale-105 md:scale-100 text-medical-900' : 'opacity-40 blur-[0.5px]'"
+              :class="i === activeLines.length - 1 ? 'opacity-100 text-medical-900 font-bold' : 'opacity-100 text-medical-500'"
           >
-            <span class="hidden md:inline text-accent mr-2 text-[10px]" :class="{'animate-pulse': i === activeLines.length - 1}">></span>
-            <span :class="{'bg-medical-900 text-white px-1': i === activeLines.length - 1 && isMobile}">
+            <span class="hidden md:inline text-accent-text mr-2 text-[10px]" :class="{'animate-pulse': i === activeLines.length - 1}">></span>
+            <span :class="{'bg-ink text-ink-fg px-1': i === activeLines.length - 1 && isMobile}">
                      {{ line.text }}
             </span>
           </div>
         </div>
       </div>
 
-      <!-- 右侧：伪系统日志 -->
-      <div class="absolute bottom-10 right-10 font-mono text-[10px] text-medical-400 text-right space-y-1 hidden md:block opacity-60">
-        <div v-for="(log, i) in logs" :key="i" class="animate-pulse">
-          {{ log }} <
+      <!-- 右侧：音频遥测（真实测量；B1 三频段电平 + B4 滚动快照） -->
+      <div aria-hidden="true" class="absolute bottom-8 right-8 w-[240px] font-mono text-[10px] text-medical-500 hidden md:block select-none">
+        <div class="absolute inset-0 bg-medical-50/72 chamfer-tl"></div>
+        <div ref="telemetryRef" class="relative flex flex-col gap-1 px-2 py-1.5 opacity-95">
+          <div class="flex items-baseline justify-between tracking-[0.18em] text-medical-500/80">
+            <span>AUDIO_TELEMETRY</span>
+            <span class="text-[9px]">REL_DB</span>
+          </div>
+
+          <div v-for="band in telemetryBands" :key="band.key" :data-band="band.key" class="flex items-center gap-2">
+            <span class="w-8 shrink-0">{{ band.label }}</span>
+            <span class="relative h-1.5 flex-1 overflow-hidden bg-medical-200/70">
+              <span class="telem-bar"></span>
+              <span class="telem-peak"></span>
+            </span>
+            <span class="telem-value w-10 shrink-0 text-right tabular-nums">---</span>
+          </div>
+
+          <div class="flex items-baseline justify-between border-t border-medical-200/60 pt-1 tabular-nums">
+            <span>CREST <span data-meta="crest">0.0</span></span>
+            <span>PEAK <span data-meta="peak">0.0</span></span>
+            <span>RMS <span data-meta="rms">0.0</span></span>
+            <span data-meta="clip" class="text-danger transition-opacity">CLIP</span>
+          </div>
+
+          <div class="space-y-0.5 pt-0.5 text-[9px] leading-tight tabular-nums">
+            <div data-line></div>
+            <div data-line></div>
+            <div data-line></div>
+          </div>
+
+          <div data-meta="link" class="pt-0.5 text-[9px] text-medical-500/70">LINK SEARCHING · Q0</div>
         </div>
       </div>
     </div>
 
     <!-- LAYER 2.5: live chat danmaku. It is visual-only and never blocks playback controls. -->
-    <div class="absolute inset-0 z-20 overflow-hidden pointer-events-none">
-      <TransitionGroup v-for="lane in [0, 1]" :key="lane" name="danmaku" tag="div" class="danmaku-lane" :class="lane === 0 ? 'left-[4%] md:left-[8%]' : 'right-[4%] md:right-[8%]'">
-        <div v-for="message in danmakuMessages.filter(item => item.lane === lane)" :key="message.instanceId" class="danmaku-item max-w-[38vw] md:max-w-[30vw] truncate rounded-full border border-white/50 bg-medical-900/75 px-3 py-1.5 text-xs text-white shadow-lg backdrop-blur-sm">
+    <div aria-hidden="true" class="absolute inset-0 z-20 overflow-hidden pointer-events-none">
+      <!-- 统一单侧弹出：原 lane%5 对双轨渲染导致 3/5 的弹幕被静默丢弃 -->
+      <TransitionGroup name="danmaku" tag="div" class="danmaku-lane left-[4%] md:left-[8%]">
+        <div v-for="message in danmakuMessages" :key="message.instanceId" class="danmaku-item max-w-[38vw] md:max-w-[30vw] truncate rounded-full border border-white/50 bg-scrim/75 px-3 py-1.5 text-xs text-white shadow-lg backdrop-blur-sm">
           <span class="mr-1.5 text-accent font-bold">{{ userStore.resolveName(message.userId, message.userName) }}</span>{{ message.content }}
         </div>
       </TransitionGroup>
@@ -78,27 +126,31 @@
     <!-- LAYER 3: 核心实体层 (封面) -->
     <div class="relative z-30 flex items-center justify-center pointer-events-auto">
       <div class="relative">
-        <div v-if="player.nowPlaying?.enqueuedById" class="absolute -top-4 right-0 text-[10px] font-mono text-accent flex items-center gap-2 z-20 select-none">
+        <div v-if="player.nowPlaying?.enqueuedById" class="absolute -top-5 right-0 text-[10px] font-mono text-accent-text flex items-center gap-2 z-20 select-none">
           <span>REQ_BY</span>
-          <span class="font-bold text-medical-500 border-b border-medical-300 leading-tight">
+          <span class="font-bold text-medical-600 border-b border-medical-300 leading-tight">
             {{ userStore.resolveName(player.nowPlaying.enqueuedById, player.nowPlaying.enqueuedByName) }}
           </span>
         </div>
 
-        <div
+        <button
             id="tutorial-like"
-            class="relative w-64 h-64 md:w-72 md:h-72 bg-medical-50 chamfer-br flex items-center justify-center overflow-hidden transition-all duration-500 cursor-pointer border border-white shadow-2xl"
+            ref="coverBoxRef"
+            type="button"
+            class="relative w-64 h-64 md:w-[clamp(196px,26vh,288px)] md:h-[clamp(196px,26vh,288px)] bg-medical-50 chamfer-br flex items-center justify-center overflow-hidden transition-all duration-500 cursor-pointer border border-surface-1 shadow-2xl"
             :class="[
                  // 仅保留暂停时的缩放/灰度
                  player.isPaused ? 'scale-95 grayscale' : 'scale-100',
                   'cursor-pointer'
              ]"
+            :aria-label="hasLiked ? '已点赞，再点一次再次点赞' : '为当前歌曲点赞'"
+            :aria-pressed="!!hasLiked"
             @mouseenter="!isMobile && (isHovering = true)"
             @mouseleave="!isMobile && (isHovering = false)"
             @click="handleCoverClick"
         >
           <!-- Loading 状态 -->
-          <div v-if="player.isLoading" class="absolute inset-0 z-50 bg-medical-900/50 backdrop-blur-sm flex flex-col items-center justify-center text-white">
+          <div v-if="player.isLoading" class="absolute inset-0 z-50 bg-scrim/55 backdrop-blur-sm flex flex-col items-center justify-center text-white">
             <div class="w-12 h-12 border-4 border-white/30 border-t-white animate-spin mb-4"></div>
             <span class="font-mono text-xs animate-pulse tracking-widest">FETCHING_AUDIO...</span>
           </div>
@@ -118,7 +170,7 @@
                 :class="[
                     // 已点赞状态下，只显示极淡的角落标记，不遮挡封面
                     // 交互或爆发时，增加暗色扫描背景
-                    (isBursting || isHovering || mobileLikePending) ? 'bg-medical-900/40' : ''
+                    (isBursting || isHovering || mobileLikePending) ? 'bg-scrim/65' : ''
                 ]"
             >
               <!-- 1. 动态网格背景 (仅在交互时显示) -->
@@ -142,8 +194,8 @@
                 <div
                     class="relative transition-all duration-300 transform z-10"
                     :class="[
-                      isBursting ? 'scale-125 text-accent drop-shadow-[0_0_15px_rgba(var(--accent),0.9)]' :
-                       'text-white/70 scale-100 group-hover:scale-110 group-hover:text-white'
+                      isBursting ? 'scale-125 text-accent-text drop-shadow-[0_0_15px_rgb(var(--accent))]' :
+                       'text-white scale-100 group-hover:scale-110 group-hover:text-white'
                   ]"
                 >
                   <Activity
@@ -156,8 +208,8 @@
 
 
                 <!-- 状态文字 -->
-                <div class="flex items-center gap-1 font-mono text-[9px] tracking-[0.2em] transition-colors duration-300"
-                     :class="isBursting ? 'text-accent' : 'text-white/70'"
+                <div class="flex items-center gap-1 font-mono text-[10px] tracking-[0.2em] transition-colors duration-300"
+                     :class="isBursting ? 'text-accent-text' : 'text-white'"
                 >
                   <span v-if="isBursting">INJECTING...</span>
                   <span v-else>REACT_TO_BEAT</span>
@@ -166,8 +218,8 @@
             </div>
           </Transition>
 
-          <img v-if="currentCover" :src="currentCover" class="absolute inset-0 w-full h-full object-cover opacity-80" :class="player.isPaused ? '' : 'animate-[pulse_4s_ease-in-out_infinite]'" />
-          <div v-else class="flex flex-col items-center text-medical-300">
+          <img v-if="currentCover" :src="currentCover" alt="" class="absolute inset-0 w-full h-full object-cover opacity-80" :class="player.isPaused ? '' : 'animate-[pulse_4s_ease-in-out_infinite]'" />
+          <div v-else class="flex flex-col items-center text-medical-500">
             <div class="w-16 h-16 border-2 border-medical-300 mb-2 rotate-45"></div>
             <span class="font-mono text-xs tracking-widest">NO MEDIA</span>
           </div>
@@ -175,33 +227,73 @@
 
           <!-- 状态标签：悬停或点赞时隐藏 -->
           <div
-              class="absolute top-0 left-0 z-50 px-3 py-1 font-mono text-xs font-bold chamfer-br transition-colors duration-300 bg-medical-900/80 backdrop-blur-sm text-white"
+              class="absolute top-0 left-0 z-50 px-3 py-1 font-mono text-xs font-bold chamfer-br transition-colors duration-300 bg-scrim/80 backdrop-blur-sm text-white"
           >
             {{ player.isPaused ? 'PAUSED' : 'PLAYING' }}
           </div>
-        </div>
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
 import {useEventListener, useWindowSize} from '@vueuse/core';
 import { parseLyrics } from '../utils/parser';
 import { AudioVisualizer } from '../logic/AudioVisualizer';
+import { SpectralWordmark } from '../logic/SpectralWordmark.js';
+import { GlitchGate } from '../logic/Glitch.js';
+import { AudioTelemetry } from '../logic/AudioTelemetry.js';
+import { PointLights } from '../logic/PointLights.js';
 import { useUiStore } from '../stores/ui';
-import { Heart, Activity, Zap } from 'lucide-vue-next';
+import { formatDuration, PLATFORM_LABEL } from '../logic/searchMerge.js';
+import { Activity, Zap } from 'lucide-vue-next';
 
 const userStore = useUserStore();
 const player = usePlayerStore();
 const uiStore = useUiStore();
 const canvasRef = ref(null);
+const wordRef = ref(null);
+const lightsRef = ref(null);
+const telemetryRef = ref(null);
+const telemetry = new AudioTelemetry();
+const telemetryBands = [
+  { key: 'low', label: 'LOW' },
+  { key: 'mid', label: 'MID' },
+  { key: 'high', label: 'HIGH' }
+];
+const glitchGate = new GlitchGate(900);
+const wordmark = new SpectralWordmark();
+const lights = new PointLights();
+const wordLetters = computed(() => Array.from((uiStore.backWords || 'MUSIC PARTY').toUpperCase()));
+const coverBoxRef = ref(null);
 const currentCover = computed(() => player.nowPlaying?.music.coverUrl);
 const { width } = useWindowSize();
 const isMobile = computed(() => width.value < 768);
+
+// 无歌词时（B站 / SoundCloud / YouTube）不留空白：显示可核对的曲目事实，
+// 同时把「解析/缓存/队列」这些真实状态露出来。
+const trackFacts = computed(() => {
+  const np = player.nowPlaying;
+  if (!np?.music) return [];
+  const music = np.music;
+  const item = player.queue.find(
+      (entry) => entry.music?.id === music.id && entry.music?.platform === music.platform
+  );
+  const pipeline = item?.status === 'READY' ? 'READY'
+      : item?.status === 'FAILED' ? 'FAILED'
+          : item ? 'RESOLVING' : 'ON AIR';
+  return [
+    { k: 'SOURCE', v: PLATFORM_LABEL[music.platform] || music.platform || '—' },
+    { k: 'LENGTH', v: music.duration > 0 ? formatDuration(music.duration) : '—' },
+    { k: 'REQUEST', v: userStore.resolveName(np.enqueuedById, np.enqueuedByName) },
+    { k: 'PIPELINE', v: pipeline },
+    { k: 'QUEUE', v: `${player.queue.length} TRACKS` }
+  ];
+});
 
 // === 交互逻辑 ===
 const isHovering = ref(false);       // PC Hover
@@ -216,14 +308,13 @@ const hasLiked = computed(() => {
 
 const danmakuMessages = ref([]);
 const danmakuTimers = new Set();
-let danmakuLane = 0;
 
 const enqueueDanmaku = (event) => {
   const message = event.detail;
   if (message?.type !== 'CHAT') return;
 
   const instanceId = `${message.id}-${Date.now()}`;
-  danmakuMessages.value.push({ ...message, instanceId, lane: danmakuLane++ % 5 });
+  danmakuMessages.value.push({ ...message, instanceId });
   const timer = setTimeout(() => {
     danmakuMessages.value = danmakuMessages.value.filter(item => item.instanceId !== instanceId);
     danmakuTimers.delete(timer);
@@ -268,6 +359,8 @@ const triggerBurst = () => {
 
   isBursting.value = true;
   visualizer.impulse(); // 触发 Canvas 圆环爆发
+  wordmark.pulse(1);    // 频谱字标同步提亮（参与者的动作要看得见）
+  lights.pulse(1);      // 点光源同源一闪
   setTimeout(() => {
     isBursting.value = false;
   }, 500); // 边框高亮持续 0.5s
@@ -294,43 +387,102 @@ watch(() => player.lyricText, (newVal) => {
 });
 
 // === 系统日志逻辑 (Realtime) ===
-const logs = ref(['SYS_INIT: COMPLETED', 'LINK_START: OK']);
-const mountTime = Date.now();
-let logInterval;
 let updateInterval;
 
 const visualizer = new AudioVisualizer();
+let resizeObserver = null;
 const isVisualizerActive = computed(() => !!player.nowPlaying && !player.isPaused);
+
+// 画布 CSS 尺寸变化（断点/旋屏/侧栏收合）时重设内部分辨率与环场几何。
+// 画布恒为「容器内最大正方形」（封顶 1000px），由 JS 定尺寸而非 CSS aspect-ratio，
+// 免短容器把方格压成矩形（矩形画布会把圆环画成椭圆）。
+const refreshVisualizerMetrics = () => {
+  const canvas = canvasRef.value;
+  if (!canvas) return;
+  const host = canvas.parentElement;
+  if (host) {
+    const size = Math.max(200, Math.min(host.clientWidth, host.clientHeight, 1000));
+    canvas.style.width = `${size}px`;
+    canvas.style.height = `${size}px`;
+  }
+  visualizer.fitResolution();
+  visualizer.layoutRings(coverBoxRef.value?.offsetWidth || 0);
+};
 
 // 监听状态变化以控制 Visualizer
 watch(isVisualizerActive, (active) => {
   visualizer.setPlaying(active);
 });
 
-// 脱敏工具
-const maskId = (id) => id ? `...${id.slice(-4).toUpperCase()}` : 'N/A';
-const formatMem = () => {
-  if (performance && performance.memory) {
-    return Math.floor(performance.memory.usedJSHeapSize / 1048576) + 'MB';
+// --- A：遥测抖动（仅真实事件触发；与标题解码共用闸门，全局同时只允许一次）---
+const telemetryGlitch = () => {
+  if (!glitchGate.take()) return;
+  const block = telemetryRef.value;
+  if (!block) return;
+  block.classList.add('is-glitching');
+  // 单字符失真：只在读数行/状态行上动手，避免破坏电平条
+  const lines = block.querySelectorAll('[data-line], [data-meta="link"]');
+  const line = lines[Math.floor(Math.random() * Math.max(1, lines.length))];
+  if (line) {
+    const original = line.textContent;
+    const idx = Math.floor(Math.random() * Math.max(1, original.length));
+    line.textContent = `${original.slice(0, idx)}█${original.slice(idx + 1)}`;
+    setTimeout(() => { line.textContent = original; }, 90);
   }
-  return 'N/A';
+  setTimeout(() => block.classList.remove('is-glitching'), 190);
 };
 
-const pushLog = (msg) => {
-  logs.value.push(msg);
-  if (logs.value.length > 6) logs.value.shift();
-};
+watch(() => player.nowPlaying?.music?.id, (next, prev) => {
+  if (prev && next && next !== prev) telemetryGlitch();
+});
+watch(() => player.isErrorState, (v) => { if (v) telemetryGlitch(); });
+watch(() => player.connected, (v, prev) => { if (prev === true && v === false) telemetryGlitch(); });
+
+// 房间参与度：有人点歌 → 频谱字标基调轻微抬升（参与者的动作要能在背景上看见）
+watch(() => player.queue.length, (next, prev) => {
+  if (next > prev) {
+    wordmark.bumpCrowd(0.45);
+    lights.bumpCrowd(0.45);
+  }
+});
+
+// 字标内容可被设置更改：重建字母后重新量测
+watch(wordLetters, async () => {
+  await nextTick();
+  wordmark.remeasure();
+});
+
+// 脱敏工具
 
 onMounted(() => {
   // 1. 挂载 Canvas & Visualizer
   if (canvasRef.value) {
     visualizer.mount(canvasRef.value);
     visualizer.setPlaying(isVisualizerActive.value);
+    nextTick(refreshVisualizerMetrics);
+    // 容器尺寸变化（侧栏收合、精简模式、断点切换）未必触发 window resize，
+    // 故直接观察画布本体——环场几何须随实测定，方能处处不压封面、不出画布。
+    if (typeof ResizeObserver === 'function') {
+      resizeObserver = new ResizeObserver(() => refreshVisualizerMetrics());
+      resizeObserver.observe(canvasRef.value.parentElement || canvasRef.value);
+    }
   }
+  if (wordRef.value) {
+    wordmark.attach(wordRef.value);
+    wordmark.start();
+  }
+  if (lightsRef.value) lights.mount(lightsRef.value);
+  if (telemetryRef.value) telemetry.attach(telemetryRef.value);
 
   // 2. 监听全局自定义事件
+  useEventListener(window, 'resize', refreshVisualizerMetrics);
   useEventListener(window, 'player:like', () => triggerBurst());
-  useEventListener(window, 'music-party:spectrum', (event) => visualizer.setSpectrum(event.detail));
+  useEventListener(window, 'music-party:spectrum', (event) => {
+    visualizer.setSpectrum(event.detail);
+    wordmark.setSpectrum(event.detail);
+    lights.setSpectrum(event.detail);
+    telemetry.setSpectrum(event.detail);
+  });
   useEventListener(window, 'music-party:chat-message', enqueueDanmaku);
 
   // 3. 启动高频更新循环 (歌词进度 & 视觉同步)
@@ -345,74 +497,20 @@ onMounted(() => {
       }
       if (activeIdx !== currentLineIndex.value) currentLineIndex.value = activeIdx;
     }
+    // 音频遥测：内部节流到 12.5Hz；无频谱时电平自然回落
+    telemetry.setState({ connected: player.connected, queue: player.queue.length });
+    telemetry.tick();
   }, 100);
-
-  // 4. 启动系统状态日志循环 (真实数据)
-  logInterval = setInterval(() => {
-    if (player.isPaused && Math.random() > 0.4) return;
-
-    const gfx = visualizer.getStatus();
-    const stateParams = [
-      // 网络与连接
-      { cond: true, msg: `UPLINK: ${player.connected ? 'ESTABLISHED' : 'SEARCHING'}` },
-      { cond: true, msg: `PEERS_ONLINE: ${userStore.onlineUsers.length}` },
-      { cond: true, msg: `STREAM_SYNC: ${player.streamListenerCount} NODES` },
-      { cond: true, msg: `SYNC_DELTA: ${Date.now() - player.lastSyncTime > 10000 ? '>10s' : (Date.now() - player.lastSyncTime) + 'ms'}` },
-      { cond: true, msg: `NET_ONLINE: ${navigator.onLine ? 'YES' : 'NO'}` },
-
-      // 播放器核心状态
-      { cond: player.isLoading, msg: `BUFFER_STATE: LOADING...` },
-      { cond: !player.isLoading, msg: `BUFFER_STATE: STABLE` },
-      { cond: true, msg: `QUEUE_LEN: ${player.queue.length}` },
-      { cond: true, msg: `PLAY_MODE: ${player.playMode}` },
-      { cond: parsedLyrics.value.length > 0, msg: `LYRIC_SYNC: ${parsedLyrics.value.length} LINES` },
-      { cond: !player.isPaused, msg: `CUR_POS: ${Math.floor(player.getCurrentProgress())}MS` },
-
-      // 媒体信息 (脱敏)
-      { cond: !!player.nowPlaying, msg: `MEDIA_HASH: ${maskId(player.nowPlaying?.music?.id)}` },
-      { cond: !!player.nowPlaying, msg: `REQ_USER: ${maskId(player.nowPlaying?.enqueuedById)}` },
-      { cond: true, msg: `SESSION_ID: ${maskId(userStore.currentUser.sessionId)}` },
-
-      // 用户状态
-      { cond: true, msg: `USER_ROLE: ${userStore.isGuest ? 'GUEST' : 'AUTHENTICATED'}` },
-      { cond: Object.keys(userStore.bindings).length > 0, msg: `BIND_PLATFORMS: ${Object.keys(userStore.bindings).length}` },
-
-      // 视觉引擎状态
-      { cond: true, msg: `GFX_INTENSITY: ${gfx.intensity}` },
-      { cond: true, msg: `GFX_RINGS: ${gfx.rings}` },
-      { cond: gfx.active, msg: `GFX_ALPHA: ${gfx.alpha}` },
-
-      // 环境与性能
-      { cond: !!performance?.memory, msg: `JS_HEAP: ${formatMem()}` },
-      { cond: !!performance?.memory, msg: `HEAP_LIMIT: ${Math.floor(performance.memory.jsHeapSizeLimit / 1048576)}MB` },
-      { cond: true, msg: `CORE_THREADS: ${navigator.hardwareConcurrency || 'N/A'}` },
-      { cond: true, msg: `SCREEN_RES: ${window.screen.width}x${window.screen.height}` },
-      { cond: true, msg: `OS_PLATFORM: ${navigator.platform}` },
-      { cond: true, msg: `DPR_RATIO: ${window.devicePixelRatio}` },
-      { cond: true, msg: `UPTIME: ${Math.floor((Date.now() - mountTime) / 1000)}S` },
-      { cond: true, msg: `UI_THEME: ${window.matchMedia('(prefers-color-scheme: dark)').matches ? 'DARK' : 'LIGHT'}` },
-      { cond: true, msg: `LANG_SET: ${navigator.language.toUpperCase()}` },
-      { cond: true, msg: `TOUCH_NODE: ${navigator.maxTouchPoints > 0 ? 'ACTIVE' : 'NONE'}` },
-      { cond: true, msg: `LOCAL_TZ: ${Intl.DateTimeFormat().resolvedOptions().timeZone}` }
-    ];
-
-    // 随机抽取一条有意义的状态显示
-    const validStates = stateParams.filter(s => s.cond);
-    if (validStates.length > 0) {
-      const item = validStates[Math.floor(Math.random() * validStates.length)];
-      if (!logs.value[logs.value.length - 1]?.includes(item.msg.split(':')[0])) {
-         pushLog(item.msg);
-      }
-    }
-  }, 1000);
 
   // 初始化歌词
   if (player.lyricText) parsedLyrics.value = parseLyrics(player.lyricText);
 });
 
 onUnmounted(() => {
+  resizeObserver?.disconnect();
+  wordmark.unmount();
+  lights.unmount();
   visualizer.unmount();
-  clearInterval(logInterval);
   clearInterval(updateInterval);
   danmakuTimers.forEach(clearTimeout);
 });
@@ -428,6 +526,40 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 10px;
 }
+/* A：遥测抖动——切片位移 + 轻 RGB 分离；170ms、离散步进；reduced-motion 关闭 */
+.is-glitching { animation: telemetry-glitch 170ms steps(1, end) 1 both; }
+@keyframes telemetry-glitch {
+  0% { transform: none; clip-path: none; text-shadow: none; }
+  18% { transform: translateX(-1.5px); clip-path: inset(12% 0 58% 0);
+        text-shadow: 1px 0 rgba(249, 115, 22, 0.45), -1px 0 rgba(56, 189, 248, 0.3); }
+  38% { transform: translateX(1.5px); clip-path: inset(60% 0 14% 0);
+        text-shadow: -1px 0 rgba(249, 115, 22, 0.45), 1px 0 rgba(56, 189, 248, 0.3); }
+  60% { transform: translateX(-1px); clip-path: inset(34% 0 42% 0); text-shadow: none; }
+  80% { transform: translateX(1px); clip-path: none; }
+  100% { transform: none; clip-path: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .is-glitching { animation: none; }
+}
+/* 音频遥测：条用 transform（免重排），峰值保持用 1px 竖线 */
+.telem-bar {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: rgb(var(--accent));
+  opacity: 0.85;
+}
+.telem-peak {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: 0;
+  width: 1px;
+  background: rgb(var(--medical-900) / 0.45);
+}
+.spectral-word { display: flex; align-items: center; justify-content: center; }
+.spectral-letter { display: inline-block; transform-origin: center; color: rgb(var(--medical-200)); opacity: .34; }
 .danmaku-item { animation: danmaku-life 7.2s linear both; }
 @keyframes danmaku-life {
   0% { transform: translateY(22px); opacity: 0; }
@@ -435,4 +567,5 @@ onUnmounted(() => {
   78% { opacity: 1; }
   100% { transform: translateY(-150px); opacity: 0; }
 }
+/* 环境光（时频谱）为画布层，样式已在模板内联，无需额外规则。 */
 </style>

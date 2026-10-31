@@ -1,6 +1,13 @@
 server:
   port: 8080
 
+spring:
+  mvc:
+    # Search fan-out to yt-dlp can be slow on a cold cache; give async requests
+    # room instead of failing with AsyncRequestTimeoutException at 30s.
+    async:
+      request-timeout: 90s
+
 # Logging configuration
 logging:
   level:
@@ -30,9 +37,11 @@ app:
     soundcloud:
       enabled: ${SOUNDCLOUD_ENABLED:true}
       search-limit: ${SOUNDCLOUD_SEARCH_LIMIT:30}
+      fetch-limit: ${SOUNDCLOUD_FETCH_LIMIT:100}
     ytmusic:
       enabled: ${YTMUSIC_ENABLED:true}
       search-limit: ${YTMUSIC_SEARCH_LIMIT:30}
+      fetch-limit: ${YTMUSIC_FETCH_LIMIT:100}
     queue:
       max-size: ${QUEUE_MAX_SIZE:1000}
       history-size: ${QUEUE_HISTORY_SIZE:50}
@@ -49,7 +58,8 @@ app:
       enabled: ${YT_DLP_ENABLED:true}
       path: ${YT_DLP_PATH:yt-dlp}
       timeout-seconds: ${YT_DLP_TIMEOUT_SECONDS:45}
-      download-timeout-seconds: ${YT_DLP_DOWNLOAD_TIMEOUT_SECONDS:900}
+      # 单曲下载上限：原 900s 会让一首卡死的曲目堵住串行队列达 15 分钟
+      download-timeout-seconds: ${YT_DLP_DOWNLOAD_TIMEOUT_SECONDS:180}
     auth:
       rate-limit:
         enabled: ${AUTH_RATE_LIMIT_ENABLED:true}
