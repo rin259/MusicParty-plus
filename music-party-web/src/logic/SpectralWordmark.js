@@ -5,13 +5,14 @@ import { spectrumBandEnergy } from './AudioVisualizer.js';
  *
  * 思想映射：
  *   位置 → 頻率：字標的第 i 個字母代表一段對數頻帶（左低右高），全寬即全頻譜。
- *   強度 → 能量：該帶能量決定字母的顏色（中性灰 → 琥珀）、不透明度與縱向高度。
+ *   強度 → 能量：該帶能量決定字母的顏色（中性灰 → 琥珀）與不透明度。
  *   時間 → 余輝：起音快（0.55）、收得慢（0.16），故每個字母各自留下一道短暫餘輝，
  *              讀起來是「剛才那一下」而非瞬時閃爍。
  * 這樣全幅背景仍是本站自己的語言（字標、切角、網格），不是把一張頻譜圖貼上去。
  *
  * 另外：按讚 → 全體字母短促提亮（參與者的動作看得見）；點歌 → 基調緩升。
- * prefers-reduced-motion：保留顏色與不透明度變化，去掉縱向縮放。
+ * 2026-11：去掉縱向縮放——在高刷新率下它被讀成「沒動」，且每幀改 11 個 span 的 transform
+ * 會讓父層的模糊濾鏡反覆重算；現在只改不透明度與顏色，把算力讓給點光源。
  */
 const MIN_HZ = 20;
 const MAX_HZ = 16000;
@@ -31,8 +32,6 @@ export class SpectralWordmark {
         this.crowd = 0;
         this.prevLow = 0;
         this.animationId = null;
-        this.reducedMotion = typeof matchMedia === 'function'
-            && matchMedia('(prefers-reduced-motion: reduce)').matches;
         this._last = 0;
     }
 
@@ -132,16 +131,14 @@ export class SpectralWordmark {
             const lv = clamp01(this.level[i] * boost);
             const m = Math.pow(lv, 0.9);
             const opacity = Math.min(0.80, 0.18 + 0.62 * Math.pow(lv, 0.85));
-            const scaleY = this.reducedMotion ? 1 : 1 + 0.22 * m;
             const r = Math.round(from[0] + (to[0] - from[0]) * m);
             const g = Math.round(from[1] + (to[1] - from[1]) * m);
             const b = Math.round(from[2] + (to[2] - from[2]) * m);
-            const key = `${opacity.toFixed(3)}/${scaleY.toFixed(3)}/${r}/${g}/${b}`;
+            const key = `${opacity.toFixed(3)}/${r}/${g}/${b}`;
             if (key === this.written[i]) continue;
             this.written[i] = key;
             const el = this.letters[i];
             el.style.opacity = opacity.toFixed(3);
-            el.style.transform = `scaleY(${scaleY.toFixed(3)})`;
             el.style.color = `rgb(${r} ${g} ${b})`;
         }
     }

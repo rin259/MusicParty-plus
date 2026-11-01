@@ -179,8 +179,14 @@ export class AudioVisualizer {
         this.center = this.width / 2;
         this.worldScale = 1;
         // motion-systems 可达性：系统偏好「减少动态」时环场缓行、爆发静默。
-        this.reducedMotion = typeof matchMedia === 'function'
-            && matchMedia('(prefers-reduced-motion: reduce)').matches;
+        // 監聽變化，而不是只在掛載時讀一次：否則使用者在系統裡把動畫打開後，
+        // 實例仍停在 true，整站看起來就像「少了效果的另一個版本」。
+        this.motionQuery = typeof matchMedia === 'function'
+            ? matchMedia('(prefers-reduced-motion: reduce)')
+            : null;
+        this.reducedMotion = !!this.motionQuery?.matches;
+        this.onMotionChange = (event) => { this.reducedMotion = event.matches; };
+        this.motionQuery?.addEventListener?.('change', this.onMotionChange);
         this.buildBloomSprites();
         this.startLoop();
     }
@@ -199,6 +205,8 @@ export class AudioVisualizer {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;
         }
+        this.motionQuery?.removeEventListener?.('change', this.onMotionChange);
+        this.motionQuery = null;
         this.canvas = null;
         this.ctx = null;
     }

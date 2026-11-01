@@ -49,9 +49,14 @@ export class PointLights {
         this.crowd = 0;
         this.animationId = null;
         this._last = 0;
-        // prefers-reduced-motion：draw() 已按此暂停游走，但此前从未赋值。
-        this.reducedMotion = typeof matchMedia === 'function'
-            && matchMedia('(prefers-reduced-motion: reduce)').matches;
+        // prefers-reduced-motion：draw() 已按此暂停游走。必須監聽變化——
+        // 只在構造時讀一次，會在系統動畫被打開後仍停在 true（光點永遠不動）。
+        this.motionQuery = typeof matchMedia === 'function'
+            ? matchMedia('(prefers-reduced-motion: reduce)')
+            : null;
+        this.reducedMotion = !!this.motionQuery?.matches;
+        this.onMotionChange = (event) => { this.reducedMotion = event.matches; };
+        this.motionQuery?.addEventListener?.('change', this.onMotionChange);
         this.lights = this.seed();
         // 兩套調色板：淺色/深色各一套，繪製時依當前主題取用（避免白燈在淺底上隱形）
         this.palettes = {
@@ -93,6 +98,8 @@ export class PointLights {
     unmount() {
         if (this.animationId) cancelAnimationFrame(this.animationId);
         this.animationId = null;
+        this.motionQuery?.removeEventListener?.('change', this.onMotionChange);
+        this.motionQuery = null;
         this._observer?.disconnect();
         this._observer = null;
         this.canvas = null;
@@ -145,8 +152,8 @@ export class PointLights {
         const now = performance.now();
         const dt = Math.min(0.1, Math.max(0.001, (now - (this._lastSpectrumAt || now)) / 1000));
         this._lastSpectrumAt = now;
-        const attack = 1 - Math.exp(-dt / 0.024);
-        const release = 1 - Math.exp(-dt / 0.084);
+        const attack = 1 - Math.exp(-dt / 0.014);
+        const release = 1 - Math.exp(-dt / 0.072);
         for (let i = 0; i < COUNT; i++) {
             const t = this.lights[i].band;
             const fLo = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, t);
@@ -171,8 +178,8 @@ export class PointLights {
     }
 
     start() {
-        // 柔光点不需要 60fps：30fps 已足够，且把 ProMotion 的合成压力减半。
-        const MIN_FRAME_MS = 1000 / 30 - 0.2;
+        // 精灵绘制足够便宜：回到 60fps，响应跟手。字标已不再缩放，预算让给它。
+        const MIN_FRAME_MS = 1000 / 60 - 0.2;
         let lastDraw = performance.now();
         const loop = (now) => {
             if (!this.canvas || !this.ctx) return;
