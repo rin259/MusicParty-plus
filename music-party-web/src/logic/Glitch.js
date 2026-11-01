@@ -5,12 +5,9 @@
  *  - glitch 只在「有語義」時出現：換曲（解碼）、取源失敗/斷線（遙測抖動）、強鼓點（環場撕裂）。
  *    不做常駐全屏色差／逐幀隨機切片——那既廉價也違反 WCAG 2.3.1（≤3 次/秒）。
  *  - 所有觸發共用一個閘門，全域同時只允許一次；每類預設 ≥900ms 間隔。
- *  - prefers-reduced-motion 下一律靜默（錯誤態以靜態紅字呈現，不閃）。
+ *  - 不再依 prefers-reduced-motion 靜默：各端表現一致，靠間隔閘門控在 ≤3 次/秒。
  *  - 零依賴：純 DOM + CSS 類，成本近乎為零。
  */
-export const prefersReducedMotion = () => typeof matchMedia === 'function'
-    && matchMedia('(prefers-reduced-motion: reduce)').matches;
-
 export class GlitchGate {
     constructor(minInterval = 900) {
         this.minInterval = minInterval;
@@ -19,7 +16,6 @@ export class GlitchGate {
 
     /** 通過則占用一次配額；reduced-motion 或過於頻繁時回 false。 */
     take(now = performance.now()) {
-        if (prefersReducedMotion()) return false;
         if (now - this.last < this.minInterval) return false;
         this.last = now;
         return true;
@@ -52,10 +48,6 @@ export class TextDecode {
 
     run(text, duration = 240) {
         if (!this.el) return;
-        if (prefersReducedMotion()) {
-            this.el.textContent = text;
-            return;
-        }
         this.cancel();
         this.target = text;
         this.startedAt = performance.now();

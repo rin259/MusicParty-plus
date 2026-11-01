@@ -195,8 +195,4 @@ function titleFor(id) {
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .bus-dot, .bus-fill { transition: none; }
-  .bus-dot.is-loading { animation: none; }
-}
 </style>

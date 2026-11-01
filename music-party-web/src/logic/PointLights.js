@@ -49,14 +49,6 @@ export class PointLights {
         this.crowd = 0;
         this.animationId = null;
         this._last = 0;
-        // prefers-reduced-motion：draw() 已按此暂停游走。必須監聽變化——
-        // 只在構造時讀一次，會在系統動畫被打開後仍停在 true（光點永遠不動）。
-        this.motionQuery = typeof matchMedia === 'function'
-            ? matchMedia('(prefers-reduced-motion: reduce)')
-            : null;
-        this.reducedMotion = !!this.motionQuery?.matches;
-        this.onMotionChange = (event) => { this.reducedMotion = event.matches; };
-        this.motionQuery?.addEventListener?.('change', this.onMotionChange);
         this.lights = this.seed();
         // 兩套調色板：淺色/深色各一套，繪製時依當前主題取用（避免白燈在淺底上隱形）
         this.palettes = {
@@ -98,8 +90,6 @@ export class PointLights {
     unmount() {
         if (this.animationId) cancelAnimationFrame(this.animationId);
         this.animationId = null;
-        this.motionQuery?.removeEventListener?.('change', this.onMotionChange);
-        this.motionQuery = null;
         this._observer?.disconnect();
         this._observer = null;
         this.canvas = null;
@@ -202,7 +192,7 @@ export class PointLights {
         this.flash *= Math.pow(0.87, dt * 60);
         this.crowd *= Math.pow(0.998, dt * 60);
         const boost = 1 + 0.45 * this.flash + 0.15 * this.crowd;
-        if (!this.reducedMotion) this.time += dt;
+        this.time += dt;
 
         ctx.clearRect(0, 0, width, height);
         const base = Math.max(width, height);
@@ -213,18 +203,16 @@ export class PointLights {
             const light = this.lights[i];
             const lv = Math.min(1, this.levels[i] * boost);
 
-            // 連續游走：轉向由各自相位緩慢調變；速度隨該帶能量（響則游得快，靜時幾乎停住）
-            if (!this.reducedMotion) {
-                light.angle += Math.sin(this.time * light.turn + light.phase) * 0.9 * dt;
-                const speed = light.speed * (0.45 + 1.8 * lv) * dt;
-                light.x += Math.cos(light.angle) * speed;
-                light.y += Math.sin(light.angle) * speed;
-                // 回卷（留邊界餘量；配合邊緣淡出，故不可見跳變）
-                if (light.x < -0.12) light.x += 1.24;
-                if (light.x > 1.12) light.x -= 1.24;
-                if (light.y < -0.12) light.y += 1.24;
-                if (light.y > 1.12) light.y -= 1.24;
-            }
+            // 連續游走：轉向由各自相位緩慢調變；速度隨該帶能量（響則游得快，靜時仍緩行）
+            light.angle += Math.sin(this.time * light.turn + light.phase) * 0.9 * dt;
+            const speed = light.speed * (0.45 + 1.8 * lv) * dt;
+            light.x += Math.cos(light.angle) * speed;
+            light.y += Math.sin(light.angle) * speed;
+            // 回卷（留邊界餘量；配合邊緣淡出，故不可見跳變）
+            if (light.x < -0.12) light.x += 1.24;
+            if (light.x > 1.12) light.x -= 1.24;
+            if (light.y < -0.12) light.y += 1.24;
+            if (light.y > 1.12) light.y -= 1.24;
             // 邊緣淡出：接近邊界時漸隱，避免光斑被切邊或回卷時突兀
             const edge = Math.min(1, Math.min(light.x, 1 - light.x) / 0.12,
                 Math.min(light.y, 1 - light.y) / 0.12);

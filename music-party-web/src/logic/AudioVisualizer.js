@@ -178,15 +178,6 @@ export class AudioVisualizer {
         this.height = this.canvas.height;
         this.center = this.width / 2;
         this.worldScale = 1;
-        // motion-systems 可达性：系统偏好「减少动态」时环场缓行、爆发静默。
-        // 監聽變化，而不是只在掛載時讀一次：否則使用者在系統裡把動畫打開後，
-        // 實例仍停在 true，整站看起來就像「少了效果的另一個版本」。
-        this.motionQuery = typeof matchMedia === 'function'
-            ? matchMedia('(prefers-reduced-motion: reduce)')
-            : null;
-        this.reducedMotion = !!this.motionQuery?.matches;
-        this.onMotionChange = (event) => { this.reducedMotion = event.matches; };
-        this.motionQuery?.addEventListener?.('change', this.onMotionChange);
         this.buildBloomSprites();
         this.startLoop();
     }
@@ -205,8 +196,6 @@ export class AudioVisualizer {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;
         }
-        this.motionQuery?.removeEventListener?.('change', this.onMotionChange);
-        this.motionQuery = null;
         this.canvas = null;
         this.ctx = null;
     }
@@ -371,7 +360,6 @@ export class AudioVisualizer {
 
     //触发爆发特效
     impulse() {
-        if (this.reducedMotion) return; // 減少動態：爆發靜默
         // 瞬间拉高参数（已再收敛，避免过曝）
         this.speedMultiplier = 3.2;
         this.widthMultiplier = 1.45;
@@ -431,7 +419,7 @@ export class AudioVisualizer {
             ? this.threeWay.woofer.Bl * this.threeWay.current * this.band.low
             : 0;
         // 定步長慢動作積分：與幀率無關；步長恆保 ωh ≤ 0.3（RK4 精度）。
-        const timeScale = AudioVisualizer.TIME_SCALE * (this.reducedMotion ? 0.5 : 1);
+        const timeScale = AudioVisualizer.TIME_SCALE;
         this.simAcc += dt * timeScale;
         const h = 1 / AudioVisualizer.SIM_HZ;
         let guard = 0;
@@ -449,7 +437,7 @@ export class AudioVisualizer {
         const xt = this.isPlaying ? staticExcursion(this.threeWay.tweeter, this.threeWay, this.band.high) : 0;
 
         // C 觸發：真實 kick（低頻陡升）才撕裂；門檻 + 620ms 冷卻，故每秒至多一次
-        if (this.isPlaying && !this.reducedMotion) {
+        if (this.isPlaying) {
             const now = performance.now();
             if (this.band.low - this.prevLowBand > 0.09 && now - this.lastGlitchAt > 620) {
                 this.lastGlitchAt = now;
@@ -462,8 +450,7 @@ export class AudioVisualizer {
 
         // 時間推進：環流不再共用一個「頻率」（那無物理依據）——rippleTime 僅為時鐘，
         // 各環之遷徙速率另由其自身振膜之活動度決定（見環場迴圈），故靜則止、動則流。
-        this.rippleTime += dt * AudioVisualizer.FLOW_RATE * this.speedMultiplier
-            * (this.reducedMotion ? 0.3 : 1);
+        this.rippleTime += dt * AudioVisualizer.FLOW_RATE * this.speedMultiplier;
 
         // 优化：透明度极低时不渲染复杂图形
         if (this.smoothAlpha < 0.01) return;

@@ -62,7 +62,4 @@ const platformLabel = computed(() => PLATFORM_LABEL[props.job?.platform] || prop
   background-image: repeating-linear-gradient(90deg, rgb(var(--medical-50)) 0 1px, transparent 1px 4px);
   opacity: 0.9;
 }
-@media (prefers-reduced-motion: reduce) {
-  .meter-fill { transition: none; }
-}
 </style>

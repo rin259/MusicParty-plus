@@ -110,25 +110,6 @@ html.theme-transition *::after {
   transition-timing-function: cubic-bezier(.22, 1, .36, 1) !important;
 }
 
-/* 减少动态：关掉循环/装饰动画，保留 120ms 的颜色与状态过渡，
-   让 hover / focus / 选中态仍然可读。Canvas 可视化在 JS 内单独降级。 */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: .01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 120ms !important;
-    scroll-behavior: auto !important;
-  }
-  .animate-spin,
-  .animate-pulse,
-  .animate-ping,
-  .animate-scan,
-  .toast-bump,
-  .danmaku-item {
-    animation: none !important;
-  }
-}
-
 /* 浏览器原生表面也属于设计系统 */
 ::selection {
   background: rgb(var(--accent) / 0.28);

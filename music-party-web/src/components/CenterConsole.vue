@@ -538,9 +538,6 @@ onUnmounted(() => {
   80% { transform: translateX(1px); clip-path: none; }
   100% { transform: none; clip-path: none; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .is-glitching { animation: none; }
-}
 /* 音频遥测：条用 transform（免重排），峰值保持用 1px 竖线 */
 .telem-bar {
   position: absolute;
