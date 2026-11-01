@@ -72,7 +72,7 @@ const done = computed(() => props.summary?.done || 0);
 const total = computed(() => props.summary?.sources || props.platforms.length);
 const elapsedLabel = computed(() => {
   const ms = props.summary?.elapsedMs || 0;
-  return ms > 0 ? `${Math.round(ms)}ms` : 'STANDBY';
+  return ms > 0 ? `${Math.round(ms)}ms` : 'IDLE';
 });
 
 function stateOf(id) {
@@ -116,7 +116,7 @@ function metaFor(id) {
     if (s.origin !== 'search') return 'READY';
     return `${s.count ?? 0} HITS${s.fromCache ? ' · CACHED' : ''}`;
   }
-  return 'STANDBY';
+  return 'IDLE';
 }
 
 function isSlow(id) {

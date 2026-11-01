@@ -17,7 +17,7 @@
 
     <!-- Conditional Rendering: Show empty message -->
     <div v-if="queue.length === 0" class="flex-1 text-center py-10 text-xs font-mono text-medical-500">
-      QUEUE EMPTY / WAITING FOR INPUT
+      IDLE · QUEUE EMPTY
     </div>
 
     <!-- Shuffle Mode View: Grouped by User (ONLY for Fair Shuffle) -->

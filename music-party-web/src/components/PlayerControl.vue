@@ -39,7 +39,7 @@
             {{
               !player.connected
                   ? 'RECONNECT SERVER...'
-                  : (nowPlaying ? nowPlaying.music.artists.join(' / ') : 'SYSTEM STANDBY')
+                  : (nowPlaying ? nowPlaying.music.artists.join(' / ') : 'SYSTEM IDLE')
             }}
           </p>
         </div>

@@ -21,6 +21,7 @@ const BANDS = [
 const FLOOR_DB = -80;
 const SPAN_DB = 50;
 const RENDER_MS = 80;
+const VALUE_MS = 220;   // 數字/日誌/狀態列：~4.5Hz
 const LOG_MS = 500;
 const SILENCE_MS = 450;
 
@@ -37,12 +38,19 @@ export class AudioTelemetry {
         this.global = { peak: 0, rms: 0, crest: 0, clip: false };
         this.state = { connected: false, queue: 0 };
         this.lastRender = 0;
+        this.lastValueAt = 0;
         this.lastLog = 0;
         this.lastSpectrumAt = 0;
+        this.rendered = { low: '---', mid: '---', high: '---' };
+        this.log = [];            // [{ at, text }]，最新在前
+        this.clipUntil = 0;
+        this.sr = null;
+        this.lastSrAt = 0;
     }
 
-    attach(root) {
+    attach(root, sr = null) {
         this.root = root || null;
+        this.sr = sr || null;
         if (!this.root) return;
         this.rows = BANDS.map((band) => {
             const row = this.root.querySelector(`[data-band="${band.key}"]`);
@@ -83,6 +91,12 @@ export class AudioTelemetry {
         Object.assign(this.state, state || {});
     }
 
+    /** 行与日志共用的唯一格式化：夹到量程内，故同一时刻两处必然同值。 */
+    fmtDb(amp) {
+        const d = toDb(amp || 0);
+        return Math.max(FLOOR_DB, Math.min(0, d)).toFixed(1);
+    }
+
     toFill(amp) {
         const d = toDb(amp);
         return Math.max(0, Math.min(1, (d - FLOOR_DB) / SPAN_DB));
@@ -105,32 +119,62 @@ export class AudioTelemetry {
             this.global.crest *= 0.9;
         }
 
+        // 條與峰值刻度維持 12.5Hz：這是「跟手」的部分
         for (const row of this.rows) {
             const amp = this.levels[row.key] || 0;
-            const fill = this.toFill(amp);
-            if (row.bar) row.bar.style.transform = `scaleX(${fill.toFixed(3)})`;
+            if (row.bar) row.bar.style.transform = `scaleX(${this.toFill(amp).toFixed(3)})`;
             if (row.peakEl) row.peakEl.style.left = `${(this.peaks[row.key] * 100).toFixed(1)}%`;
-            if (row.value) row.value.textContent = amp > 0 ? toDb(amp).toFixed(1) : '---';
         }
 
-        if (this.meta.crest) this.meta.crest.textContent = (this.global.crest > 0 ? this.global.crest : 0).toFixed(1);
-        if (this.meta.peak) this.meta.peak.textContent = this.global.peak.toFixed(1);
-        if (this.meta.rms) this.meta.rms.textContent = this.global.rms.toFixed(1);
-        if (this.meta.clip) this.meta.clip.style.opacity = this.global.clip ? '1' : '0.25';
-        if (this.meta.link) {
-            this.meta.link.textContent = `LINK ${this.state.connected ? 'ESTABLISHED' : 'SEARCHING'} · Q${this.state.queue}`;
-        }
+        // 數值降到 ~4.5Hz：12.5Hz 跳動的數字讀不出來，且會和日誌行互相矛盾
+        if (now - this.lastValueAt >= VALUE_MS) {
+            this.lastValueAt = now;
 
-        // B4：每 500ms 一行真實快照（新在上）；未收到頻譜前不寫，靜音時夾到量程下限
-        if (this.lineEls.length && this.lastSpectrumAt > 0 && now - this.lastLog >= LOG_MS) {
-            this.lastLog = now;
-            const clampDb = (amp) => Math.max(FLOOR_DB, Math.min(0, toDb(amp || 0))).toFixed(1);
-            const line = `L ${clampDb(this.levels.low)}  M ${clampDb(this.levels.mid)}  H ${clampDb(this.levels.high)}`;
-            for (let i = this.lineEls.length - 1; i > 0; i--) {
-                this.lineEls[i].textContent = this.lineEls[i - 1].textContent;
+            for (const row of this.rows) {
+                const amp = this.levels[row.key] || 0;
+                const text = amp > 0 ? this.fmtDb(amp) : '---';
+                this.rendered[row.key] = text;
+                if (row.value) row.value.textContent = text;
             }
-            this.lineEls[0].textContent = line;
-            this.lineEls.forEach((el, i) => { el.style.opacity = i === 0 ? '0.95' : (i === 1 ? '0.5' : '0.28'); });
+
+            // 日誌每 500ms 取一次「當下已顯示的數值」，並帶上相對時間；
+            // 這樣它讀起來是歷史，而不是同一面板上的第二組讀數。
+            if (this.lineEls.length && this.lastSpectrumAt > 0 && now - this.lastLog >= LOG_MS) {
+                this.lastLog = now;
+                this.log.unshift({
+                    at: now,
+                    text: `L ${this.rendered.low}  M ${this.rendered.mid}  H ${this.rendered.high}`
+                });
+                this.log.length = Math.min(this.log.length, this.lineEls.length);
+            }
+            this.lineEls.forEach((el, i) => {
+                const entry = this.log[i];
+                if (!entry) { el.textContent = ''; return; }
+                el.textContent = `-${((now - entry.at) / 1000).toFixed(1)}s  ${entry.text}`;
+                el.style.color = i === 0 ? 'rgb(var(--medical-600))' : 'rgb(var(--medical-500))';
+            });
+
+            if (this.meta.crest) this.meta.crest.textContent = (this.global.crest > 0 ? this.global.crest : 0).toFixed(1);
+            if (this.meta.peak) this.meta.peak.textContent = this.global.peak.toFixed(1);
+            if (this.meta.rms) this.meta.rms.textContent = this.global.rms.toFixed(1);
+            if (this.meta.link) {
+                this.meta.link.textContent = `LINK ${this.state.connected ? 'LIVE' : 'SEARCHING'} · QUEUE ${this.state.queue}`;
+            }
+
+            // 屏讀摘要：2 秒一次，避免高頻 aria-live 噪音
+            if (this.sr && now - this.lastSrAt >= 2000) {
+                this.lastSrAt = now;
+                const live = this.lastSpectrumAt > 0 && now - this.lastSpectrumAt < SILENCE_MS;
+                this.sr.textContent = live
+                    ? `Audio live. Low ${this.rendered.low}, mid ${this.rendered.mid}, high ${this.rendered.high} dB. Queue ${this.state.queue}.`
+                    : `Audio idle. Queue ${this.state.queue}.`;
+            }
+        }
+
+        // CLIP：只在真的削波時出現（並保持 1.5s），常態不佔用唯一的語義色
+        if (this.global.clip) this.clipUntil = now + 1500;
+        if (this.meta.clip) {
+            this.meta.clip.style.visibility = now < this.clipUntil ? 'visible' : 'hidden';
         }
     }
 }

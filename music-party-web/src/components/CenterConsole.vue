@@ -41,14 +41,13 @@
                   inset-x-0 bottom-7 flex flex-col items-center justify-end h-64 pb-2
                   md:inset-auto md:bottom-10 md:left-10 md:items-start md:justify-end md:h-auto md:w-80
       ">
-        <div class="hidden md:block text-[10px] text-accent-text mb-1 tracking-widest border-b border-accent/30 pb-1 w-16">
-          {{ parsedLyrics.length ? 'LYRIC_SYSTEM' : 'TRACK_DATA' }}
+        <div class="hidden md:block text-[10px] text-accent-text mb-1 tracking-widest border-b border-accent/30 pb-1">
+          {{ parsedLyrics.length ? 'LYRIC_SYSTEM' : (player.nowPlaying ? 'TRACK_DATA · NO LYRIC' : 'TRACK_DATA') }}
         </div>
         <div class="w-full space-y-1 text-xs font-normal leading-tight flex flex-col md:justify-end min-h-0">
           <template v-if="parsedLyrics.length === 0">
             <!-- 无歌词（B站 / SoundCloud / YouTube 均无歌词）：不留空白，改显示可核对的曲目事实 -->
             <div v-if="player.nowPlaying" class="w-full font-mono text-[10px]">
-              <div class="mb-1 text-[9px] tracking-[0.16em] text-medical-500">NO LYRIC FOR THIS SOURCE</div>
               <div
                   v-for="fact in trackFacts"
                   :key="fact.k"
@@ -59,7 +58,7 @@
               </div>
             </div>
             <div v-else class="opacity-70 flex items-center justify-center md:justify-start text-medical-500">
-              <span class="text-accent-text mr-2 text-[10px]">></span>NO_DATA_STREAM
+              <span class="text-accent-text mr-2 text-[10px]">></span>IDLE · NO TRACK
             </div>
           </template>
           <div
@@ -77,38 +76,40 @@
         </div>
       </div>
 
-      <!-- 右侧：音频遥测（真实测量；B1 三频段电平 + B4 滚动快照） -->
-      <div aria-hidden="true" class="absolute bottom-8 right-8 w-[240px] font-mono text-[10px] text-medical-500 hidden md:block select-none">
+      <!-- 右侧：音频遥测（真实测量；B1 三频段电平 + B4 带时间戳的滚动日志） -->
+      <div class="absolute bottom-8 right-8 w-[240px] font-mono text-[10px] text-medical-500 hidden md:block select-none">
         <div class="absolute inset-0 bg-medical-50/72 chamfer-tl"></div>
-        <div ref="telemetryRef" class="relative flex flex-col gap-1 px-2 py-1.5 opacity-95">
-          <div class="flex items-baseline justify-between tracking-[0.18em] text-medical-500/80">
+        <!-- 屏读摘要：视觉面板是装饰，但「音频是否在跑」是唯一可信状态，2 秒低频播报一次 -->
+        <span ref="srRef" role="status" aria-live="polite" class="sr-only"></span>
+        <div ref="telemetryRef" aria-hidden="true" class="relative flex flex-col gap-1 px-2 py-1.5">
+          <div class="flex items-baseline justify-between tracking-[0.18em] text-medical-500">
             <span>AUDIO_TELEMETRY</span>
-            <span class="text-[9px]">REL_DB</span>
+            <span class="text-[9px]">REL dB</span>
           </div>
 
           <div v-for="band in telemetryBands" :key="band.key" :data-band="band.key" class="flex items-center gap-2">
-            <span class="w-8 shrink-0">{{ band.label }}</span>
+            <span class="w-8 shrink-0 text-[9px] tracking-[0.12em]">{{ band.label }}</span>
             <span class="relative h-1.5 flex-1 overflow-hidden bg-medical-200/70">
               <span class="telem-bar"></span>
               <span class="telem-peak"></span>
             </span>
-            <span class="telem-value w-10 shrink-0 text-right tabular-nums">---</span>
+            <span class="telem-value w-10 shrink-0 text-right text-[10.5px] tabular-nums text-medical-800">---</span>
           </div>
 
-          <div class="flex items-baseline justify-between border-t border-medical-200/60 pt-1 tabular-nums">
+          <div class="flex items-baseline justify-between border-t border-medical-200/60 pt-1 tabular-nums text-medical-600">
             <span>CREST <span data-meta="crest">0.0</span></span>
             <span>PEAK <span data-meta="peak">0.0</span></span>
             <span>RMS <span data-meta="rms">0.0</span></span>
-            <span data-meta="clip" class="text-danger transition-opacity">CLIP</span>
+            <span data-meta="clip" class="text-danger" style="visibility: hidden">CLIP!</span>
           </div>
 
-          <div class="space-y-0.5 pt-0.5 text-[9px] leading-tight tabular-nums">
+          <div class="space-y-0.5 pt-0.5 text-[8.5px] leading-tight tabular-nums">
             <div data-line></div>
             <div data-line></div>
             <div data-line></div>
           </div>
 
-          <div data-meta="link" class="pt-0.5 text-[9px] text-medical-500/70">LINK SEARCHING · Q0</div>
+          <div data-meta="link" class="pt-0.5 text-[9px] text-medical-500">LINK SEARCHING · QUEUE 0</div>
         </div>
       </div>
     </div>
@@ -259,6 +260,7 @@ const canvasRef = ref(null);
 const wordRef = ref(null);
 const lightsRef = ref(null);
 const telemetryRef = ref(null);
+const srRef = ref(null);
 const telemetry = new AudioTelemetry();
 const telemetryBands = [
   { key: 'low', label: 'LOW' },
@@ -472,7 +474,7 @@ onMounted(() => {
     wordmark.start();
   }
   if (lightsRef.value) lights.mount(lightsRef.value);
-  if (telemetryRef.value) telemetry.attach(telemetryRef.value);
+  if (telemetryRef.value) telemetry.attach(telemetryRef.value, srRef.value);
 
   // 2. 监听全局自定义事件
   useEventListener(window, 'resize', refreshVisualizerMetrics);
