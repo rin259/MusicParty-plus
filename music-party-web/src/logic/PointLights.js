@@ -229,9 +229,11 @@ export class PointLights {
             const edge = Math.min(1, Math.min(light.x, 1 - light.x) / 0.12,
                 Math.min(light.y, 1 - light.y) / 0.12);
             // 半徑與亮度同步隨所屬頻帶（並對正相關，與字標同一原則）
-            // 亮度极差再拉大：静时只剩一层淡光（0.18 系数），响时逼近上限（4.6 倍、封顶 0.7）
+            // 亮度极差再拉大：静时仍留可见的淡光（0.45 系数），响时逼近上限（4.2 倍、封顶 0.7）
+            // 2026-11：原先 0.10 的系数让安静段的 alpha 只有 1–3/255——光点实际上不存在，
+            // 于是「在移动」和「看不见」同时成立。抬底噪让每颗光斑始终可辨，游走才读得出来。
             const r = Math.max(8, light.r * base * (1 + 1.1 * lv));
-            const alpha = Math.min(0.7, light.alpha * (0.18 + 4.6 * lv)) * Math.max(0, edge);
+            const alpha = Math.min(0.7, light.alpha * (0.45 + 4.2 * lv)) * Math.max(0, edge);
             if (alpha < 0.004) continue;
 
             const cx = light.x * width;
