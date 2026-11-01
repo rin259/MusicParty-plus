@@ -76,7 +76,7 @@ export class PointLights {
                 alpha: rand(0.05, 0.10),
                 band: t,
                 angle: rand(0, Math.PI * 2),     // 航向
-                speed: rand(0.008, 0.022),       // 基礎速度（容器比例 / 秒）
+                speed: rand(0.022, 0.048),       // 基礎速度（容器比例 / 秒）
                 turn: rand(0.25, 0.85),          // 轉向速率
                 phase: rand(0, Math.PI * 2)
             };
@@ -216,7 +216,7 @@ export class PointLights {
             // 連續游走：轉向由各自相位緩慢調變；速度隨該帶能量（響則游得快，靜時幾乎停住）
             if (!this.reducedMotion) {
                 light.angle += Math.sin(this.time * light.turn + light.phase) * 0.9 * dt;
-                const speed = light.speed * (0.30 + 1.8 * lv) * dt;
+                const speed = light.speed * (0.45 + 1.8 * lv) * dt;
                 light.x += Math.cos(light.angle) * speed;
                 light.y += Math.sin(light.angle) * speed;
                 // 回卷（留邊界餘量；配合邊緣淡出，故不可見跳變）
@@ -229,9 +229,9 @@ export class PointLights {
             const edge = Math.min(1, Math.min(light.x, 1 - light.x) / 0.12,
                 Math.min(light.y, 1 - light.y) / 0.12);
             // 半徑與亮度同步隨所屬頻帶（並對正相關，與字標同一原則）
-            // 亮度极差再拉大：静时几乎隐去（0.10 系数），响时逼近上限（4.6 倍、封顶 0.7）
+            // 亮度极差再拉大：静时只剩一层淡光（0.18 系数），响时逼近上限（4.6 倍、封顶 0.7）
             const r = Math.max(8, light.r * base * (1 + 1.1 * lv));
-            const alpha = Math.min(0.7, light.alpha * (0.10 + 4.6 * lv)) * Math.max(0, edge);
+            const alpha = Math.min(0.7, light.alpha * (0.18 + 4.6 * lv)) * Math.max(0, edge);
             if (alpha < 0.004) continue;
 
             const cx = light.x * width;
