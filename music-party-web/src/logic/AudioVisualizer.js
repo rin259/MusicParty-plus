@@ -1,6 +1,7 @@
 import {
     deriveThreeWay, createRadiatorState, stepRadiator, coneAccel, boxPressure, staticExcursion
 } from './passiveRadiator.js';
+import { fidelity } from './Fidelity.js';
 
 export const sampleSpectrumFrequency = (spectrum, sampleRate, fftSize, frequency) => {
     if (!spectrum.length) return 0;
@@ -130,6 +131,7 @@ export class AudioVisualizer {
         this.glitchUntil = 0;
         this.lastGlitchAt = 0;
         this.glitchSlices = [];
+        this.frameSlipPx = 0;   // 真实掉帧时的一帧水平错位（0 表示无）
 
         // 爆发控制变量
         this.speedMultiplier = 1.0;
@@ -245,12 +247,13 @@ export class AudioVisualizer {
     }
 
     /** 每次撕裂現抽：2–4 條切片，位置/厚度/位移全隨機，避免每次都撕在同一處。 */
-    makeGlitchSlices() {
+    makeGlitchSlices(amp = 1) {
+        // 幅度由保真度缩放：系统越干净，撕裂越轻
         const count = 2 + Math.floor(Math.random() * 3);
         return Array.from({ length: count }, () => ({
             y: 0.06 + Math.random() * 0.86,
             h: 0.03 + Math.random() * 0.07,
-            dx: (Math.random() < 0.5 ? -1 : 1) * (3 + Math.random() * 5)
+            dx: (Math.random() < 0.5 ? -1 : 1) * (3 + Math.random() * 5) * amp
         }));
     }
 
@@ -382,6 +385,14 @@ export class AudioVisualizer {
             if (!this.canvas || !this.ctx) return;
 
             const t = typeof now === 'number' ? now : performance.now();
+            const gapMs = t - lastDraw;
+            if (gapMs > 50 && gapMs < 2000 && typeof document !== 'undefined'
+                && document.visibilityState === 'visible') {
+                // 真实掉帧：给这一帧一个 1–3px 的水平错位，再把掉帧记进保真度。
+                // 这是唯一「诚实」的故障源——它确实发生了，不需要编造。
+                this.frameSlipPx = (Math.random() < 0.5 ? -1 : 1) * (1 + 2 * (1 - fidelity.update()));
+                fidelity.noteFrameSlip(t);
+            }
             if (t - lastDraw < MIN_FRAME_MS) {
                 this.animationId = requestAnimationFrame(loop);
                 return;
@@ -456,7 +467,7 @@ export class AudioVisualizer {
                 this.lastGlitchAt = now;
                 this.glitchUntil = now + 110;
                 // 每次撕裂重新抽切片：位置/厚度/位移皆随机，故不會每次撕在同一處
-                this.glitchSlices = this.makeGlitchSlices();
+                this.glitchSlices = this.makeGlitchSlices(fidelity.amplify());
             }
         }
         this.prevLowBand = this.band.low;
@@ -467,6 +478,13 @@ export class AudioVisualizer {
 
         // 优化：透明度极低时不渲染复杂图形
         if (this.smoothAlpha < 0.01) return;
+
+        // 掉帧错位：整帧平移后绘制，一帧后复位（不新增任何图形）
+        ctx.save();
+        if (this.frameSlipPx) {
+            ctx.translate(this.frameSlipPx, 0);
+            this.frameSlipPx = 0;
+        }
 
         // 少用变方(2026-10)：常态恒圆，唯爆发（impulse）瞬间轻微趋方，cap 0.18。
         const squareTarget = this.isPlaying
@@ -645,5 +663,6 @@ export class AudioVisualizer {
             ctx.setTransform(this.worldScale, 0, 0, this.worldScale, 0, 0);
         }
 
+        ctx.restore();
     }
 }

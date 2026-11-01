@@ -246,7 +246,8 @@ import {useEventListener, useWindowSize} from '@vueuse/core';
 import { parseLyrics } from '../utils/parser';
 import { AudioVisualizer } from '../logic/AudioVisualizer';
 import { SpectralWordmark } from '../logic/SpectralWordmark.js';
-import { GlitchGate } from '../logic/Glitch.js';
+import { globalGate } from '../logic/Glitch.js';
+import { fidelity } from '../logic/Fidelity.js';
 import { AudioTelemetry } from '../logic/AudioTelemetry.js';
 import { PointLights } from '../logic/PointLights.js';
 import { useUiStore } from '../stores/ui';
@@ -267,7 +268,6 @@ const telemetryBands = [
   { key: 'mid', label: 'MID' },
   { key: 'high', label: 'HIGH' }
 ];
-const glitchGate = new GlitchGate(900);
 const wordmark = new SpectralWordmark();
 const lights = new PointLights();
 const wordLetters = computed(() => Array.from((uiStore.backWords || 'MUSIC PARTY').toUpperCase()));
@@ -417,28 +417,43 @@ watch(isVisualizerActive, (active) => {
 });
 
 // --- A：遥测抖动（仅真实事件触发；与标题解码共用闸门，全局同时只允许一次）---
-const telemetryGlitch = () => {
-  if (!glitchGate.take()) return;
+// kind: 'update'（换曲等常态更新）| 'fault'（错误/断连）——色差只留给 fault。
+const telemetryGlitch = (kind = 'update') => {
+  if (!globalGate.take()) return;
   const block = telemetryRef.value;
   if (!block) return;
-  block.classList.add('is-glitching');
-  // 单字符失真：只在读数行/状态行上动手，避免破坏电平条
+
+  // 幅度由「保真度」决定：健康时 1px，最差 ~1.8x。同一个动画只靠幅度表达严重程度。
+  const amp = fidelity.amplify();
+  block.style.setProperty('--ga', `${(1.4 * amp).toFixed(2)}px`);
+  const cls = kind === 'fault' ? 'is-faulting' : 'is-glitching';
+  block.classList.add(cls);
+
+  // 单字符损坏：只在读数行/状态行上动手，避免破坏电平条；保真度低时坏 2 个字符
   const lines = block.querySelectorAll('[data-line], [data-meta="link"]');
   const line = lines[Math.floor(Math.random() * Math.max(1, lines.length))];
   if (line) {
     const original = line.textContent;
-    const idx = Math.floor(Math.random() * Math.max(1, original.length));
-    line.textContent = `${original.slice(0, idx)}█${original.slice(idx + 1)}`;
+    const count = fidelity.value < 0.6 ? 2 : 1;
+    const out = original.split('');
+    let done = 0;
+    while (done < count) {
+      const idx = Math.floor(Math.random() * Math.max(1, out.length));
+      if (out[idx] === ' ' || out[idx] === '█') continue;
+      out[idx] = '█';
+      done++;
+    }
+    line.textContent = out.join('');
     setTimeout(() => { line.textContent = original; }, 90);
   }
-  setTimeout(() => block.classList.remove('is-glitching'), 190);
+  setTimeout(() => block.classList.remove(cls), 190);
 };
 
 watch(() => player.nowPlaying?.music?.id, (next, prev) => {
-  if (prev && next && next !== prev) telemetryGlitch();
+  if (prev && next && next !== prev) telemetryGlitch('update');
 });
-watch(() => player.isErrorState, (v) => { if (v) telemetryGlitch(); });
-watch(() => player.connected, (v, prev) => { if (prev === true && v === false) telemetryGlitch(); });
+watch(() => player.isErrorState, (v) => { if (v) { fidelity.noteFailure(); telemetryGlitch('fault'); } });
+watch(() => player.connected, (v, prev) => { if (prev === true && v === false) { fidelity.noteFailure(); telemetryGlitch('fault'); } });
 
 // 房间参与度：有人点歌 → 频谱字标基调轻微抬升（参与者的动作要能在背景上看见）
 watch(() => player.queue.length, (next, prev) => {
@@ -501,6 +516,7 @@ onMounted(() => {
     }
     // 音频遥测：内部节流到 12.5Hz；无频谱时电平自然回落
     telemetry.setState({ connected: player.connected, queue: player.queue.length });
+    fidelity.setState({ connected: player.connected, buffering: !!player.isBuffering }).update();
     telemetry.tick();
   }, 100);
 
@@ -529,15 +545,26 @@ onUnmounted(() => {
   gap: 10px;
 }
 /* A：遥测抖动——切片位移 + 轻 RGB 分离；170ms、离散步进；reduced-motion 关闭 */
-.is-glitching { animation: telemetry-glitch 170ms steps(1, end) 1 both; }
-@keyframes telemetry-glitch {
+/* 常态更新：只有切片位移，幅度由 --ga 给出（保真度越低越大） */
+.is-glitching { animation: telemetry-slice 170ms steps(1, end) 1 both; }
+@keyframes telemetry-slice {
+  0% { transform: none; clip-path: none; }
+  18% { transform: translateX(calc(-1 * var(--ga, 1.4px))); clip-path: inset(12% 0 58% 0); }
+  38% { transform: translateX(var(--ga, 1.4px)); clip-path: inset(60% 0 14% 0); }
+  60% { transform: translateX(calc(-0.66 * var(--ga, 1.4px))); clip-path: inset(34% 0 42% 0); }
+  80% { transform: translateX(calc(0.66 * var(--ga, 1.4px))); clip-path: none; }
+  100% { transform: none; clip-path: none; }
+}
+/* 故障专属：色差分离只允许出现在错误/断连——它是「坏了」的信号，不是通用特效 */
+.is-faulting { animation: telemetry-fault 190ms steps(1, end) 1 both; }
+@keyframes telemetry-fault {
   0% { transform: none; clip-path: none; text-shadow: none; }
-  18% { transform: translateX(-1.5px); clip-path: inset(12% 0 58% 0);
+  18% { transform: translateX(calc(-1 * var(--ga, 1.4px))); clip-path: inset(12% 0 58% 0);
         text-shadow: 1px 0 rgba(249, 115, 22, 0.45), -1px 0 rgba(56, 189, 248, 0.3); }
-  38% { transform: translateX(1.5px); clip-path: inset(60% 0 14% 0);
+  38% { transform: translateX(var(--ga, 1.4px)); clip-path: inset(60% 0 14% 0);
         text-shadow: -1px 0 rgba(249, 115, 22, 0.45), 1px 0 rgba(56, 189, 248, 0.3); }
-  60% { transform: translateX(-1px); clip-path: inset(34% 0 42% 0); text-shadow: none; }
-  80% { transform: translateX(1px); clip-path: none; }
+  60% { transform: translateX(calc(-0.66 * var(--ga, 1.4px))); clip-path: inset(34% 0 42% 0); text-shadow: none; }
+  80% { transform: none; clip-path: none; }
   100% { transform: none; clip-path: none; }
 }
 /* 音频遥测：条用 transform（免重排），峰值保持用 1px 竖线 */

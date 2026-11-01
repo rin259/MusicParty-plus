@@ -1,5 +1,5 @@
 <template>
-  <div class="select-none" role="group" aria-label="音乐源状态">
+  <div ref="rootEl" class="select-none" role="group" aria-label="音乐源状态">
     <div class="mb-1 flex items-baseline justify-between font-mono text-[9px] tracking-[0.2em] text-medical-500">
       <span>SOURCE_BUS</span>
       <span class="tabular-nums">
@@ -20,6 +20,7 @@
             : 'border-medical-200 bg-medical-50 hover:border-medical-300'"
           :aria-pressed="active === id"
           :title="titleFor(id)"
+          :data-src="id"
           @click="$emit('select', id)"
       >
         <div class="flex items-center gap-1.5">
@@ -35,7 +36,7 @@
         </span>
 
         <span class="mt-1 flex items-center justify-between font-mono text-[8px] leading-none text-medical-500">
-          <span class="truncate">{{ metaFor(id) }}</span>
+          <span class="bus-meta truncate">{{ metaFor(id) }}</span>
           <span v-if="isSlow(id)" class="text-accent-text">SLOW</span>
         </span>
       </button>
@@ -44,8 +45,9 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { PLATFORM_LABEL } from '../logic/searchMerge.js';
+import { corruptOnce, globalGate } from '../logic/Glitch.js';
 
 const props = defineProps({
   platforms: { type: Array, required: true },
@@ -118,6 +120,23 @@ function metaFor(id) {
   }
   return 'IDLE';
 }
+
+const rootEl = ref(null);
+
+// G2：某个源刚进入错误/超时，就把它的状态词（UNREACHABLE / TIMEOUT）坏一个字符。
+// 只在真实故障时触发，且与其它 glitch 共用全局闸门。
+const errorIds = computed(() => props.platforms.filter((id) => {
+    const st = stateOf(id).state;
+    return st === 'error' || st === 'timeout';
+}));
+watch(() => errorIds.value.join(','), (next, prev) => {
+    if (!next) return;
+    const before = new Set((prev || '').split(',').filter(Boolean));
+    const fresh = next.split(',').find((id) => !before.has(id));
+    if (!fresh) return;
+    const el = rootEl.value?.querySelector(`[data-src="${fresh}"] .bus-meta`);
+    corruptOnce(el, globalGate, { chars: 1 });
+});
 
 function isSlow(id) {
   const s = stateOf(id);

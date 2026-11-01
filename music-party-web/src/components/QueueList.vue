@@ -7,7 +7,7 @@
           READY {{ readyCount }}
           <span class="mx-1 text-medical-300">|</span>
           RESOLVING {{ resolvingCount }}
-          <span v-if="failedCount" class="ml-1 text-danger">| FAILED {{ failedCount }}</span>
+          <span v-if="failedCount" ref="failedChip" class="ml-1 text-danger">| FAILED {{ failedCount }}</span>
         </div>
       </div>
       <button v-if="dismissible" @click="$emit('close')" class="flex items-center justify-center w-11 h-11 -mr-2 text-medical-500 hover:text-medical-900" aria-label="关闭播放队列">
@@ -87,11 +87,12 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch, nextTick } from 'vue';
 import { usePlayerStore } from '../stores/player';
 import { Shuffle, ChevronDown, ChevronRight, User, X } from 'lucide-vue-next';
 import { useUserStore } from '../stores/user';
 import QueueItem from './QueueItem.vue';
+import { corruptOnce, globalGate } from '../logic/Glitch.js';
 
 defineProps({ dismissible: { type: Boolean, default: false } });
 defineEmits(['close']);
@@ -104,6 +105,15 @@ const userStore = useUserStore();
 const readyCount = computed(() => queue.value.filter((item) => !item.status || item.status === 'READY').length);
 const resolvingCount = computed(() => queue.value.filter((item) => item.status === 'PENDING' || item.status === 'DOWNLOADING').length);
 const failedCount = computed(() => queue.value.filter((item) => item.status === 'FAILED').length);
+
+// G2：失败计数增加时，把 FAILED 这个词坏一个字符——失败本身就是「数据损坏」的语义。
+// 只坏 1 个字符、90ms，且与其它 glitch 共用全局闸门，不额外占用频率预算。
+const failedChip = ref(null);
+watch(failedCount, async (next, prev) => {
+  if (!next || next <= (prev || 0)) return;
+  await nextTick();
+  corruptOnce(failedChip.value, globalGate, { chars: 1 });
+});
 
 // --- Shuffle Mode Logic ---
 

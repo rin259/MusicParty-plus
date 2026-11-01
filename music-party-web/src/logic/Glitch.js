@@ -22,7 +22,32 @@ export class GlitchGate {
     }
 }
 
+/** 全局单例：跨组件的 glitch 也共享同一个配额，保证「全局同时只有一次」。 */
+export const globalGate = new GlitchGate(900);
+
 const GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#/\\_<>';
+
+/**
+ * 單字元損壞：把一段狀態文字裡的 1–2 個非空白字元暫時換成 █，90ms 後恢復。
+ * 只用於「真實的失敗/超時」，且與其它 glitch 共用同一個閘門——不給它獨立頻率。
+ * 資訊量高、視覺噪聲近乎零，故適合掛在 RESOLVING / FAILED / UNREACHABLE 這類詞上。
+ */
+export const corruptOnce = (el, gate, { chars = 1, ms = 90 } = {}) => {
+    if (!el || !gate?.take()) return false;
+    const original = el.textContent;
+    if (!original || !original.trim()) return false;
+    const slots = [];
+    for (let i = 0; i < original.length; i++) if (original[i] !== ' ') slots.push(i);
+    if (!slots.length) return false;
+    const out = original.split('');
+    for (let k = 0; k < Math.min(chars, slots.length); k++) {
+        const pick = slots.splice(Math.floor(Math.random() * slots.length), 1)[0];
+        out[pick] = '█';
+    }
+    el.textContent = out.join('');
+    setTimeout(() => { el.textContent = original; }, ms);
+    return true;
+};
 
 /**
  * 終端解碼：由亂碼逐字落定。用於換曲時的標題——新數據「正在解碼」，
