@@ -20,6 +20,9 @@ const MIN_HZ = 20;
 const MAX_HZ = 16000;
 // 与 SpectralWordmark 的 TILT_DB 保持一致：只补高频的自然衰减，不改其它任何视觉参数。
 const TILT_DB = 18;
+// 光點中心的安全框：留出餘量讓光斑主體留在畫面內（邊緣淡出僅作保險）
+const EDGE_X = 0.12;
+const EDGE_Y = 0.14;
 
 const rand = (a, b) => a + Math.random() * (b - a);
 
@@ -44,6 +47,9 @@ export class PointLights {
         this.width = 0;
         this.height = 0;
         this.levels = new Float32Array(COUNT);
+        this.prevRaw = new Float32Array(COUNT);   // 上一帧该带的原始能量（算上升量）
+        this.riseMean = new Float32Array(COUNT);  // 上升量的慢速均值（onset 自适应阈值）
+        this.pop = new Float32Array(COUNT);       // 瞬态脉冲，0..1
         this.time = 0;
         this.flash = 0;
         this.crowd = 0;
@@ -62,13 +68,13 @@ export class PointLights {
             const t = i / (COUNT - 1);           // 0 = 低頻（橙）→ 1 = 高頻（白）
             return {
                 // 避開正中（封面）區域，聚在四野
-                x: rand(0.04, 0.96),
-                y: rand(0.06, 0.94),
+                x: rand(0.12, 0.88),
+                y: rand(0.14, 0.86),
                 r: rand(0.055, 0.12),            // 數量增多 → 半徑收小，免糊成一片
                 alpha: rand(0.05, 0.10),
                 band: t,
                 angle: rand(0, Math.PI * 2),     // 航向
-                speed: rand(0.022, 0.048),       // 基礎速度（容器比例 / 秒）
+                speed: rand(0.014, 0.030),       // 基礎速度（容器比例 / 秒）
                 turn: rand(0.25, 0.85),          // 轉向速率
                 phase: rand(0, Math.PI * 2)
             };
@@ -156,6 +162,15 @@ export class PointLights {
             const target = Math.min(1, 1 - Math.exp(-1.8 * raw));
             const rate = target > this.levels[i] ? attack : release;
             this.levels[i] += (target - this.levels[i]) * rate;
+
+            // 每盞燈自己的 onset：該帶上升量超過自身慢速均值 1.6 倍即判為瞬態。
+            // 用自適應閾值而非固定值，故與素材電平、幀率都無關。
+            const rise = raw - this.prevRaw[i];
+            this.prevRaw[i] = raw;
+            this.riseMean[i] += (Math.max(0, rise) - this.riseMean[i]) * (1 - Math.exp(-dt / 0.5));
+            if (rise > Math.max(0.02, this.riseMean[i] * 1.6)) {
+                this.pop[i] = Math.min(1, this.pop[i] + 0.85);
+            }
         }
     }
 
@@ -207,17 +222,30 @@ export class PointLights {
         for (let i = 0; i < COUNT; i++) {
             const light = this.lights[i];
             const lv = Math.min(1, this.levels[i] * boost);
+            this.pop[i] *= Math.pow(0.86, dt * 60);
+            // 瞬態只在亮度上「彈」一下，不改半徑/形狀
+            const glow = Math.min(1, lv + 0.5 * this.pop[i]);
 
             // 連續游走：轉向由各自相位緩慢調變；速度隨該帶能量（響則游得快，靜時仍緩行）
             light.angle += Math.sin(this.time * light.turn + light.phase) * 0.9 * dt;
             const speed = light.speed * (0.45 + 1.8 * lv) * dt;
             light.x += Math.cos(light.angle) * speed;
             light.y += Math.sin(light.angle) * speed;
-            // 回卷（留邊界餘量；配合邊緣淡出，故不可見跳變）
-            if (light.x < -0.12) light.x += 1.24;
-            if (light.x > 1.12) light.x -= 1.24;
-            if (light.y < -0.12) light.y += 1.24;
-            if (light.y > 1.12) light.y -= 1.24;
+            // 邊界反射：光點始終留在可視範圍內（不再跨邊界回卷，也就不會「消失後從對側出現」）
+            if (light.x < EDGE_X) {
+                light.x = EDGE_X + (EDGE_X - light.x);
+                light.angle = Math.PI - light.angle;
+            } else if (light.x > 1 - EDGE_X) {
+                light.x = (1 - EDGE_X) - (light.x - (1 - EDGE_X));
+                light.angle = Math.PI - light.angle;
+            }
+            if (light.y < EDGE_Y) {
+                light.y = EDGE_Y + (EDGE_Y - light.y);
+                light.angle = -light.angle;
+            } else if (light.y > 1 - EDGE_Y) {
+                light.y = (1 - EDGE_Y) - (light.y - (1 - EDGE_Y));
+                light.angle = -light.angle;
+            }
             // 邊緣淡出：接近邊界時漸隱，避免光斑被切邊或回卷時突兀
             const edge = Math.min(1, Math.min(light.x, 1 - light.x) / 0.12,
                 Math.min(light.y, 1 - light.y) / 0.12);
@@ -225,7 +253,7 @@ export class PointLights {
             // 亮度：底噪为 0（静音时完全不可见），并拉开极差——
             // lv 做 1.3 次幂，故弱段压得更暗、强段更快逼近上限（0.72）。
             const r = Math.max(8, light.r * base * (1 + 1.1 * lv));
-            const alpha = Math.min(0.72, light.alpha * 10 * Math.pow(lv, 1.3)) * Math.max(0, edge);
+            const alpha = Math.min(0.72, light.alpha * 10 * Math.pow(glow, 1.3)) * Math.max(0, edge);
             if (alpha < 0.004) continue;
 
             const cx = light.x * width;

@@ -63,8 +63,15 @@ export const spectrumBandEnergy = (spectrum, sampleRate, fftSize, fLow, fHigh, g
     const high = Math.min(spectrum.length - 1, Math.ceil(fHigh / binHz));
     if (high < low) return 0;
     let sum = 0;
-    for (let i = low; i <= high; i++) sum += BYTE_TO_AMP[spectrum[i]];
-    return Math.min(1, (sum / (high - low + 1)) * gain);
+    let peak = 0;
+    for (let i = low; i <= high; i++) {
+        const amp = BYTE_TO_AMP[spectrum[i]];
+        sum += amp;
+        if (amp > peak) peak = amp;
+    }
+    // 均值 + 峰值各半：高段一个频带跨几十个 bin，纯均值会把镲片/齿音的窄峰平均掉，
+    // 于是「高频灯永远是灰的」。峰值保留瞬态，均值压住噪声。
+    return Math.min(1, ((sum / (high - low + 1)) * 0.5 + peak * 0.5) * gain);
 };
 
 export class AudioVisualizer {
@@ -119,6 +126,7 @@ export class AudioVisualizer {
         this.coneA = 0;         // 低音盆加速度（m/s²，遠場輻射聲壓之代理）
         // C：踢點撕裂（強低頻瞬態觸發，每秒最多一次、每次約 110ms）
         this.prevLowBand = 0;
+        this.lowRiseMean = 0;   // 低频上升量的慢速均值（onset 自适应阈值）
         this.glitchUntil = 0;
         this.lastGlitchAt = 0;
         this.glitchSlices = [];
@@ -439,7 +447,12 @@ export class AudioVisualizer {
         // C 觸發：真實 kick（低頻陡升）才撕裂；門檻 + 620ms 冷卻，故每秒至多一次
         if (this.isPlaying) {
             const now = performance.now();
-            if (this.band.low - this.prevLowBand > 0.09 && now - this.lastGlitchAt > 620) {
+            // 自适应 onset：低频上升量超过自身慢速均值的 1.6 倍即判为 kick，
+            // 不再用固定的 0.09 逐帧阈值（那个阈值与帧率/素材电平绑定）。
+            const rise = this.band.low - this.prevLowBand;
+            this.lowRiseMean += (Math.max(0, rise) - this.lowRiseMean) * (1 - Math.exp(-dt / 0.5));
+            const onsetThreshold = Math.max(0.02, this.lowRiseMean * 1.6);
+            if (rise > onsetThreshold && now - this.lastGlitchAt > 620) {
                 this.lastGlitchAt = now;
                 this.glitchUntil = now + 110;
                 // 每次撕裂重新抽切片：位置/厚度/位移皆随机，故不會每次撕在同一處
