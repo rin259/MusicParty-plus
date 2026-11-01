@@ -64,7 +64,57 @@ public class MusicQueueManager {
                 initialStatus // 存储枚举的名称
         );
         queue.addLast(newItem);
+        reorderRoundRobin();
         return new AddResult(newItem, null);
+    }
+
+    /**
+     * 严格轮转排序（round-robin）：GLOBAL_TOP 保持最前且相对顺序不变，其余按用户分组后交替排列。
+     *
+     * 研判（2026-11）：此前队列只有「每人最多 N 首」这一道闸，一个人连点 5 首就会形成 5 连排，
+     * 派对里其他人只能等 20 分钟——这正是共享点歌的经典「hogging the jukebox」问题
+     * （US11503373B2 开篇即以此立论，解法是按用户子队列轮转交织）。
+     * 用户之间的先后由「在该队列中首次出现」决定，故先点的人先轮，仍然尊重先来后到。
+     * USER_TOP 仍在其所属用户的子队列内优先，但不越过别人的轮次。
+     */
+    private void reorderRoundRobin() {
+        if (queue.size() < 2) return;
+        List<MusicQueueItem> items = new ArrayList<>(queue);
+
+        List<MusicQueueItem> globals = items.stream()
+                .filter(i -> i.priority() == Priority.GLOBAL_TOP)
+                .collect(Collectors.toList());
+        List<MusicQueueItem> rest = items.stream()
+                .filter(i -> i.priority() != Priority.GLOBAL_TOP)
+                .collect(Collectors.toList());
+
+        Map<String, Deque<MusicQueueItem>> perUser = new LinkedHashMap<>();
+        for (MusicQueueItem item : rest) {
+            perUser.computeIfAbsent(item.enqueuedBy().token(), k -> new ArrayDeque<>()).addLast(item);
+        }
+        // 组内：个人置顶先于普通（稳定排序，不改变同组内的先后）
+        perUser.replaceAll((token, deque) -> {
+            List<MusicQueueItem> list = new ArrayList<>(deque);
+            list.sort(Comparator.comparingInt(i -> i.priority() == Priority.USER_TOP ? 0 : 1));
+            ArrayDeque<MusicQueueItem> sorted = new ArrayDeque<>(list);
+            return sorted;
+        });
+
+        List<MusicQueueItem> ordered = new ArrayList<>(globals);
+        boolean progressed = true;
+        while (progressed) {
+            progressed = false;
+            for (Deque<MusicQueueItem> deque : perUser.values()) {
+                MusicQueueItem next = deque.pollFirst();
+                if (next != null) {
+                    ordered.add(next);
+                    progressed = true;
+                }
+            }
+        }
+
+        queue.clear();
+        queue.addAll(ordered);
     }
 
     /**
@@ -114,6 +164,28 @@ public class MusicQueueManager {
             }
         }
         return TopResult.NONE;
+    }
+
+    /**
+     * 原地换源：保留 queueId / 点歌人 / 优先级，只把曲目换成另一个源的同一首歌。
+     * 用于「某源解析失败后自动换源重试」——队列位置不变，用户感知只是这一首重新进入解析。
+     */
+    public synchronized boolean replaceMusic(String queueId, Music music) {
+        if (music == null) return false;
+        Optional<MusicQueueItem> existing = findByQueueId(queueId);
+        if (existing.isEmpty()) return false;
+        MusicQueueItem old = existing.get();
+
+        MusicQueueItem replaced = new MusicQueueItem(
+                old.queueId(), music, old.enqueuedBy(), QueueItemStatus.PENDING, old.priority());
+        List<MusicQueueItem> snapshot = new ArrayList<>(queue);
+        int index = snapshot.indexOf(old);
+        if (index < 0) return false;
+        snapshot.set(index, replaced);
+        queue.clear();
+        queue.addAll(snapshot);
+        reorderRoundRobin();
+        return true;
     }
 
     /**
@@ -359,6 +431,7 @@ public class MusicQueueManager {
         // Restore Queue
         if (loadedQueue != null) {
             queue.addAll(loadedQueue);
+            reorderRoundRobin();
         }
 
         // Restore History

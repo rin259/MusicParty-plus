@@ -9,6 +9,12 @@
           RESOLVING {{ resolvingCount }}
           <span v-if="failedCount" ref="failedChip" class="ml-1 text-danger">| FAILED {{ failedCount }}</span>
         </div>
+        <!-- 队列可解释性：顺序规则 + 接下来几首还要多久。公平性若不可见，就等于没做。 -->
+        <div v-if="queue.length" class="mt-0.5 font-mono text-[9px] tracking-[0.14em] tabular-nums">
+          <span v-if="!player.isShuffle" class="text-accent-text">ROUND-ROBIN</span>
+          <span v-if="!player.isShuffle" class="mx-1 text-medical-300">|</span>
+          <span class="text-medical-500">NEXT {{ nextItems.length }} · ~{{ etaLabel }}</span>
+        </div>
       </div>
       <button v-if="dismissible" @click="$emit('close')" class="flex items-center justify-center w-11 h-11 -mr-2 text-medical-500 hover:text-medical-900" aria-label="关闭播放队列">
         <X class="w-5 h-5" />
@@ -108,6 +114,15 @@ const failedCount = computed(() => queue.value.filter((item) => item.status === 
 
 // G2：失败计数增加时，把 FAILED 这个词坏一个字符——失败本身就是「数据损坏」的语义。
 // 只坏 1 个字符、90ms，且与其它 glitch 共用全局闸门，不额外占用频率预算。
+// 接下来 3 首的实际总时长（按队列真实顺序，GLOBAL_TOP 本就排在最前）
+const nextItems = computed(() => queue.value.slice(0, 3));
+const etaLabel = computed(() => {
+  const ms = nextItems.value.reduce((sum, item) => sum + (item.music?.duration || 0), 0);
+  if (!ms) return '—:—';
+  const total = Math.round(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+});
+
 const failedChip = ref(null);
 watch(failedCount, async (next, prev) => {
   if (!next || next <= (prev || 0)) return;
