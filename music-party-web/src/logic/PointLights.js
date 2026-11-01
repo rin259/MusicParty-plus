@@ -93,7 +93,7 @@ export class PointLights {
                 alpha: rand(0.05, 0.10),
                 band: t,
                 angle: rand(0, Math.PI * 2),     // 航向
-                speed: rand(0.014, 0.030),       // 基礎速度（容器比例 / 秒）
+                speed: rand(0.022, 0.048),       // 基礎速度（容器比例 / 秒）
                 turn: rand(0.25, 0.85),          // 轉向速率
                 phase: rand(0, Math.PI * 2)
             };
@@ -153,18 +153,27 @@ export class PointLights {
     /** 预渲染 24×2 张径向光斑 sprite：替代每帧 24 次 createRadialGradient。 */
     buildSprites() {
         if (typeof document === 'undefined') return;
+        // 光晕剖面 a(t) = (1-t)^2 * (1 + 1.084t)：
+        //   a(0)=1、a(0.45)=0.45（与旧版中段亮度一致）、a(1)=0，且 t=1 处导数为 0——
+        //   旧版在 t=0.45 处斜率突变、末端线性收口，放大后能看到一圈「边界」；
+        //   这个剖面全程连续可导，尾部收得极慢，边缘几乎不可分辨。
+        const SIZE = 256;
+        const STOPS = 32;
         const make = (color) => {
             const sprite = document.createElement('canvas');
-            sprite.width = 128;
-            sprite.height = 128;
+            sprite.width = SIZE;
+            sprite.height = SIZE;
             const g = sprite.getContext('2d');
-            const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+            const c = SIZE / 2;
+            const grad = g.createRadialGradient(c, c, 0, c, c, c);
             const [r, gr, b] = color;
-            grad.addColorStop(0, `rgba(${r}, ${gr}, ${b}, 1)`);
-            grad.addColorStop(0.45, `rgba(${r}, ${gr}, ${b}, 0.45)`);
-            grad.addColorStop(1, `rgba(${r}, ${gr}, ${b}, 0)`);
+            for (let s = 0; s <= STOPS; s++) {
+                const t = s / STOPS;
+                const a = (1 - t) * (1 - t) * (1 + 1.084 * t);
+                grad.addColorStop(t, `rgba(${r}, ${gr}, ${b}, ${a.toFixed(5)})`);
+            }
             g.fillStyle = grad;
-            g.fillRect(0, 0, 128, 128);
+            g.fillRect(0, 0, SIZE, SIZE);
             return sprite;
         };
         this.sprites = {
@@ -303,8 +312,8 @@ export class PointLights {
             // 亮度：底噪为 0（静音时完全不可见），并拉开极差——
             // lv 做 1.3 次幂，故弱段压得更暗、强段更快逼近上限（0.72）。
             const r = Math.max(8, light.r * base * (1 + 1.1 * lv));
-            const alpha = Math.min(0.72, light.alpha * 10 * Math.pow(glow, 1.3)) * Math.max(0, edge);
-            if (alpha < 0.004) continue;
+            const alpha = Math.min(0.72, light.alpha * 12 * Math.pow(glow, 1.3)) * Math.max(0, edge);
+            if (alpha < 0.0005) continue;
 
             const cx = light.x * width;
             const cy = light.y * height;
