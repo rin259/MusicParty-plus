@@ -15,7 +15,7 @@ import { spectrumBandEnergy } from './AudioVisualizer.js';
  *    高頻燈隨鑔片/齒音閃動；於是背景的「哪一顆亮」本身就是頻譜信息的空間化。
  *  - 低解析度畫布再放大：柔化天然、成本極低（每幀 16 個徑向漸變）。
  */
-const COUNT = 24;
+const COUNT = 16;
 const MIN_HZ = 20;
 const MAX_HZ = 16000;
 // 与 SpectralWordmark 的 TILT_DB 保持一致：只补高频的自然衰减，不改其它任何视觉参数。
@@ -23,9 +23,9 @@ const TILT_DB = 18;
 // 光點中心的安全框：留出餘量讓光斑主體留在畫面內（邊緣淡出僅作保險）
 const EDGE_X = 0.12;
 const EDGE_Y = 0.14;
-// 互斥：两盏灯中心的最小间距（以画布宽度为 1）。24 盏灯在安全框内，
-// 这个值约等于可用面积的一半，既拉得开又不会互相顶到无法收敛。
-const MIN_SEP = 0.13;
+// 互斥：两盏灯中心的最小间距（以画布宽度为 1）。16 盏灯 + 更小的半径后，
+// 这个间距仍留有余量，既拉得开又不会互相顶到无法收敛。
+const MIN_SEP = 0.16;
 // 归一化坐标里的 y 比 x 短（画布约 420×350），算距离时按此比例校正
 const ASPECT = 0.85;
 
@@ -89,7 +89,7 @@ export class PointLights {
             return {
                 x: p.x,
                 y: p.y,
-                r: rand(0.055, 0.12),            // 數量增多 → 半徑收小，免糊成一片
+                r: rand(0.034, 0.075),           // 點要像「點」：半徑小到不會連成一片霧
                 alpha: rand(0.05, 0.10),
                 band: t,
                 angle: rand(0, Math.PI * 2),     // 航向
