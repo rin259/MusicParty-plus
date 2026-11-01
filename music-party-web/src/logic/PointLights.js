@@ -55,6 +55,15 @@ export class PointLights {
         this.prevRaw = new Float32Array(COUNT);   // 上一帧该带的原始能量（算上升量）
         this.riseMean = new Float32Array(COUNT);  // 上升量的慢速均值（onset 自适应阈值）
         this.pop = new Float32Array(COUNT);       // 瞬态脉冲，0..1
+        // 时间常数按频带分层：低频慢（呼吸）、高频快（闪光）。
+        // 全部共用 14/72ms 时，16 颗灯的起落完全同步，读起来像整体在抽搐。
+        this.attackTau = new Float32Array(COUNT);
+        this.releaseTau = new Float32Array(COUNT);
+        for (let i = 0; i < COUNT; i++) {
+            const t = i / (COUNT - 1);                  // 0 = 低频 → 1 = 高频
+            this.attackTau[i] = 0.018 - 0.010 * t;      // 18ms → 8ms
+            this.releaseTau[i] = 0.090 - 0.045 * t;     // 90ms → 45ms
+        }
         this.time = 0;
         this.flash = 0;
         this.crowd = 0;
@@ -205,9 +214,9 @@ export class PointLights {
         const now = performance.now();
         const dt = Math.min(0.1, Math.max(0.001, (now - (this._lastSpectrumAt || now)) / 1000));
         this._lastSpectrumAt = now;
-        const attack = 1 - Math.exp(-dt / 0.014);
-        const release = 1 - Math.exp(-dt / 0.072);
         for (let i = 0; i < COUNT; i++) {
+            const attack = 1 - Math.exp(-dt / this.attackTau[i]);
+            const release = 1 - Math.exp(-dt / this.releaseTau[i]);
             const t = this.lights[i].band;
             const fLo = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, t);
             const bandEnd = Math.min(1, t + 1 / COUNT);
