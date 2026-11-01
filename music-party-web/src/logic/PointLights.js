@@ -191,6 +191,11 @@ export class PointLights {
 
         this.flash *= Math.pow(0.87, dt * 60);
         this.crowd *= Math.pow(0.998, dt * 60);
+        // 頻譜事件停止（暫停/斷流）時自行歸零，保證「靜音即不可見」不依賴上游是否還在發事件
+        if (this._lastSpectrumAt && performance.now() - this._lastSpectrumAt > 450) {
+            const k = Math.pow(0.86, dt * 60);
+            for (let i = 0; i < COUNT; i++) this.levels[i] *= k;
+        }
         const boost = 1 + 0.45 * this.flash + 0.15 * this.crowd;
         this.time += dt;
 
@@ -217,11 +222,10 @@ export class PointLights {
             const edge = Math.min(1, Math.min(light.x, 1 - light.x) / 0.12,
                 Math.min(light.y, 1 - light.y) / 0.12);
             // 半徑與亮度同步隨所屬頻帶（並對正相關，與字標同一原則）
-            // 亮度极差再拉大：静时仍留可见的淡光（0.45 系数），响时逼近上限（4.2 倍、封顶 0.7）
-            // 2026-11：原先 0.10 的系数让安静段的 alpha 只有 1–3/255——光点实际上不存在，
-            // 于是「在移动」和「看不见」同时成立。抬底噪让每颗光斑始终可辨，游走才读得出来。
+            // 亮度：底噪为 0（静音时完全不可见），并拉开极差——
+            // lv 做 1.3 次幂，故弱段压得更暗、强段更快逼近上限（0.72）。
             const r = Math.max(8, light.r * base * (1 + 1.1 * lv));
-            const alpha = Math.min(0.7, light.alpha * (0.45 + 4.2 * lv)) * Math.max(0, edge);
+            const alpha = Math.min(0.72, light.alpha * 10 * Math.pow(lv, 1.3)) * Math.max(0, edge);
             if (alpha < 0.004) continue;
 
             const cx = light.x * width;
