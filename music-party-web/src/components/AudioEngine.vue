@@ -36,7 +36,9 @@ const aliveAudioRef = ref(null);
 let audioContext;
 let analyser;
 let frequencyData;
+let spectrumCopy;
 let visualizerFrame;
+let lastPublish = 0;
 
 // 极弱底噪 WAV (人耳难以察觉)
 const ALIVE_WAV = 'data:audio/wav;base64,UklGRjIAAABXQVZFRm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YRAAAAAAAAAAAAAAAAD//w==';
@@ -86,17 +88,23 @@ const onCanPlay = () => {
 };
 
 const publishSpectrum = () => {
-  if (analyser) {
-    analyser.getByteFrequencyData(frequencyData);
-    window.dispatchEvent(new CustomEvent('music-party:spectrum', {
-      detail: {
-        data: frequencyData.slice(0),
-        sampleRate: audioContext.sampleRate,
-        fftSize: analyser.fftSize
-      }
-    }));
-  }
   visualizerFrame = requestAnimationFrame(publishSpectrum);
+  // 固定 60Hz 发布，而不是跟着 rAF 走：smoothingTimeConstant 是「每次读取」生效的，
+  // 按 144Hz 读取时等效时间常数只有 60Hz 的 1/2.4，响应速度会随刷新率/掉帧来回跳变。
+  const now = performance.now();
+  if (!analyser || now - lastPublish < 1000 / 60 - 0.2) return;
+  lastPublish = now;
+
+  analyser.getByteFrequencyData(frequencyData);
+  // 复用同一块缓冲：原来每帧 slice(0) 会以 60–144Hz 产生 1KB 垃圾，周期性触发 GC 卡顿。
+  spectrumCopy.set(frequencyData);
+  window.dispatchEvent(new CustomEvent('music-party:spectrum', {
+    detail: {
+      data: spectrumCopy,
+      sampleRate: audioContext.sampleRate,
+      fftSize: analyser.fftSize
+    }
+  }));
 };
 
 const enableSpectrum = () => {
@@ -108,6 +116,7 @@ const enableSpectrum = () => {
   analyser.fftSize = 2048;
   analyser.smoothingTimeConstant = 0.55;
   frequencyData = new Uint8Array(analyser.frequencyBinCount);
+  spectrumCopy = new Uint8Array(analyser.frequencyBinCount);
   source.connect(analyser);
   analyser.connect(audioContext.destination);
   publishSpectrum();

@@ -54,6 +54,13 @@ export class SpectralWordmark {
         const { data, sampleRate, fftSize } = payload || {};
         if (!n || !data?.length) return;
 
+        // 时间归一化：与 rAF 频率解耦，60/120Hz 的起音与回落一致。
+        const now = performance.now();
+        const dt = Math.min(0.1, Math.max(0.001, (now - (this._lastSpectrumAt || now)) / 1000));
+        this._lastSpectrumAt = now;
+        const attack = 1 - Math.exp(-dt / 0.021);
+        const release = 1 - Math.exp(-dt / 0.096);
+
         for (let i = 0; i < n; i++) {
             const t0 = i / n;
             const t1 = (i + 1) / n;
@@ -63,7 +70,7 @@ export class SpectralWordmark {
             const gain = (30 + 30 * t1) * tilt;        // 高頻天然低：以 tilt 壓低頻、提亮高頻
             const raw = spectrumBandEnergy(data, sampleRate, fftSize, fLo, fHi, gain);
             const target = clamp01(1 - Math.exp(-1.8 * raw)); // 軟膝
-            const rate = target > this.level[i] ? 0.55 : 0.16;
+            const rate = target > this.level[i] ? attack : release;
             this.level[i] += (target - this.level[i]) * rate;
         }
 
@@ -84,11 +91,17 @@ export class SpectralWordmark {
     }
 
     start() {
-        this._last = performance.now();
+        // 背景字标 30fps 足够；DOM 样式写入减半。
+        const MIN_FRAME_MS = 1000 / 30 - 0.2;
+        let lastDraw = performance.now();
         const loop = (now) => {
             if (!this.root) return;
-            const dt = Math.min(1 / 20, Math.max(1 / 240, (now - this._last) / 1000));
-            this._last = now;
+            if (now - lastDraw < MIN_FRAME_MS) {
+                this.animationId = requestAnimationFrame(loop);
+                return;
+            }
+            const dt = Math.min(1 / 20, Math.max(1 / 240, (now - lastDraw) / 1000));
+            lastDraw = now;
             this.draw(dt);
             this.animationId = requestAnimationFrame(loop);
         };
@@ -118,7 +131,7 @@ export class SpectralWordmark {
         for (let i = 0; i < this.letters.length; i++) {
             const lv = clamp01(this.level[i] * boost);
             const m = Math.pow(lv, 0.9);
-            const opacity = Math.min(0.88, 0.24 + 0.64 * Math.pow(lv, 0.85));
+            const opacity = Math.min(0.80, 0.18 + 0.62 * Math.pow(lv, 0.85));
             const scaleY = this.reducedMotion ? 1 : 1 + 0.22 * m;
             const r = Math.round(from[0] + (to[0] - from[0]) * m);
             const g = Math.round(from[1] + (to[1] - from[1]) * m);

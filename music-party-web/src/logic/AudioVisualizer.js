@@ -221,7 +221,7 @@ export class AudioVisualizer {
         if (!this.canvas || !this.ctx) return;
         const cssSize = this.canvas.clientWidth || 0;
         if (!cssSize) return;
-        const target = Math.min(1200, Math.max(600, Math.round(cssSize * 1.5 / 4) * 4));
+        const target = Math.min(1000, Math.max(600, Math.round(cssSize * 1.5 / 4) * 4));
         this.worldPerCss = 1200 / cssSize; // 世界單位／CSS px（線寬以 CSS px 定義，隨螢幕一致）
         if (Math.abs(target - this.canvas.width) < 40) return;
         this.canvas.width = target;
@@ -302,17 +302,23 @@ export class AudioVisualizer {
         if (!this.spectrum.length) return;
         this.sampleRate = payload.sampleRate;
         this.fftSize = payload.fftSize;
+
+        // 时间归一化：用实际事件间隔的指数趋近，代替“每事件固定 0.5/0.12”。
+        // 这样 60Hz 与 120Hz 的起音/回落时间一致，不会在 ProMotion 上反应更慢/更快。
+        const now = performance.now();
+        const dt = Math.min(0.1, Math.max(0.001, (now - (this._lastSpectrumAt || now)) / 1000));
+        this._lastSpectrumAt = now;
+        const approach = (prev, next, tau) => prev + (next - prev) * (1 - Math.exp(-dt / tau));
+
         const total = this.spectrum.reduce((sum, value) => sum + BYTE_TO_AMP[value], 0) / this.spectrum.length;
-        const energyRate = total < this.energy ? 0.48 : 0.32;
-        this.energy += (Math.min(1, total * AudioVisualizer.ENERGY_GAIN) - this.energy) * energyRate;
+        const energyTarget = Math.min(1, total * AudioVisualizer.ENERGY_GAIN);
+        this.energy = approach(this.energy, energyTarget, energyTarget > this.energy ? 0.023 : 0.044);
 
         // --- 三分頻包絡：帶邊即真實分頻點（300 Hz / 2.5 kHz）---
-        // 逐帶取線性幅度均值（非 dB 字節），再抬到可視區間。
         const bandLevel = (fLow, fHigh) => spectrumBandEnergy(
             this.spectrum, this.sampleRate, this.fftSize, fLow, fHigh, AudioVisualizer.BAND_GAIN
         );
-        // 包絡跟隨器（快起慢落）：與 FFT 逐幀抖動解耦，仍為實測訊號之包絡。
-        const follow = (prev, next) => prev + (next - prev) * (next > prev ? 0.5 : 0.12);
+        const follow = (prev, next) => approach(prev, next, next > prev ? 0.024 : 0.131);
         this.band = {
             low: follow(this.band.low, bandLevel(20, 300)),
             mid: follow(this.band.mid, bandLevel(300, 2500)),
@@ -365,13 +371,19 @@ export class AudioVisualizer {
     }
 
     startLoop() {
-        let last = performance.now();
+        // 120Hz/ProMotion 上不重复画：锁定 60fps，dt 按“上次实际绘制”计算。
+        const MIN_FRAME_MS = 1000 / 60 - 0.2;
+        let lastDraw = performance.now();
         const loop = (now) => {
             if (!this.canvas || !this.ctx) return;
 
             const t = typeof now === 'number' ? now : performance.now();
-            const dt = Math.min(1 / 30, Math.max(1 / 240, (t - last) / 1000));
-            last = t;
+            if (t - lastDraw < MIN_FRAME_MS) {
+                this.animationId = requestAnimationFrame(loop);
+                return;
+            }
+            const dt = Math.min(1 / 30, Math.max(1 / 240, (t - lastDraw) / 1000));
+            lastDraw = t;
 
             this.draw(dt);
             this.animationId = requestAnimationFrame(loop);

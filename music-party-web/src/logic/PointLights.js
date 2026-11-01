@@ -81,6 +81,7 @@ export class PointLights {
     mount(canvas) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d', { alpha: true });
+        this.buildSprites();
         this.resize();
         this._observer = typeof ResizeObserver === 'function'
             ? new ResizeObserver(() => this.resize())
@@ -96,6 +97,29 @@ export class PointLights {
         this._observer = null;
         this.canvas = null;
         this.ctx = null;
+    }
+
+    /** 预渲染 24×2 张径向光斑 sprite：替代每帧 24 次 createRadialGradient。 */
+    buildSprites() {
+        if (typeof document === 'undefined') return;
+        const make = (color) => {
+            const sprite = document.createElement('canvas');
+            sprite.width = 128;
+            sprite.height = 128;
+            const g = sprite.getContext('2d');
+            const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+            const [r, gr, b] = color;
+            grad.addColorStop(0, `rgba(${r}, ${gr}, ${b}, 1)`);
+            grad.addColorStop(0.45, `rgba(${r}, ${gr}, ${b}, 0.45)`);
+            grad.addColorStop(1, `rgba(${r}, ${gr}, ${b}, 0)`);
+            g.fillStyle = grad;
+            g.fillRect(0, 0, 128, 128);
+            return sprite;
+        };
+        this.sprites = {
+            light: this.palettes.light.map(make),
+            dark: this.palettes.dark.map(make)
+        };
     }
 
     resize() {
@@ -117,6 +141,12 @@ export class PointLights {
     setSpectrum(payload) {
         const { data, sampleRate, fftSize } = payload || {};
         if (!data?.length) return;
+        // 时间归一化：响应速度与 rAF 频率无关（120Hz 不再比 60Hz 更快）。
+        const now = performance.now();
+        const dt = Math.min(0.1, Math.max(0.001, (now - (this._lastSpectrumAt || now)) / 1000));
+        this._lastSpectrumAt = now;
+        const attack = 1 - Math.exp(-dt / 0.024);
+        const release = 1 - Math.exp(-dt / 0.084);
         for (let i = 0; i < COUNT; i++) {
             const t = this.lights[i].band;
             const fLo = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, t);
@@ -127,7 +157,7 @@ export class PointLights {
             const gain = (34 + 46 * bandEnd) * tilt;
             const raw = spectrumBandEnergy(data, sampleRate, fftSize, fLo, fHi, gain);
             const target = Math.min(1, 1 - Math.exp(-1.8 * raw));
-            const rate = target > this.levels[i] ? 0.5 : 0.18;
+            const rate = target > this.levels[i] ? attack : release;
             this.levels[i] += (target - this.levels[i]) * rate;
         }
     }
@@ -141,11 +171,17 @@ export class PointLights {
     }
 
     start() {
-        this._last = performance.now();
+        // 柔光点不需要 60fps：30fps 已足够，且把 ProMotion 的合成压力减半。
+        const MIN_FRAME_MS = 1000 / 30 - 0.2;
+        let lastDraw = performance.now();
         const loop = (now) => {
             if (!this.canvas || !this.ctx) return;
-            const dt = Math.min(1 / 20, Math.max(1 / 240, (now - this._last) / 1000));
-            this._last = now;
+            if (now - lastDraw < MIN_FRAME_MS) {
+                this.animationId = requestAnimationFrame(loop);
+                return;
+            }
+            const dt = Math.min(1 / 20, Math.max(1 / 240, (now - lastDraw) / 1000));
+            lastDraw = now;
             this.draw(dt);
             this.animationId = requestAnimationFrame(loop);
         };
@@ -165,7 +201,6 @@ export class PointLights {
         const base = Math.max(width, height);
         const dark = document.documentElement.dataset.theme === 'dark'
             || document.documentElement.classList.contains('dark');
-        const palette = dark ? this.palettes.dark : this.palettes.light;
 
         for (let i = 0; i < COUNT; i++) {
             const light = this.lights[i];
@@ -194,14 +229,11 @@ export class PointLights {
 
             const cx = light.x * width;
             const cy = light.y * height;
-            const [cr, cg, cb] = palette[i];
-            const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-            grad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${alpha})`);
-            grad.addColorStop(0.45, `rgba(${cr}, ${cg}, ${cb}, ${alpha * 0.45})`);
-            grad.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
-            ctx.fillStyle = grad;
-            // 只填自身包围盒：24 颗的实际填充面积与 16 颗全幅填充相当甚至更小
-            ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+            const sprite = (dark ? this.sprites.dark : this.sprites.light)[i];
+            if (!sprite) continue;
+            ctx.globalAlpha = alpha;
+            ctx.drawImage(sprite, cx - r, cy - r, r * 2, r * 2);
+            ctx.globalAlpha = 1;
         }
     }
 }

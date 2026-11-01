@@ -9,7 +9,7 @@
       <div class="absolute inset-0 bg-[linear-gradient(rgb(var(--medical-900)/0.04)_1px,transparent_1px),linear-gradient(90deg,rgb(var(--medical-900)/0.04)_1px,transparent_1px)] bg-[size:40px_40px]"></div>
       <!-- 频谱字标：取时频谱之思想（频率→位置、能量→强度、时间→余辉），落在本站字标上 -->
       <div aria-hidden="true" class="absolute inset-0 flex items-center justify-center select-none">
-        <div ref="wordRef" class="spectral-word text-[12vw] font-bold tracking-tighter whitespace-nowrap blur-[3px]">
+        <div ref="wordRef" class="spectral-word text-[12vw] font-bold tracking-tighter whitespace-nowrap">
           <span v-for="(ch, i) in wordLetters" :key="i" class="spectral-letter">{{ ch === ' ' ? ' ' : ch }}</span>
         </div>
       </div>
@@ -549,6 +549,8 @@ onUnmounted(() => {
   transform: scaleX(0);
   background: rgb(var(--accent));
   opacity: 0.85;
+  /* 数据 12.5Hz，补齐到下一帧的平滑插值；纯合成层，成本很低 */
+  transition: transform 90ms linear;
 }
 .telem-peak {
   position: absolute;
@@ -557,6 +559,7 @@ onUnmounted(() => {
   left: 0;
   width: 1px;
   background: rgb(var(--medical-900) / 0.45);
+  transition: left 90ms linear;
 }
 .spectral-word { display: flex; align-items: center; justify-content: center; }
 .spectral-letter { display: inline-block; transform-origin: center; color: rgb(var(--medical-200)); opacity: .34; }
