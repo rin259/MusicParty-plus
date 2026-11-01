@@ -104,7 +104,7 @@
               NO MATCHES FOR “{{ lastQuery }}”
             </template>
             <template v-else>
-              跨源搜索：一次查 {{ enabledPlatforms.length }} 个源；也可粘贴网易云 / B站 / YouTube / SoundCloud 链接
+              <!-- 未查询时这里留空：零态已经说清楚能做什么，不再重复一遍 -->
             </template>
           </span>
           <span v-if="slowSources.length" class="shrink-0 text-accent-text">SLOW {{ slowSources.join('·') }}</span>
@@ -239,11 +239,34 @@
 
             <!-- 歌曲列表渲染 -->
             <div class="space-y-1">
-              <div v-if="displayedSongs.length === 0 && !loading" class="text-center py-12 px-6">
-                <div class="font-mono text-xs text-medical-500 mb-2">{{ playlistKeyword ? 'NO MATCHES FOUND' : 'NO DATA FOUND' }}</div>
-                <div class="text-sm text-medical-600 leading-relaxed">
-                  {{ playlistKeyword ? '换个关键词，或清空筛选再看整张歌单。' : (supportsPlaylists ? '在左侧绑定账号导入歌单，或直接搜索歌名。' : '输入歌名或歌手，按回车搜索；也可以直接粘贴链接。') }}
-                </div>
+              <!-- 零态 vs 真·无结果：未查询时显示「能做什么」，只有搜过之后才说「没找到」 -->
+              <div v-if="displayedSongs.length === 0 && !loading" class="text-center py-10 px-6">
+                <template v-if="!lastQuery && !playlistKeyword">
+                  <div class="font-mono text-[10px] tracking-[0.16em] text-medical-500">
+                    ENTER A QUERY · 输入歌名、歌手，或粘贴链接
+                  </div>
+                  <div v-if="recentSearches.length" class="mt-5">
+                    <div class="font-mono text-[9px] tracking-[0.14em] text-medical-500 mb-2">RECENT</div>
+                    <div class="flex flex-wrap justify-center gap-2">
+                      <button
+                          v-for="q in recentSearches"
+                          :key="q"
+                          type="button"
+                          @click="useRecent(q)"
+                          class="px-2.5 py-1.5 border border-medical-200 bg-surface-1 font-sans text-xs text-medical-700 hover:border-accent hover:text-accent-text transition-colors"
+                      >{{ q }}</button>
+                    </div>
+                  </div>
+                  <div class="mt-5 text-sm text-medical-600 leading-relaxed">
+                    一次查 {{ enabledPlatforms.length }} 个源；也可以粘贴网易云 / B站 / YouTube / SoundCloud 链接，或输入 BV 号。
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="font-mono text-xs text-medical-500 mb-2">{{ playlistKeyword ? 'NO MATCHES FOUND' : 'NO RESULTS' }}</div>
+                  <div class="text-sm text-medical-600 leading-relaxed">
+                    {{ playlistKeyword ? '换个关键词，或清空筛选再看整张歌单。' : '换个关键词试试；或切到「全部」同时查多个源，也可以直接粘贴链接。' }}
+                  </div>
+                </template>
               </div>
               <div
                   v-for="(song, i) in displayedSongs"
@@ -313,7 +336,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
 import { useSearchLogic } from '../composables/useSearchLogic';
@@ -536,7 +559,32 @@ const resolveAndEnqueue = async (raw) => {
   }
 };
 
+// 最近搜索（本机保存，最多 5 条）：零态下给出可点的起点，而不是一片空白
+const RECENT_KEY = 'mp_recent_queries';
+const recentSearches = ref([]);
+const loadRecent = () => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+    recentSearches.value = Array.isArray(raw) ? raw.slice(0, 5) : [];
+  } catch {
+    recentSearches.value = [];
+  }
+};
+const rememberQuery = (value) => {
+  const term = (value || '').trim();
+  if (!term || looksLikeLink(term)) return;
+  const next = [term, ...recentSearches.value.filter((item) => item !== term)].slice(0, 5);
+  recentSearches.value = next;
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { /* 隐私模式下忽略 */ }
+};
+const useRecent = (term) => {
+  keyword.value = term;
+  handleSearchAction();
+};
+onMounted(loadRecent);
+
 const handleSearchAction = async () => {
+  rememberQuery(keyword.value);
   if (albumSearchMode.value && platform.value === 'netease') {
     await searchAlbums();
   } else {

@@ -251,13 +251,23 @@ const handleSearchClick = () => {
            </span>
         </button>
 
-        <!-- 退出动作 -->
+        <!-- 主操作：精简模式下也必须能点歌——否则访客的第一任务是隐藏的 -->
+        <button
+            type="button"
+            @click="$emit('search')"
+            class="w-full bg-accent text-accent-fg font-bold py-4 flex items-center justify-center gap-3 transition-all hover:bg-accent-hover active:scale-[0.98] shadow-lg"
+        >
+          <Search class="w-5 h-5" />
+          <span class="text-sm tracking-widest">添加歌曲</span>
+        </button>
+
+        <!-- 退出动作（次级） -->
         <button
             @click="uiStore.toggleLiteMode"
-            class="w-full bg-surface-strong text-white font-bold py-4 flex items-center justify-center gap-4 transition-all hover:bg-accent hover:tracking-[0.2em] active:scale-[0.98] group shadow-xl"
+            class="w-full border border-medical-300 text-medical-700 font-bold py-3 flex items-center justify-center gap-3 transition-all hover:border-medical-400 hover:text-medical-900 active:scale-[0.98] group"
         >
-          <Maximize2 class="w-5 h-5 transition-transform group-hover:scale-110" />
-          <span class="text-sm tracking-widest uppercase">退出精简模式</span>
+          <Maximize2 class="w-4 h-4 transition-transform group-hover:scale-110" />
+          <span class="text-xs tracking-widest uppercase">退出精简模式</span>
         </button>
       </div>
     </div>

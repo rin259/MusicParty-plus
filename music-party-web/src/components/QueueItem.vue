@@ -33,7 +33,7 @@
     </div>
 
     <!-- 操作遮罩 -->
-    <div v-if="!userStore.isGuest" class="absolute inset-y-0 right-0 bg-surface-1 px-1 flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+    <div v-if="!userStore.isGuest" class="queue-actions absolute inset-y-0 right-0 bg-surface-1 px-1 flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
       <button @click="player.topSong(item.queueId)" title="置顶" aria-label="置顶这首歌" class="flex items-center justify-center w-11 h-11 text-medical-600 hover:text-accent-text"><ArrowUpToLine class="w-4 h-4"/></button>
       <button @click="player.removeSong(item.queueId)" title="移除" aria-label="从队列移除这首歌" class="flex items-center justify-center w-11 h-11 text-medical-600 hover:text-danger"><Trash2 class="w-4 h-4"/></button>
     </div>
@@ -73,6 +73,11 @@ const durationLabel = computed(() => {
 </script>
 
 <style scoped>
+/* 触屏设备没有 hover：队列操作必须常显，否则置顶/移除根本不可达 */
+@media (hover: none) {
+  .queue-actions { opacity: 1 !important; }
+}
+
 /* 三段式解析进度：等待 / 解析 / 就绪 */
 .pipeline { display: inline-flex; gap: 2px; }
 .pipeline i { width: 4px; height: 4px; background: rgb(var(--medical-300)); }
