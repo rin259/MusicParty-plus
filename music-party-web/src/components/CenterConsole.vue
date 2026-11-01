@@ -416,6 +416,11 @@ watch(isVisualizerActive, (active) => {
   visualizer.setPlaying(active);
 });
 
+// G5：缓冲开始的那一下，只冻住环场，让点光源继续走——短暂的时间错位
+watch(() => player.isBuffering, (v) => {
+  if (v) visualizer.hold(110);
+});
+
 // --- A：遥测抖动（仅真实事件触发；与标题解码共用闸门，全局同时只允许一次）---
 // kind: 'update'（换曲等常态更新）| 'fault'（错误/断连）——色差只留给 fault。
 const telemetryGlitch = (kind = 'update') => {

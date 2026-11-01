@@ -132,6 +132,7 @@ export class AudioVisualizer {
         this.lastGlitchAt = 0;
         this.glitchSlices = [];
         this.frameSlipPx = 0;   // 真实掉帧时的一帧水平错位（0 表示无）
+        this.holdUntil = 0;     // 缓冲时环场暂停重绘的时刻（点光源照常走）
 
         // 爆发控制变量
         this.speedMultiplier = 1.0;
@@ -369,6 +370,15 @@ export class AudioVisualizer {
         };
     }
 
+    /**
+     * G5 環—燈解耦：緩衝/卡頓時讓環場停止重繪一小段（畫布保留上一幀），
+     * 點光源仍在另一張畫布上照常游走。兩套系統短暫不同步，
+     * 讀起來是「時間錯了一下」，而不新增任何像素。
+     */
+    hold(ms = 110) {
+        this.holdUntil = Math.max(this.holdUntil, performance.now() + ms);
+    }
+
     //触发爆发特效
     impulse() {
         // 瞬间拉高参数（已再收敛，避免过曝）
@@ -385,6 +395,11 @@ export class AudioVisualizer {
             if (!this.canvas || !this.ctx) return;
 
             const t = typeof now === 'number' ? now : performance.now();
+            // G5：緩衝時只凍住環場（不重繪＝保留上一幀），點光源照常游走
+            if (t < this.holdUntil) {
+                this.animationId = requestAnimationFrame(loop);
+                return;
+            }
             const gapMs = t - lastDraw;
             if (gapMs > 50 && gapMs < 2000 && typeof document !== 'undefined'
                 && document.visibilityState === 'visible') {
