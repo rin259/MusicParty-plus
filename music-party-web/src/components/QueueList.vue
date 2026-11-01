@@ -11,9 +11,13 @@
         </div>
         <!-- 队列可解释性：顺序规则 + 接下来几首还要多久。公平性若不可见，就等于没做。 -->
         <div v-if="queue.length" class="mt-0.5 font-mono text-[9px] tracking-[0.14em] tabular-nums">
-          <span v-if="!player.isShuffle" class="text-accent-text">ROUND-ROBIN</span>
-          <span v-if="!player.isShuffle" class="mx-1 text-medical-300">|</span>
-          <span class="text-medical-500">NEXT {{ nextItems.length }} · ~{{ etaLabel }}</span>
+          <!-- 顺序模式下队列本身就是轮转序；公平随机模式下的抽取规则同样是轮转 -->
+          <template v-if="!player.isShuffle || player.isFairShuffle">
+            <span class="text-accent-text">ROUND-ROBIN</span>
+            <span class="mx-1 text-medical-300">|</span>
+          </template>
+          <!-- 只有顺序模式下「接下来几首」才是有意义的预测 -->
+          <span v-if="!player.isShuffle" class="text-medical-500">NEXT {{ nextItems.length }} · ~{{ etaLabel }}</span>
         </div>
       </div>
       <button v-if="dismissible" @click="$emit('close')" class="flex items-center justify-center w-11 h-11 -mr-2 text-medical-500 hover:text-medical-900" aria-label="关闭播放队列">
