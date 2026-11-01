@@ -20,6 +20,7 @@ import org.thornex.musicparty.service.stream.LiveStreamService;
 
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,6 +45,9 @@ public class MusicPlayerService {
     private final AppProperties appProperties;
 
     // --- Player State ---
+    // 换源重试去重：同一队列项只尝试一次，避免搜索失败时反复打各个源
+    private final Set<String> failoverAttempted = ConcurrentHashMap.newKeySet();
+
     private final AtomicReference<PlayableMusic> currentMusic = new AtomicReference<>(null);
     private final AtomicReference<String> currentEnqueuerId = new AtomicReference<>(null);
     private final AtomicReference<String> currentEnqueuerName = new AtomicReference<>(null);
@@ -1089,10 +1093,106 @@ public class MusicPlayerService {
                 playNextInQueue();
                 return;
             }
+            if (failed) {
+                // 队列里的其它歌：先尝试换到别的源，换不到才保持 FAILED。
+                // 异步执行，搜索要打外部 API，不能阻塞事件线程。
+                MusicQueueItem failedItem = queueItem.get();
+                CompletableFuture.runAsync(() -> failoverToAnotherSource(failedItem));
+            }
             if (current == null) {
                 playNextInQueue();
             }
         }
+    }
+
+    /**
+     * 换源重试：某源解析失败后，按「标题归一 + 时长接近 + 艺人重合」在其它已启用的源里找同一首歌，
+     * 命中则原地替换（队列位置不变），并重新进入解析。
+     *
+     * 研判（2026-11）：派对场景里「点了放不出来」是最差的体验，而多源搜索本来就是我们的能力。
+     * 匹配刻意保守——宁可保持 FAILED，也不要把翻唱/不同版本换进来。
+     */
+    private void failoverToAnotherSource(MusicQueueItem failedItem) {
+        if (failedItem == null || failedItem.music() == null) return;
+        String dedupeKey = failedItem.queueId() + "|" + MusicQueueManager.musicKey(failedItem.music());
+        if (!failoverAttempted.add(dedupeKey)) return;
+
+        Music failed = failedItem.music();
+        String keyword = searchKeywordFor(failed);
+        List<String> platforms = List.of("netease", "bilibili", "soundcloud", "ytmusic").stream()
+                .filter(p -> !p.equalsIgnoreCase(failed.platform()))
+                .filter(this::isPlatformEnabled)
+                .toList();
+
+        for (String platform : platforms) {
+            try {
+                List<Music> hits = getApiService(platform)
+                        .searchMusic(keyword, 0, 10)
+                        .block(Duration.ofSeconds(6));
+                Optional<Music> match = pickFailoverMatch(failed, hits);
+                if (match.isEmpty()) continue;
+
+                Music replacement = match.get();
+                if (!queueManager.replaceMusic(failedItem.queueId(), replacement)) return;
+                getApiService(replacement.platform()).prefetchMusic(replacement.id());
+                log.info("Failover {} -> {}:{} ({})", failed.name(), replacement.platform(),
+                        replacement.id(), replacement.name());
+                broadcastQueueUpdate();
+                eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.INFO,
+                        PlayerAction.ERROR_LOAD, "SYSTEM",
+                        "已换源重试：" + failed.name() + " → " + replacement.platform()));
+                return;
+            } catch (RuntimeException error) {
+                log.debug("Failover search on {} failed: {}", platform, error.toString());
+            }
+        }
+    }
+
+    private static String searchKeywordFor(Music music) {
+        String artist = (music.artists() == null || music.artists().isEmpty()) ? "" : music.artists().get(0);
+        return (music.name() + " " + artist).trim();
+    }
+
+    /** 归一化：去空白与标点，用于标题/艺人比较 */
+    static String normalizeForMatch(String value) {
+        if (value == null) return "";
+        return value.toLowerCase(Locale.ROOT)
+                .replaceAll("[\\s\\p{Punct}（）【】《》「」·、，。！？~]", "");
+    }
+
+    /** 保守匹配：标题互为包含、时长差 ≤7s、艺人至少一个重合（缺失时放宽） */
+    static Optional<Music> pickFailoverMatch(Music failed, List<Music> hits) {
+        if (hits == null || hits.isEmpty()) return Optional.empty();
+        String target = normalizeForMatch(failed.name());
+        if (target.isEmpty()) return Optional.empty();
+
+        for (Music candidate : hits) {
+            if (candidate == null || candidate.id() == null) continue;
+            if (candidate.duration() > 0 && failed.duration() > 0
+                    && Math.abs(candidate.duration() - failed.duration()) > 7_000) continue;
+
+            String name = normalizeForMatch(candidate.name());
+            if (name.isEmpty()) continue;
+            if (!name.equals(target) && !name.contains(target) && !target.contains(name)) continue;
+
+            if (!artistsOverlap(failed.artists(), candidate.artists())) continue;
+            return Optional.of(candidate);
+        }
+        return Optional.empty();
+    }
+
+    private static boolean artistsOverlap(List<String> a, List<String> b) {
+        if (a == null || a.isEmpty() || b == null || b.isEmpty()) return true;
+        for (String left : a) {
+            String ln = normalizeForMatch(left);
+            if (ln.isEmpty()) continue;
+            for (String right : b) {
+                String rn = normalizeForMatch(right);
+                if (rn.isEmpty()) continue;
+                if (ln.contains(rn) || rn.contains(ln)) return true;
+            }
+        }
+        return false;
     }
 
     /**
