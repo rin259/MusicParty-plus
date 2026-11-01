@@ -23,6 +23,11 @@ const TILT_DB = 18;
 // 光點中心的安全框：留出餘量讓光斑主體留在畫面內（邊緣淡出僅作保險）
 const EDGE_X = 0.12;
 const EDGE_Y = 0.14;
+// 互斥：两盏灯中心的最小间距（以画布宽度为 1）。24 盏灯在安全框内，
+// 这个值约等于可用面积的一半，既拉得开又不会互相顶到无法收敛。
+const MIN_SEP = 0.13;
+// 归一化坐标里的 y 比 x 短（画布约 420×350），算距离时按此比例校正
+const ASPECT = 0.85;
 
 const rand = (a, b) => a + Math.random() * (b - a);
 
@@ -64,12 +69,26 @@ export class PointLights {
     }
 
     seed() {
-        return Array.from({ length: COUNT }, (_, i) => {
+        // best-candidate 撒点：每个位置抽 12 个候选，取离已有点最远的那个。
+        // 比纯随机均匀得多（纯随机会成团），也不需要 Poisson 迭代求解。
+        const dist = (p, q) => Math.hypot(p.x - q.x, (p.y - q.y) * ASPECT);
+        const placed = [];
+        for (let i = 0; i < COUNT; i++) {
+            let best = null;
+            let bestGap = -1;
+            for (let k = 0; k < 12; k++) {
+                const c = { x: rand(EDGE_X, 1 - EDGE_X), y: rand(EDGE_Y, 1 - EDGE_Y) };
+                let gap = Infinity;
+                for (const p of placed) gap = Math.min(gap, dist(c, p));
+                if (gap > bestGap) { bestGap = gap; best = c; }
+            }
+            placed.push(best);
+        }
+        return placed.map((p, i) => {
             const t = i / (COUNT - 1);           // 0 = 低頻（橙）→ 1 = 高頻（白）
             return {
-                // 避開正中（封面）區域，聚在四野
-                x: rand(0.12, 0.88),
-                y: rand(0.14, 0.86),
+                x: p.x,
+                y: p.y,
                 r: rand(0.055, 0.12),            // 數量增多 → 半徑收小，免糊成一片
                 alpha: rand(0.05, 0.10),
                 band: t,
@@ -79,6 +98,35 @@ export class PointLights {
                 phase: rand(0, Math.PI * 2)
             };
         });
+    }
+
+    /**
+     * 互斥：任两盏灯中心距离小于 MIN_SEP 时互相推开（各让一半）。
+     * 位置松弛按 dt 归一，故 60/120Hz 的收敛速度一致；276 对/帧，成本可忽略。
+     */
+    separate(dt) {
+        const { width, height } = this;
+        if (!width || !height) return;
+        const minPx = MIN_SEP * width;
+        const k = 1 - Math.exp(-dt / 0.18);
+        for (let i = 0; i < COUNT; i++) {
+            const a = this.lights[i];
+            for (let j = i + 1; j < COUNT; j++) {
+                const b = this.lights[j];
+                const dx = (b.x - a.x) * width;
+                const dy = (b.y - a.y) * height;
+                const d = Math.hypot(dx, dy);
+                if (d >= minPx) continue;
+                // 完全重合时用固定相位给一个方向，避免除零后原地不动
+                const ux = d > 1e-3 ? dx / d : Math.cos(a.phase);
+                const uy = d > 1e-3 ? dy / d : Math.sin(a.phase);
+                const push = (minPx - d) * 0.5 * k;
+                a.x -= (ux * push) / width;
+                a.y -= (uy * push) / height;
+                b.x += (ux * push) / width;
+                b.y += (uy * push) / height;
+            }
+        }
     }
 
     mount(canvas) {
@@ -215,6 +263,8 @@ export class PointLights {
         this.time += dt;
 
         ctx.clearRect(0, 0, width, height);
+        // 先互斥再积分：用上一帧的位置推一次，位移量小于一帧的游走距离，肉眼无差
+        this.separate(dt);
         const base = Math.max(width, height);
         const dark = document.documentElement.dataset.theme === 'dark'
             || document.documentElement.classList.contains('dark');
