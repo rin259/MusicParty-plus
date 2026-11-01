@@ -1,6 +1,6 @@
 <template>
   <div ref="rootEl" class="select-none" role="group" aria-label="音乐源状态">
-    <div class="mb-1 flex items-baseline justify-between font-mono text-[9px] tracking-[0.2em] text-medical-500">
+    <div class="mb-1 hidden md:flex items-baseline justify-between font-mono text-[9px] tracking-[0.2em] text-medical-500">
       <span>SOURCE_BUS</span>
       <span class="tabular-nums">
         {{ done }}/{{ total }}
