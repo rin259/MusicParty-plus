@@ -89,7 +89,7 @@ export class PointLights {
             return {
                 x: p.x,
                 y: p.y,
-                r: rand(0.034, 0.075),           // 點要像「點」：半徑小到不會連成一片霧
+                r: rand(0.055, 0.12),            // 半徑回到原水平；擁擠度由「點數 16 + 互斥 0.16」控制
                 alpha: rand(0.05, 0.10),
                 band: t,
                 angle: rand(0, Math.PI * 2),     // 航向
