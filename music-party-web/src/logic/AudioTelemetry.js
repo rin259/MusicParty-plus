@@ -150,7 +150,9 @@ export class AudioTelemetry {
             this.lineEls.forEach((el, i) => {
                 const entry = this.log[i];
                 if (!entry) { el.textContent = ''; return; }
-                el.textContent = `-${((now - entry.at) / 1000).toFixed(1)}s  ${entry.text}`;
+                // 最新一行写 now（等寬對齊 5 字），避免出現「-0.0s」這種像 bug 的讀數
+                const age = (now - entry.at) / 1000;
+                el.textContent = `${i === 0 ? 'now  ' : `-${age.toFixed(1)}s`}  ${entry.text}`;
                 el.style.color = i === 0 ? 'rgb(var(--medical-600))' : 'rgb(var(--medical-500))';
             });
 
