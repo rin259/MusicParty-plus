@@ -1,0 +1,215 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * MUSIC PARTY — design tokens
+ *
+ * Neutral scale      medical-50 … medical-900 (inverted in dark)
+ * Surfaces           surface-1 (panel) / surface-2 (raised) / surface-strong (filled, primary)
+ * Overlays           scrim (always dark; never theme-flipped)
+ * Brand              accent / accent-hover / accent-text (AA-safe text orange) / accent-fg (ink on accent fills)
+ * Semantic           danger / success / warn, each with -bg and -border
+ * Selection          ink / ink-fg (inverted chip, used for selected tabs and play-mode chips)
+ */
+:root {
+  color-scheme: light;
+  --medical-50: 249 250 251;
+  --medical-100: 243 244 246;
+  --medical-200: 229 231 235;
+  --medical-300: 209 213 219;
+  --medical-400: 156 163 175;
+  --medical-500: 107 114 128;
+  --medical-600: 75 85 99;
+  --medical-700: 55 65 81;
+  --medical-800: 31 41 55;
+  --medical-900: 17 24 39;
+
+  --accent: 249 115 22;
+  --accent-hover: 234 88 12;
+  /* 文字场景专用 accent：浅色态压深至 WCAG AA(5.18:1)，暗色态与主 accent 同色 */
+  --accent-text: 194 65 12;
+  /* accent 填充上的文字：深墨色，6.0:1（白字仅 2.8:1，不达标） */
+  --accent-fg: 24 18 12;
+
+  --surface-1: 255 255 255;
+  --surface-2: 243 244 246;
+  --surface-strong: 17 24 39;
+  --scrim: 10 14 20;
+
+  --ink: 17 24 39;
+  --ink-fg: 255 255 255;
+
+  --danger: 185 28 28;
+  --danger-bg: 254 242 242;
+  --danger-border: 254 202 202;
+  --success: 21 128 61;
+  --success-bg: 240 253 244;
+  --success-border: 187 247 208;
+  --warn: 161 98 7;
+  --warn-bg: 254 252 232;
+  --warn-border: 253 230 138;
+}
+
+:root.dark {
+  color-scheme: dark;
+  --medical-50: 14 17 22;
+  --medical-100: 21 25 32;
+  --medical-200: 43 49 60;
+  --medical-300: 59 68 82;
+  --medical-400: 140 151 168;
+  --medical-500: 174 184 199;
+  --medical-600: 195 204 217;
+  --medical-700: 215 222 232;
+  --medical-800: 235 240 247;
+  --medical-900: 248 250 252;
+
+  --accent-text: 249 115 22;
+
+  --surface-1: 22 26 34;
+  --surface-2: 28 34 44;
+  --surface-strong: 51 65 85;
+  --scrim: 10 14 20;
+
+  --ink: 248 250 252;
+  --ink-fg: 14 17 22;
+
+  --danger: 252 165 165;
+  --danger-bg: 60 22 22;
+  --danger-border: 127 42 42;
+  --success: 134 239 172;
+  --success-bg: 18 45 30;
+  --success-border: 34 94 61;
+  --warn: 253 224 71;
+  --warn-bg: 48 38 10;
+  --warn-border: 113 84 18;
+}
+
+body {
+  @apply bg-medical-50 text-medical-800 font-sans antialiased overflow-hidden;
+  transition: background-color 380ms cubic-bezier(.22, 1, .36, 1), color 380ms cubic-bezier(.22, 1, .36, 1);
+}
+
+html, #app {
+  background: rgb(var(--medical-50));
+  transition: background-color 380ms cubic-bezier(.22, 1, .36, 1), color 380ms cubic-bezier(.22, 1, .36, 1);
+}
+
+/* 暗色模式经 CSS 变量天然翻转；仅阴影需要单独调暗。 */
+html.dark .shadow-lg,
+html.dark .shadow-xl,
+html.dark .shadow-2xl {
+  box-shadow: 0 18px 42px rgb(0 0 0 / 0.34) !important;
+}
+
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow !important;
+  transition-duration: 380ms !important;
+  transition-timing-function: cubic-bezier(.22, 1, .36, 1) !important;
+}
+
+/* 浏览器原生表面也属于设计系统 */
+::selection {
+  background: rgb(var(--accent) / 0.28);
+  color: rgb(var(--medical-900));
+}
+
+:root {
+  caret-color: rgb(var(--accent));
+}
+
+/* 自定义滚动条 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--medical-300)) transparent;
+}
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-medical-300 hover:bg-medical-400 rounded transition-colors;
+}
+
+/* 键盘可达性：Tab 导航焦点环（鼠标点击不触发） */
+:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+/* 点赞堆叠计数递增时的弹跳反馈（仅内层节点重挂触发，不扰 TransitionGroup） */
+@keyframes toast-bump {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.03) translateY(-1px); }
+  100% { transform: scale(1); }
+}
+.toast-bump {
+  animation: toast-bump 240ms cubic-bezier(.22, 1, .36, 1);
+}
+
+/* 切角效果 (Chamfer) - 核心设计元素 */
+.chamfer-br {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%);
+}
+.chamfer-tl {
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%, 0 10px);
+}
+
+@keyframes scan {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 100%; }
+}
+
+.animate-scan {
+  /* 背景图片很小，repeat 之后移动背景位置就能产生流动感 */
+  animation: scan 1s linear infinite;
+}
+
+/* 工业风 range：音量与精简模式共用同一套轨道/滑块 */
+input[type="range"].mp-range {
+  -webkit-appearance: none;
+  appearance: none;
+  /* 宽度交由版面（工具类）决定：此处写 width:100% 会压过 w-24，导致播放条右侧溢出。 */
+  min-width: 0;
+  height: 44px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"].mp-range::-webkit-slider-runnable-track {
+  height: 4px;
+  background: rgb(var(--medical-200));
+}
+input[type="range"].mp-range::-moz-range-track {
+  height: 4px;
+  background: rgb(var(--medical-200));
+}
+input[type="range"].mp-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 14px;
+  width: 6px;
+  margin-top: -5px;
+  border-radius: 0;
+  background: rgb(var(--medical-600));
+  border: 1px solid rgb(var(--medical-300));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+input[type="range"].mp-range::-moz-range-thumb {
+  height: 14px;
+  width: 6px;
+  border-radius: 0;
+  background: rgb(var(--medical-600));
+  border: 1px solid rgb(var(--medical-300));
+}
+input[type="range"].mp-range:hover::-webkit-slider-thumb,
+input[type="range"].mp-range:focus-visible::-webkit-slider-thumb {
+  background: rgb(var(--accent));
+}
+input[type="range"].mp-range:hover::-moz-range-thumb,
+input[type="range"].mp-range:focus-visible::-moz-range-thumb {
+  background: rgb(var(--accent));
+}

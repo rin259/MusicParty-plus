@@ -1,0 +1,50 @@
+HELP.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+/1.py
+/cookie.txt
+/GEMINI.md
+/.gemini/.env
+/scripts/publish-image.ps1
+/data/queue-data.json
+.gstack/
+
+### Runtime state / secrets (never commit)
+music_party/cached_media/
+music_party/data/
+/data/
+*.mp3
+*.m4a
+
+# 运行时密钥
+.env.production

@@ -1,0 +1,84 @@
+name: musicparty
+
+services:
+  netease-api:
+    # 钉在 4.39.0：4.40.1(latest) 冷缓存搜索可达 20s+，4.39.0 同条件 <1s。
+    # 升级前先 A/B 实测搜索时延再改此行。
+    image: moefurina/ncm-api:4.39.0
+    container_name: music-party-netease
+    restart: unless-stopped
+    # 2026-10-31（第 2 次复发后重做）：不再钉死任何 IP，也不依赖「DNS 会给可连 IP」。
+    # 容器内 /opt/netfix.js（NODE_OPTIONS 预加载）在应用启动前同步完成：
+    #   候选(网易 IDC 种子 ∪ 当前 DNS 结果) → 逐个 TCP:443 探活 → 只把可连的喂给 lookup/resolve4/Resolver，
+    #   并每 5 分钟复检；IP 轮换会自愈。详见 deploy/netfix.js 顶部注释。
+    volumes:
+      # 解析自愈补丁（仅容器内生效，不改镜像）：覆盖 lookup / resolve4 / Resolver，
+      # 使「遵循 /etc/hosts」与「c-ares 直查」两条路径都拿到探活后的可用 IP。
+      - ./deploy/netfix.js:/opt/netfix.js:ro
+    environment:
+      PORT: "3000"
+      HTTPS: "true"
+      NODE_OPTIONS: "--require /opt/netfix.js"
+    # 容器默认 DNS 会把 music.163.com 系解析到海外边缘节点
+    # (103.135.240.x，单请求 9-10s，导致 song/detail、song/url 超时、无法点歌)。
+    # 指定国内公共 DNS 解到境内节点(0.1-0.4s)。
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+    networks:
+      - music-net
+
+  music-party:
+    image: music-party:stable-local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: music-party-app
+    restart: unless-stopped
+    depends_on:
+      netease-api:
+        condition: service_started
+    env_file:
+      - .env.production
+    environment:
+      NETEASE_API_URL: http://netease-api:3000
+      BASE_URL: https://music.example.com:50820
+      APP_AUTHOR_NAME: MusicParty
+      APP_BACK_WORDS: MUSIC PARTY
+      NETEASE_ENABLED: "true"
+      BILIBILI_ENABLED: "true"
+      NETEASE_QUALITY: exhigh
+      QUEUE_MAX_SIZE: "1000"
+      QUEUE_HISTORY_SIZE: "50"
+      QUEUE_MAX_USER_SONGS: "100"
+      PLAYLIST_IMPORT_LIMIT: "100"
+      CHAT_HISTORY_LIMIT: "1000"
+      CHAT_MIN_INTERVAL: "1000"
+      CHAT_MAX_LENGTH: "200"
+      CACHE_MAX_SIZE: 1GB
+      YT_DLP_ENABLED: "true"
+      YT_DLP_PATH: yt-dlp
+      YT_DLP_TIMEOUT_SECONDS: "60"
+      YT_DLP_DOWNLOAD_TIMEOUT_SECONDS: "900"
+      AUTH_RATE_LIMIT_ENABLED: "true"
+      AUTH_MAX_ATTEMPTS: "5"
+      AUTH_WINDOW_SECONDS: "60"
+      AUTH_BLOCK_DURATION: "300"
+    ports:
+      - "127.0.0.1:18720:8080"
+    volumes:
+      - ./music_party/cached_media:/app/cached_media
+      - ./music_party/data:/app/data
+    # 宿主 /etc/resolv.conf 由 cloudflare-warp 接管(127.0.2.2/3)，其解析
+    # soundcloud.com 常先返回已被 RST 阻断的 CloudFront IP(52.84.150.39/.52)，
+    # 而 Java/yt-dlp 不做逐 IP 備援，导致 SoundCloud 搜索恒挂。
+    # 指定国内公共 DNS(223.5.5.5/119.29.29.29)首答为可用 IP(.57/.35)。
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+    networks:
+      - music-net
+
+networks:
+  music-net:
+    driver: bridge
