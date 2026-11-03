@@ -120,7 +120,8 @@ abstract class YtDlpMusicApiService implements IMusicApiService {
     }
 
     private Music toMusic(YtDlpResolver.TrackMetadata track) {
-        return new Music(track.id(), track.title(), List.of(track.artist()), track.durationMs(), platform, track.thumbnail());
+        // sourceUrl 是 yt-dlp 给出的可读页面地址；数字 ID 拼不出页面（SoundCloud 尤其如此）
+        return new Music(track.id(), track.title(), List.of(track.artist()), track.durationMs(), platform, track.thumbnail(), track.sourceUrl());
     }
 
     private String cacheId(String musicId) { return platform + "_" + musicId; }

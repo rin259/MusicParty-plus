@@ -16,6 +16,7 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     const searchUserKeyword = ref('');
     const userSearchResults = ref([]);
     const isSearchingUser = ref(false);
+    const userSearchAttempted = ref(false);   // 用于区分「还没搜」和「搜了但没有」
     const isPlaylistsLoading = ref(false);
 
     // Pagination
@@ -52,10 +53,12 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     const searchUser = async () => {
         if (!searchUserKeyword.value) return;
         isSearchingUser.value = true;
+        userSearchAttempted.value = false;
         userSearchResults.value = [];
         try {
             const data = await musicApi.searchUser(platformRef.value, searchUserKeyword.value);
-            userSearchResults.value = data;
+            userSearchResults.value = data || [];
+            userSearchAttempted.value = true;
         } catch (e) {
             console.error(e);
             if (e.response?.data?.message) {
@@ -71,7 +74,9 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     // 绑定用户并刷新
     const bindUser = (user) => {
         playerStore.bindAccount(platformRef.value, user.id);
+        userStore.saveBindingProfile(platformRef.value, { name: user.name, avatarUrl: user.avatarUrl });
         userSearchResults.value = [];
+        userSearchAttempted.value = false;
         searchUserKeyword.value = '';
         fetchPlaylists(); // 立即刷新
     };
@@ -170,6 +175,7 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         searchUserKeyword,
         userSearchResults,
         isSearchingUser,
+        userSearchAttempted,
         isPlaylistsLoading,
         hasMore,
         isLoadingMore,

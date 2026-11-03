@@ -2,6 +2,7 @@ export const STORAGE_KEYS = {
     TOKEN: 'mp_user_token',
     USERNAME: 'mp_username',
     BINDINGS: 'mp_bindings',
+    BINDING_PROFILES: 'mp_binding_profiles',
     ROOM_PASSWORD: 'mp_room_password',
     VOLUME: 'mp_volume',
     LITE_MODE: 'mp_lite_mode',

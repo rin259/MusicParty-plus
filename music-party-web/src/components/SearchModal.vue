@@ -128,8 +128,14 @@
             <div v-if="!bindings[platform]" class="p-4 border border-dashed border-medical-300 bg-medical-50">
               <div class="text-xs text-medical-500 mb-2 text-center font-sans">{{ platform === 'soundcloud' ? '绑定公开主页以获取公开 Sets' : '绑定用户以获取用户歌单' }}</div>
               <div class="flex gap-1">
-                <input v-model="searchUserKeyword" @keyup.enter="searchUser" :placeholder="platform === 'soundcloud' ? '输入 @handle 或主页 URL' : '搜索用户名'" aria-label="搜索用户" class="flex-1 min-w-0 min-h-11 bg-surface-1 border border-medical-200 p-2 text-sm outline-none focus:border-accent font-sans text-medical-900 placeholder:text-medical-500" />
-                <button @click="searchUser" class="flex items-center justify-center w-11 h-11 bg-accent hover:bg-accent-hover transition-colors flex-shrink-0" aria-label="搜索用户"><Search class="w-4 h-4 text-accent-fg"/></button>
+                <input v-model="searchUserKeyword" @keyup.enter="searchUser" :placeholder="platform === 'soundcloud' ? '粘贴主页/短链，或 @handle' : '搜索用户名'" aria-label="搜索用户" class="flex-1 min-w-0 min-h-11 bg-surface-1 border border-medical-200 p-2 text-sm outline-none focus:border-accent font-sans text-medical-900 placeholder:text-medical-500" />
+                <button @click="searchUser" :disabled="isSearchingUser || !searchUserKeyword.trim()" class="flex items-center justify-center w-11 h-11 bg-accent hover:bg-accent-hover transition-colors flex-shrink-0 disabled:opacity-50" aria-label="搜索用户"><Search class="w-4 h-4 text-accent-fg"/></button>
+              </div>
+              <div v-if="platform === 'soundcloud'" class="mt-1.5 text-[10px] leading-relaxed text-medical-500 font-sans">
+                支持 <span class="font-mono">soundcloud.com/用户名</span>、带 /sets/ 的歌单链接、<span class="font-mono">on.soundcloud.com</span> 短链，或直接输入 @handle。
+              </div>
+              <div v-if="userSearchAttempted && !isSearchingUser && userSearchResults.length === 0" class="mt-2 text-xs text-danger font-sans">
+                没找到这个用户。主页未公开、链接复制错了，或该账号已注销都可能造成这个结果。
               </div>
               <!-- 搜索结果列表 -->
               <div v-if="userSearchResults.length > 0" class="mt-2 max-h-40 overflow-y-auto space-y-1 border-t border-medical-200 pt-2">
@@ -144,9 +150,15 @@
 
             <!-- 已绑定：歌单列表 -->
             <template v-else>
-              <div class="flex justify-between items-center px-2 py-1 bg-medical-50 border-b border-medical-200">
-                <span class="text-[10px] font-mono text-medical-500">ID: {{ bindings[platform] }}</span>
-                <button @click="player.bindAccount(platform, '')" class="text-[11px] font-bold text-danger hover:underline px-2 min-h-9">UNLINK</button>
+              <div class="flex justify-between items-center px-2 py-1.5 bg-medical-50 border-b border-medical-200 gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <img v-if="bindingProfiles[platform]?.avatarUrl" :src="bindingProfiles[platform].avatarUrl" alt="" class="w-5 h-5 rounded-full bg-medical-200 flex-shrink-0"/>
+                  <div class="min-w-0">
+                    <div v-if="bindingProfiles[platform]?.name" class="text-xs font-bold text-medical-900 truncate">{{ bindingProfiles[platform].name }}</div>
+                    <div class="text-[10px] font-mono text-medical-500 truncate">@{{ bindings[platform] }}</div>
+                  </div>
+                </div>
+                <button @click="player.bindAccount(platform, '')" class="text-[11px] font-bold text-danger hover:underline px-2 min-h-9 flex-shrink-0">UNLINK</button>
               </div>
               
               <div v-if="isPlaylistsLoading" class="flex justify-center py-8">
@@ -361,6 +373,7 @@ useFocusTrap(computed(() => props.isOpen), dialogRef, {
 });
 const player = usePlayerStore();
 const userStore = useUserStore();
+const bindingProfiles = computed(() => userStore.bindingProfiles || {});
 const { info, error: toastError } = useToast();
 
 const platforms = [
@@ -400,7 +413,7 @@ const slowSources = computed(() => Object.entries(sources.value)
 const {
   playlists, currentPlaylistId, searchUserKeyword, userSearchResults,
   isSearchingUser, isPlaylistsLoading, hasMore, isLoadingMore, bindings,
-  searchUser, bindUser, loadPlaylist, handleScroll, loadRemainingSongs
+  searchUser, bindUser, loadPlaylist, handleScroll, loadRemainingSongs, userSearchAttempted
 } = usePlaylistLogic(platform, songs, listMode, loading);
 
 // 3. 专辑搜索
@@ -623,10 +636,16 @@ const handleImportPlaylist = () => {
 };
 
 const getSourceUrl = (song) => {
+  // 后台若带回真实页面地址（SoundCloud 的 permalink 只能这样拿到），优先用它
+  if (typeof song.url === 'string' && /^https?:\/\//.test(song.url)) return song.url;
   const sourcePlatform = song.platform || platform.value;
   if (sourcePlatform === 'netease') return `https://music.163.com/song?id=${encodeURIComponent(song.id)}`;
   if (sourcePlatform === 'bilibili' && song.id) return `https://www.bilibili.com/video/${encodeURIComponent(song.id)}`;
   if (sourcePlatform === 'ytmusic' && song.id) return `https://music.youtube.com/watch?v=${encodeURIComponent(song.id)}`;
+  if (sourcePlatform === 'soundcloud' && song.id) {
+    // 数字 ID 拼不出页面，退回按曲名搜索
+    return `https://soundcloud.com/search?q=${encodeURIComponent([song.name, ...(song.artists || [])].filter(Boolean).join(' '))}`;
+  }
   return null;
 };
 

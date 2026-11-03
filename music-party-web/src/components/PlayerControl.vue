@@ -387,16 +387,19 @@ const downloadCurrentMusic = async () => {
 };
 
 // 跳转源页面
+// SoundCloud 的数字 ID 没有页面路径：`soundcloud.com/tracks/<id>` 会 301 到排行榜，
+// 所以优先用后台解析时带回的 `url`（真实 permalink），拼不出页面的平台退回搜索页。
 const openSourcePage = () => {
   if (!nowPlaying.value) return;
-  const { platform, id } = nowPlaying.value.music;
-  const urls = {
-    netease: `https://music.163.com/#/song?id=${id}`,
-    bilibili: `https://www.bilibili.com/video/${id}`,
-    soundcloud: `https://soundcloud.com/tracks/${id}`,
-    ytmusic: `https://music.youtube.com/watch?v=${id}`
+  const { platform, id, name, artists, url } = nowPlaying.value.music;
+  const direct = typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;
+  const templates = {
+    netease: `https://music.163.com/#/song?id=${encodeURIComponent(id)}`,
+    bilibili: `https://www.bilibili.com/video/${encodeURIComponent(id)}`,
+    ytmusic: `https://music.youtube.com/watch?v=${encodeURIComponent(id)}`
   };
-  const url = urls[platform];
-  if (url) window.open(url, '_blank');
+  const fallback = templates[platform]
+      || `https://soundcloud.com/search?q=${encodeURIComponent([name, ...(artists || [])].filter(Boolean).join(' '))}`;
+  window.open(direct || fallback, '_blank', 'noopener');
 };
 </script>

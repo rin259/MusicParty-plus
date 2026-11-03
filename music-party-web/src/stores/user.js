@@ -35,6 +35,9 @@ export const useUserStore = defineStore('user', () => {
     });
 
     const bindings = ref(JSON.parse(localStorage.getItem(STORAGE_KEYS.BINDINGS) || '{}'));
+    // 绑定账号的展示信息（名字/头像）。只用于「已绑定」状态的可读性——
+    // 之前那里只显示一串 handle，用户无法确认自己绑的是谁。
+    const bindingProfiles = ref(JSON.parse(localStorage.getItem(STORAGE_KEYS.BINDING_PROFILES) || '{}'));
     // 全局状态：控制改名弹窗显示
     const showNameModal = ref(false);
 
@@ -107,6 +110,19 @@ export const useUserStore = defineStore('user', () => {
     const updateBinding = (platform, accountId) => {
         bindings.value[platform] = accountId;
         localStorage.setItem(STORAGE_KEYS.BINDINGS, JSON.stringify(bindings.value));
+        if (!accountId && bindingProfiles.value[platform]) {
+            delete bindingProfiles.value[platform];
+            localStorage.setItem(STORAGE_KEYS.BINDING_PROFILES, JSON.stringify(bindingProfiles.value));
+        }
+    };
+
+    const saveBindingProfile = (platform, profile) => {
+        if (!platform || !profile) return;
+        bindingProfiles.value = {
+            ...bindingProfiles.value,
+            [platform]: { name: profile.name || '', avatarUrl: profile.avatarUrl || '' }
+        };
+        localStorage.setItem(STORAGE_KEYS.BINDING_PROFILES, JSON.stringify(bindingProfiles.value));
     };
 
     // 废弃: 不再直接修改本地状态，改为等待 initUser 的后端回调
@@ -127,6 +143,8 @@ export const useUserStore = defineStore('user', () => {
         onlineUsers,
         currentUser,
         bindings,
+        bindingProfiles,
+        saveBindingProfile,
         initUser,
         setOnlineUsers,
         updateBinding,
