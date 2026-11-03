@@ -428,7 +428,7 @@ const {
   playlists, currentPlaylistId, searchUserKeyword, userSearchResults,
   isSearchingUser, isPlaylistsLoading, hasMore, isLoadingMore, bindings,
   searchUser, bindUser, loadPlaylist, handleScroll, loadRemainingSongs, userSearchAttempted,
-  saveCurrentPlaylist, setPlaylistScrollTop, takeRestoreScrollTop
+  saveCurrentPlaylist, refreshPlaylist, refreshState, setPlaylistScrollTop, takeRestoreScrollTop
 } = usePlaylistLogic(platform, songs, listMode, loading);
 
 // 3. 专辑搜索
