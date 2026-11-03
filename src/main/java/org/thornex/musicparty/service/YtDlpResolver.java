@@ -24,7 +24,16 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class YtDlpResolver {
 
-    public record TrackMetadata(String id, String title, String artist, long durationMs, String thumbnail, String sourceUrl) {}
+    /**
+     * @param sourceUrl 解析/校验用的地址（可能指向 API 端点）
+     * @param pageUrl   用户可读的源站页面地址；拿不到时为 null（SoundCloud 的数字 id 拼不出页面）
+     */
+    public record TrackMetadata(String id, String title, String artist, long durationMs, String thumbnail,
+                                String sourceUrl, String pageUrl) {
+        public TrackMetadata(String id, String title, String artist, long durationMs, String thumbnail, String sourceUrl) {
+            this(id, title, artist, durationMs, thumbnail, sourceUrl, null);
+        }
+    }
     public record DownloadedAudio(Path file, String extension) {}
     public record SoundCloudUser(String handle, String name, String avatarUrl) {}
     public record PlaylistMetadata(String id, String name, String coverUrl, int trackCount) {}
@@ -342,6 +351,8 @@ public class YtDlpResolver {
         if (sourceUrl.isBlank()) sourceUrl = node.path("url").asText();
         if ("ytmusic".equals(platform)) sourceUrl = "https://music.youtube.com/watch?v=" + id;
         if (sourceUrl.isBlank()) return null;
-        return new TrackMetadata(id, title, artist.isBlank() ? "Unknown" : artist, durationMs, thumbnail, sourceUrl);
+        // api.soundcloud.com 是接口地址，不是可读页面，不能当跳转链接
+        String pageUrl = sourceUrl.contains("api.soundcloud.com") ? null : sourceUrl;
+        return new TrackMetadata(id, title, artist.isBlank() ? "Unknown" : artist, durationMs, thumbnail, sourceUrl, pageUrl);
     }
 }

@@ -111,9 +111,14 @@ public class SoundCloudSearchClient {
                 artwork = highResArtwork(track.path("user").path("avatar_url").asText(""));
             }
 
+            // permalink_url 才是用户可读页面（soundcloud.com/artist/track）；
+            // TRACK_URL 是 api.soundcloud.com 接口地址，只用于解析/校验。
+            String permalink = track.path("permalink_url").asText("");
+            if (permalink.isBlank() || !permalink.contains("soundcloud.com/")) permalink = null;
+
             tracks.add(new YtDlpResolver.TrackMetadata(String.valueOf(id), title,
                     track.path("user").path("username").asText("Unknown"),
-                    track.path("duration").asLong(0L), artwork, TRACK_URL + id));
+                    track.path("duration").asLong(0L), artwork, TRACK_URL + id, permalink));
         }
         return tracks;
     }
