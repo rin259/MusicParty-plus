@@ -398,8 +398,11 @@ const openSourcePage = () => {
     bilibili: `https://www.bilibili.com/video/${encodeURIComponent(id)}`,
     ytmusic: `https://music.youtube.com/watch?v=${encodeURIComponent(id)}`
   };
+  // 老队列没有 url：走服务端 302 反查真实 permalink，而不是跳到搜索页
   const fallback = templates[platform]
-      || `https://soundcloud.com/search?q=${encodeURIComponent([name, ...(artists || [])].filter(Boolean).join(' '))}`;
+      || (platform === 'soundcloud' && id
+          ? `/api/track/url?platform=soundcloud&id=${encodeURIComponent(id)}`
+          : null);
   window.open(direct || fallback, '_blank', 'noopener');
 };
 </script>

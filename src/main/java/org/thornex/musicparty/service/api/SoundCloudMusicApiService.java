@@ -110,6 +110,14 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
      * 以及没有 scheme 的裸域名。这些以前要么解析成错误的 handle，要么直接被拒。
      * 现在统一处理：短链先跟随重定向展开，再取第一段路径；站内页面路径明确报错而不是当成用户名。
      */
+    @Override
+    public Mono<String> resolvePageUrl(String musicId) {
+        return searchClient.resolvePermalink(musicId)
+                .onErrorResume(error -> resolver.resolveSoundCloudMetadata(musicId)
+                        .map(YtDlpResolver.TrackMetadata::pageUrl))
+                .onErrorResume(error -> Mono.empty());
+    }
+
     String normalizeHandle(String value) {
         if (value == null || value.isBlank()) {
             throw new ApiRequestException("请粘贴 SoundCloud 主页链接、短链，或 @handle");

@@ -99,6 +99,44 @@ public class SoundCloudSearchClient {
                 .block(REQUEST_TIMEOUT);
     }
 
+    /**
+     * 用数字 ID 反查用户可读的页面地址（permalink）。
+     * 老队列里没有存 url，封面跳转需要它才能落到 soundcloud.com/artist/track，
+     * 而不是 api 端点或搜索页。
+     */
+    public Mono<String> resolvePermalink(String trackId) {
+        return Mono.fromCallable(() -> permalinkBlocking(trackId))
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(REQUEST_TIMEOUT);
+    }
+
+    private String permalinkBlocking(String trackId) {
+        if (trackId == null || !trackId.matches("\\d+")) return null;
+        JsonNode node;
+        try {
+            node = fetchTrack(trackId, resolveClientId(false));
+        } catch (WebClientResponseException error) {
+            int status = error.getStatusCode().value();
+            if (status != 401 && status != 403) return null;
+            node = fetchTrack(trackId, resolveClientId(true));
+        }
+        String permalink = node.path("permalink_url").asText("");
+        return permalink.contains("soundcloud.com/") ? permalink : null;
+    }
+
+    private JsonNode fetchTrack(String trackId, String clientId) {
+        return webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .scheme("https")
+                        .host("api-v2.soundcloud.com")
+                        .path("/tracks/" + trackId)
+                        .queryParam("client_id", clientId)
+                        .build())
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(REQUEST_TIMEOUT);
+    }
+
     private List<YtDlpResolver.TrackMetadata> parseTracks(JsonNode response) {
         List<YtDlpResolver.TrackMetadata> tracks = new ArrayList<>();
         for (JsonNode track : response.path("collection")) {

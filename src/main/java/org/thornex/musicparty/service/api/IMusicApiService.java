@@ -21,4 +21,7 @@ public interface IMusicApiService {
     default Mono<List<AlbumSearchResult>> searchAlbums(String keyword) { return Mono.just(List.of()); }
     default Mono<List<Music>> getAlbumMusics(String albumId) { return Mono.just(List.of()); }
     default Mono<List<Music>> searchMusic(String keyword, int offset, int limit) { return searchMusic(keyword); }
+
+    /** 由曲目 ID 反查用户可读的源站页面地址；拼不出页面的平台返回空。 */
+    default Mono<String> resolvePageUrl(String musicId) { return Mono.empty(); }
 }

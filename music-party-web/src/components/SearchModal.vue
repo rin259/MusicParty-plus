@@ -643,8 +643,8 @@ const getSourceUrl = (song) => {
   if (sourcePlatform === 'bilibili' && song.id) return `https://www.bilibili.com/video/${encodeURIComponent(song.id)}`;
   if (sourcePlatform === 'ytmusic' && song.id) return `https://music.youtube.com/watch?v=${encodeURIComponent(song.id)}`;
   if (sourcePlatform === 'soundcloud' && song.id) {
-    // 数字 ID 拼不出页面，退回按曲名搜索
-    return `https://soundcloud.com/search?q=${encodeURIComponent([song.name, ...(song.artists || [])].filter(Boolean).join(' '))}`;
+    // 数字 ID 拼不出页面：由服务端反查 permalink 后 302 过去
+    return `/api/track/url?platform=soundcloud&id=${encodeURIComponent(song.id)}`;
   }
   return null;
 };
