@@ -18,6 +18,9 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     const userSearchResults = ref([]);
     const isSearchingUser = ref(false);
     const userSearchAttempted = ref(false);   // 用于区分「还没搜」和「搜了但没有」
+    // 歌单刷新：重新核对已加载的曲目，但不先清空——加载一个长歌单要几分钟，
+    // 刷掉再重来等于把用户已经等到的数据扔掉
+    const refreshState = ref({ active: false, done: 0, target: 0 });
     const isPlaylistsLoading = ref(false);
 
     // 歌单缓存：切走时保存，切回时同步还原（含滚动位置）
@@ -121,8 +124,8 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
 
             // 兜底
             if (rawSongs.length === 0) isLoadingMore.value = false;
-            // 增量拉取后同步缓存，切走再回来不会丢掉已加载的页
-            saveCurrentPlaylist();
+            // 增量拉取后同步缓存；但空结果绝不覆盖——失败的加载不能把已有数据刷掉
+            if (songsRef.value.length > 0) saveCurrentPlaylist();
 
         } catch (e) {
             console.error("Fetch songs failed", e);
@@ -133,12 +136,62 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     /** 把当前歌单的曲目、分页状态与滚动位置写进缓存（切走/关闭时调用） */
     const saveCurrentPlaylist = () => {
         if (!currentPlaylistId.value || listModeRef.value !== 'playlist') return;
+        if (!songsRef.value.length) return;   // 空列表不落盘：防止失败加载污染缓存
         writePlaylistCache(platformRef.value, currentPlaylistId.value, {
             songs: songsRef.value,
             offset: offset.value,
             hasMore: hasMore.value,
             scrollTop: viewportScrollTop
         });
+    };
+
+    /**
+     * 刷新当前歌单：按页重新核对，**期间不清空已加载的曲目**。
+     * 以服务端为准做位置合并——歌单变长则只核对到原有数量（后续走滚动分页），
+     * 变短则如实缩短；全部核对完才一次性替换，刷新过程旧数据始终可见。
+     */
+    const refreshPlaylist = async () => {
+        const pid = currentPlaylistId.value;
+        const plat = platformRef.value;
+        if (!pid || listModeRef.value !== 'playlist') return;
+        if (refreshState.value.active || isLoadingMore.value || loadingRef.value) return;
+
+        const target = songsRef.value.length;
+        refreshState.value = { active: true, done: 0, target };
+        isLoadingMore.value = true;   // 刷新期间挡住滚动分页，避免两路请求混流
+
+        const fetched = [];
+        let rawCount = 0;
+        let offset = 0;
+        let lastPageFull = false;
+        try {
+            for (let page = 0; page < 40; page++) {   // 保险丝：最多 2000 首
+                const raw = await musicApi.getPlaylistSongs(plat, pid, offset, limit.value);
+                lastPageFull = raw.length >= limit.value;
+                rawCount += raw.length;
+                fetched.push(...raw.filter(s => s.id !== 'INVALID_SKIP'));
+                refreshState.value.done = fetched.length;
+
+                offset += limit.value;
+                if (raw.length === 0 || !lastPageFull) break;       // 服务端到底
+                if (fetched.length >= target) break;                // 已核对完用户手里的量
+            }
+
+            // 服务端一页都没给（限流/故障）时绝不能用空列表覆盖已有数据
+            if (fetched.length === 0) {
+                error('刷新歌单失败（源返回为空），已保留原数据');
+                return;
+            }
+            songsRef.value = fetched;
+            offset.value = rawCount;
+            hasMore.value = lastPageFull;
+            saveCurrentPlaylist();
+        } catch (e) {
+            error('刷新歌单失败，已保留原数据');
+        } finally {
+            isLoadingMore.value = false;
+            refreshState.value = { active: false, done: refreshState.value.done, target: refreshState.value.target };
+        }
     };
 
     // 点击歌单：命中缓存则同步还原，不再重新拉取
@@ -150,7 +203,8 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         currentPlaylistId.value = pid;
 
         const cached = readPlaylistCache(platform, pid);
-        if (cached) {
+        // 0 首的条目是失败加载的残留，绝不能当命中——否则点击歌单会毫无反应
+        if (cached && (cached.songs || []).length > 0) {
             songsRef.value = cached.songs || [];
             offset.value = cached.offset || songsRef.value.length;
             hasMore.value = cached.hasMore !== false;
@@ -230,6 +284,8 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         searchUser,
         bindUser,
         saveCurrentPlaylist,
+        refreshPlaylist,
+        refreshState,
         setPlaylistScrollTop,
         takeRestoreScrollTop,
         loadPlaylist,

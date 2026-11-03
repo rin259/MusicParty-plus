@@ -161,6 +161,20 @@
                 <button @click="player.bindAccount(platform, '')" class="text-[11px] font-bold text-danger hover:underline px-2 min-h-9 flex-shrink-0">UNLINK</button>
               </div>
               
+              <!-- 刷新当前歌单：重新核对已加载曲目，但不清空缓存数据 -->
+              <div v-if="currentPlaylistId && !isPlaylistsLoading" class="px-2 pb-2">
+                <button
+                    type="button"
+                    @click="refreshPlaylist"
+                    :disabled="refreshState.active"
+                    class="w-full min-h-9 flex items-center justify-center gap-2 border border-medical-200 bg-surface-1 font-mono text-[10px] tracking-[0.12em] text-medical-600 hover:border-accent hover:text-accent-text transition-colors disabled:opacity-60"
+                >
+                  <Loader2 v-if="refreshState.active" class="w-3.5 h-3.5 animate-spin text-accent-text" />
+                  <RefreshCw v-else class="w-3.5 h-3.5" />
+                  <span>{{ refreshState.active ? `REFRESH ${refreshState.done}/${refreshState.target}` : 'REFRESH LIST' }}</span>
+                </button>
+              </div>
+
               <div v-if="isPlaylistsLoading" class="flex justify-center py-8">
                 <Loader2 class="w-6 h-6 animate-spin text-accent-text" />
               </div>
@@ -353,7 +367,7 @@ import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
 import { useSearchLogic } from '../composables/useSearchLogic';
 import { usePlaylistLogic } from '../composables/usePlaylistLogic';
-import { X, Search, ListPlus, Loader2, ArrowLeft, ChevronRight, ExternalLink, Disc } from 'lucide-vue-next';
+import { X, Search, ListPlus, Loader2, ArrowLeft, ChevronRight, ExternalLink, Disc, RefreshCw } from 'lucide-vue-next';
 import CoverImage from './CoverImage.vue';
 import SourceBus from './SourceBus.vue';
 import AddButton from './search/AddButton.vue';
