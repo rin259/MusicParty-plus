@@ -413,7 +413,8 @@ const slowSources = computed(() => Object.entries(sources.value)
 const {
   playlists, currentPlaylistId, searchUserKeyword, userSearchResults,
   isSearchingUser, isPlaylistsLoading, hasMore, isLoadingMore, bindings,
-  searchUser, bindUser, loadPlaylist, handleScroll, loadRemainingSongs, userSearchAttempted
+  searchUser, bindUser, loadPlaylist, handleScroll, loadRemainingSongs, userSearchAttempted,
+  saveCurrentPlaylist, setPlaylistScrollTop, takeRestoreScrollTop
 } = usePlaylistLogic(platform, songs, listMode, loading);
 
 // 3. 专辑搜索
@@ -627,7 +628,14 @@ const handleSelectPlaylist = async (pid) => {
   playlistKeyword.value = '';
   await loadPlaylist(pid);
   mobileView.value = 'songs';
-  restoreScrollPosition();
+  // 命中缓存时，列表内容已经就位，按缓存里的滚动位置还原才有意义
+  const cachedTop = takeRestoreScrollTop();
+  await nextTick();
+  if (contentScrollRef.value && cachedTop > 0) {
+    contentScrollRef.value.scrollTop = cachedTop;
+  } else {
+    restoreScrollPosition();
+  }
 };
 
 const handleImportPlaylist = () => {
@@ -675,6 +683,9 @@ const restoreScrollPosition = async () => {
 const onContentScroll = (event) => {
   handleScroll(event);
   saveScrollPosition();
+  if (listMode.value === 'playlist') {
+    setPlaylistScrollTop(event.target.scrollTop);
+  }
   const el = event.target;
   if (listMode.value === 'search' && !albumSearchMode.value && hasMoreSearch.value && !loading.value) {
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
@@ -685,12 +696,14 @@ const onContentScroll = (event) => {
 
 const closeModal = () => {
   saveScrollPosition();
+  saveCurrentPlaylist();
   emit('close');
 };
 
 const switchPlatform = (nextPlatform) => {
   if (!isPlatformEnabled(nextPlatform) && nextPlatform !== 'all') return;
   saveScrollPosition();
+  saveCurrentPlaylist();
   platform.value = nextPlatform;
 };
 

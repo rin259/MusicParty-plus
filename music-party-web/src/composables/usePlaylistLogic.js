@@ -4,6 +4,7 @@ import { usePlayerStore } from '../stores/player.js';
 import { musicApi } from '../api/music.js';
 import { useDebounceFn } from '@vueuse/core';
 import { useToast } from './useToast';
+import { readPlaylistCache, writePlaylistCache } from '../logic/playlistCache.js';
 
 export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef) {
     const userStore = useUserStore();
@@ -18,6 +19,16 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     const isSearchingUser = ref(false);
     const userSearchAttempted = ref(false);   // 用于区分「还没搜」和「搜了但没有」
     const isPlaylistsLoading = ref(false);
+
+    // 歌单缓存：切走时保存，切回时同步还原（含滚动位置）
+    let viewportScrollTop = 0;
+    let pendingRestoreScrollTop = 0;
+    const setPlaylistScrollTop = (value) => { viewportScrollTop = Math.max(0, Number(value) || 0); };
+    const takeRestoreScrollTop = () => {
+        const value = pendingRestoreScrollTop;
+        pendingRestoreScrollTop = 0;
+        return value;
+    };
 
     // Pagination
     const offset = ref(0);
@@ -110,6 +121,8 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
 
             // 兜底
             if (rawSongs.length === 0) isLoadingMore.value = false;
+            // 增量拉取后同步缓存，切走再回来不会丢掉已加载的页
+            saveCurrentPlaylist();
 
         } catch (e) {
             console.error("Fetch songs failed", e);
@@ -117,13 +130,40 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         }
     };
 
-    // 点击歌单
+    /** 把当前歌单的曲目、分页状态与滚动位置写进缓存（切走/关闭时调用） */
+    const saveCurrentPlaylist = () => {
+        if (!currentPlaylistId.value || listModeRef.value !== 'playlist') return;
+        writePlaylistCache(platformRef.value, currentPlaylistId.value, {
+            songs: songsRef.value,
+            offset: offset.value,
+            hasMore: hasMore.value,
+            scrollTop: viewportScrollTop
+        });
+    };
+
+    // 点击歌单：命中缓存则同步还原，不再重新拉取
     const loadPlaylist = async (pid) => {
+        const platform = platformRef.value;
+        saveCurrentPlaylist();
+
         listModeRef.value = 'playlist';
         currentPlaylistId.value = pid;
+
+        const cached = readPlaylistCache(platform, pid);
+        if (cached) {
+            songsRef.value = cached.songs || [];
+            offset.value = cached.offset || songsRef.value.length;
+            hasMore.value = cached.hasMore !== false;
+            loadingRef.value = false;
+            viewportScrollTop = cached.scrollTop || 0;
+            pendingRestoreScrollTop = cached.scrollTop || 0;
+            return;
+        }
+
         songsRef.value = [];
         offset.value = 0;
         hasMore.value = true;
+        pendingRestoreScrollTop = 0;
         loadingRef.value = true;
 
         try {
@@ -165,6 +205,13 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     };
 
     // 监听平台切换 -> 刷新歌单列表
+    watch(platformRef, () => {
+        // 换平台相当于离开当前歌单，先落盘
+        saveCurrentPlaylist();
+        viewportScrollTop = 0;
+        pendingRestoreScrollTop = 0;
+    });
+
     watch([platformRef, bindings], () => {
         fetchPlaylists();
     }, { immediate: true });
@@ -182,6 +229,9 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         bindings,
         searchUser,
         bindUser,
+        saveCurrentPlaylist,
+        setPlaylistScrollTop,
+        takeRestoreScrollTop,
         loadPlaylist,
         handleScroll,
         loadRemainingSongs
