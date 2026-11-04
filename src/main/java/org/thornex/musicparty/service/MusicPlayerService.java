@@ -48,6 +48,9 @@ public class MusicPlayerService {
     // 换源重试去重：同一队列项只尝试一次，避免搜索失败时反复打各个源
     private final Set<String> failoverAttempted = ConcurrentHashMap.newKeySet();
 
+    /** 单轮最多跳过多少首不可播放项（防递归爆栈/死循环） */
+    private static final int MAX_SKIP_PER_ROUND = 64;
+
     private final AtomicReference<PlayableMusic> currentMusic = new AtomicReference<>(null);
     private final AtomicReference<String> currentEnqueuerId = new AtomicReference<>(null);
     private final AtomicReference<String> currentEnqueuerName = new AtomicReference<>(null);
@@ -181,75 +184,83 @@ public class MusicPlayerService {
         }
     }
 
+    /**
+     * 取下一首并开始播放。
+     *
+     * <p>旧实现遇到不可播放项就递归调用自己，LIST_LOOP 下还会在队列空时重填再递归——
+     * 当队列里积累了大量 FAILED 项时直接 StackOverflowError（2026-11 事故：队列被灌到 2.4 万首）。
+     * 现在改为有界循环：一轮最多跳过 MAX_SKIP_PER_ROUND 项，重填只做一次。
+     */
     private synchronized void playNextInQueue() {
         if (currentMusic.get() != null || isLoading.get()) {
             return;
         }
 
-        Map<String, QueueItemStatus> statusMap = buildStatusMap();
+        boolean repopulated = false;
+        for (int attempt = 0; attempt < MAX_SKIP_PER_ROUND; attempt++) {
+            Map<String, QueueItemStatus> statusMap = buildStatusMap();
+            Set<String> onlineUserTokens = userService.getRecentlyActiveUserTokens();
+            MusicQueueItem nextItem = queueManager.pollNext(playMode.get(), isFairShuffle.get(),
+                    allowOfflineShuffle.get(), statusMap, onlineUserTokens);
 
-        Set<String> onlineUserTokens = userService.getRecentlyActiveUserTokens();
-
-        MusicQueueItem nextItem = queueManager.pollNext(playMode.get(), isFairShuffle.get(), allowOfflineShuffle.get(), statusMap, onlineUserTokens);
-
-        if (nextItem == null) {
-            if (playMode.get() == PlayMode.LIST_LOOP) {
-                queueManager.repopulateFromLoopList();
-                if (!queueManager.getQueueSnapshot().isEmpty()) {
-                    playNextInQueue();
-                    return;
+            if (nextItem == null) {
+                if (playMode.get() == PlayMode.LIST_LOOP && !repopulated) {
+                    repopulated = true;
+                    queueManager.repopulateFromLoopList();
+                    if (!queueManager.getQueueSnapshot().isEmpty()) continue;
                 }
+                if (isLoading.get()) isLoading.set(false);
+                broadcastFullPlayerState();
+                return;
             }
-            if (isLoading.get()) {
+
+            if (nextItem.status() == QueueItemStatus.FAILED ||
+                    (statusMap.get(MusicQueueManager.musicKey(nextItem.music())) == QueueItemStatus.FAILED)) {
+                log.warn("Skipping failed song: {}", nextItem.music().name());
+                eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR,
+                        PlayerAction.ERROR_LOAD, "SYSTEM", nextItem.music().name()));
+                continue;
+            }
+
+            long currentVersion = playHeadVersion.incrementAndGet();
+            isLoading.set(true);
+            broadcastFullPlayerState();
+            isPaused.set(false);
+            log.info("Playing next: {}", nextItem.music().name());
+
+            try {
+                IMusicApiService service = getApiService(nextItem.music().platform());
+                service.getPlayableMusic(nextItem.music().id())
+                        .timeout(Duration.ofSeconds(10))
+                        .subscribe(
+                                playableMusic -> {
+                                    if (playHeadVersion.get() == currentVersion) {
+                                        applyNewSong(playableMusic, nextItem);
+                                    } else {
+                                        log.info("Discarded stale play result for {}", nextItem.music().name());
+                                    }
+                                },
+                                error -> {
+                                    log.error("Play failed for {}: {}", nextItem.music().name(), error.getMessage());
+                                    eventPublisher.publishEvent(new SystemMessageEvent(this,
+                                            SystemMessageEvent.Level.ERROR, PlayerAction.ERROR_LOAD, "SYSTEM",
+                                            nextItem.music().name()));
+                                    isLoading.set(false);
+                                    broadcastFullPlayerState();
+                                    playNextInQueue();
+                                });
+            } catch (Exception error) {
+                log.error("Unexpected error in playNextInQueue", error);
                 isLoading.set(false);
+                broadcastFullPlayerState();
             }
-            broadcastFullPlayerState();
             return;
         }
 
-        // Handle failed items
-        if (nextItem.status() == QueueItemStatus.FAILED ||
-                (statusMap.get(MusicQueueManager.musicKey(nextItem.music())) == QueueItemStatus.FAILED)) {
-            log.warn("Skipping failed song: {}", nextItem.music().name());
-            eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.ERROR_LOAD, "SYSTEM", nextItem.music().name()));
-            playNextInQueue(); // Recursively try next
-            return;
-        }
-
-        // 增加版本号，这表示"开始一次新的播放尝试"
-        long currentVersion = playHeadVersion.incrementAndGet();
-        isLoading.set(true);
+        log.warn("Skipped {} consecutive unplayable items; stopping this round to avoid a runaway loop.",
+                MAX_SKIP_PER_ROUND);
+        if (isLoading.get()) isLoading.set(false);
         broadcastFullPlayerState();
-        isPaused.set(false);
-
-        log.info("Playing next: {}", nextItem.music().name());
-
-        try {
-            IMusicApiService service = getApiService(nextItem.music().platform());
-            service.getPlayableMusic(nextItem.music().id())
-                    .timeout(Duration.ofSeconds(10))
-                    .subscribe(
-                            playableMusic -> {
-                                // 检查版本号是否匹配
-                                // 如果在请求期间执行了 skip/stop，版本号会变，这里就应该丢弃结果
-                                if (playHeadVersion.get() == currentVersion) {
-                                    applyNewSong(playableMusic, nextItem);
-                                } else {
-                                    log.info("Discarded stale play result for {}", nextItem.music().name());
-                                }
-                            },
-                            error -> {
-                        log.error("Play failed for {}: {}", nextItem.music().name(), error.getMessage());
-                        eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR, PlayerAction.ERROR_LOAD, "SYSTEM", nextItem.music().name()));
-                        isLoading.set(false);
-                        broadcastFullPlayerState();
-                        playNextInQueue();
-                    });
-        } catch (Exception e) {
-            log.error("Unexpected error in playNextInQueue", e);
-            isLoading.set(false);
-            broadcastFullPlayerState();
-        }
     }
 
     private long calculateCurrentPosition() {

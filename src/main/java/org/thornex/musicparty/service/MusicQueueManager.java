@@ -464,8 +464,19 @@ public class MusicQueueManager {
 
     public synchronized void repopulateFromLoopList() {
         if (loopList.isEmpty()) return;
+        // 旧实现把整份 loopList 无条件追加：队列空一次就再加一遍，
+        // LIST_LOOP 下反复重填 → 队列被同一批歌灌到数万条（并触发递归爆栈）。
+        // 现在按 musicKey 去重，并受 maxSize 约束。
+        int max = Math.max(1, appProperties.getQueue().getMaxSize());
+        if (queue.size() >= max) return;
+
         UserSummary systemUser = new UserSummary("SYSTEM", "SYSTEM", "AutoDJ", false);
+        Set<String> existing = queue.stream()
+                .map(item -> musicKey(item.music()))
+                .collect(Collectors.toSet());
         for (Music music : loopList) {
+            if (queue.size() >= max) break;
+            if (!existing.add(musicKey(music))) continue;
             queue.addLast(new MusicQueueItem(
                     UUID.randomUUID().toString(),
                     music,

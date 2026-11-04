@@ -151,7 +151,10 @@ public class SoundCloudSearchClient {
 
     /** 单条 track → TrackMetadata；ID/标题缺失返回 null。 */
     static YtDlpResolver.TrackMetadata toMetadata(JsonNode track) {
+        // 新版 API 的 track 只有 urn（soundcloud:tracks:1234），没有 id 字段；
+        // 老接口给 id。两者都要接受，否则 OAuth 路径会全部解析成 0 被丢弃。
         long id = track.path("id").asLong(0L);
+        if (id == 0L) id = numericIdFromUrn(track.path("urn").asText(""));
         String title = track.path("title").asText("");
         if (id == 0L || title.isEmpty()) return null;
 
@@ -198,6 +201,18 @@ public class SoundCloudSearchClient {
             response = fetchLikes(userId, safeOffset, safeLimit, resolveClientId(true));
         }
         return parseLikes(response);
+    }
+
+    /** urn → 末尾数字：soundcloud:playlists:1212781357 → 1212781357 */
+    static long numericIdFromUrn(String urn) {
+        if (urn == null || urn.isBlank()) return 0L;
+        int cut = urn.lastIndexOf(':');
+        String tail = cut >= 0 ? urn.substring(cut + 1) : urn;
+        try {
+            return Long.parseLong(tail);
+        } catch (NumberFormatException error) {
+            return 0L;
+        }
     }
 
     /** 解析纯 track 数组（/playlists/{id}.tracks 这种形状） */

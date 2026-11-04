@@ -141,16 +141,21 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
                     .timeout(Duration.ofSeconds(12))
                     .map(node -> {
                         List<Playlist> out = new java.util.ArrayList<>();
+                        int privateCount = 0;
                         for (JsonNode playlist : node.path("collection")) {
+                            // 规范里只有 urn：soundcloud:playlists:<id>
                             long id = playlist.path("id").asLong(0L);
+                            if (id == 0L) id = SoundCloudSearchClient.numericIdFromUrn(playlist.path("urn").asText(""));
                             String title = playlist.path("title").asText("");
                             if (id == 0L || title.isEmpty()) continue;
                             boolean privatePlaylist = !"public".equalsIgnoreCase(playlist.path("sharing").asText("public"));
+                            if (privatePlaylist) privateCount++;
                             String cover = SoundCloudSearchClient.highResArtwork(playlist.path("artwork_url").asText(""));
                             out.add(new Playlist(OWN_PLAYLIST_PREFIX + handle + ":" + id,
                                     privatePlaylist ? title + " · 私密" : title,
                                     cover, playlist.path("track_count").asInt(0), getPlatformName()));
                         }
+                        log.info("SoundCloud /me/playlists for {}: {} playlists ({} private)", handle, out.size(), privateCount);
                         return out;
                     });
         });
@@ -213,23 +218,33 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         });
     }
 
-    /** 自己的歌单（可能是私密）：GET /playlists/{id} 返回 tracks 数组 */
+    /**
+     * 自己的歌单曲目（含私密）。按规范走 GET /playlists/{playlist_urn}/tracks，
+     * urn 形如 soundcloud:playlists:<id>。该端点用 linked_partitioning 游标分页，
+     * 我们的 UI 用 offset 分页，因此这里按 offset+limit 取一批再切片（上限 1000，
+     * 超出部分走翻页的收益不值得把逻辑复杂化）。
+     */
     private Mono<List<YtDlpResolver.TrackMetadata>> ownPlaylistTracks(String handle, String playlistId, int offset, int limit) {
         return Mono.defer(() -> {
             Optional<String> token = oauthService.validAccessToken(handle);
             if (token.isEmpty()) return Mono.empty();
             int safeLimit = Math.clamp(limit, 1, 200);
             int safeOffset = Math.max(offset, 0);
+            int want = Math.min(1000, safeOffset + safeLimit);
+            String urn = "soundcloud:playlists:" + playlistId;
             return webClient.get()
-                    .uri(URI.create("https://api.soundcloud.com/playlists/" + playlistId
-                            + "?limit=" + safeLimit + "&offset=" + safeOffset))
+                    .uri(URI.create("https://api.soundcloud.com/playlists/"
+                            + java.net.URLEncoder.encode(urn, java.nio.charset.StandardCharsets.UTF_8)
+                            + "/tracks?limit=" + want + "&linked_partitioning=1"))
                     .header("Authorization", "OAuth " + token.get())
                     .retrieve()
                     .bodyToMono(JsonNode.class)
                     .timeout(Duration.ofSeconds(12))
-                    .map(node -> node.path("tracks").isArray()
-                            ? SoundCloudSearchClient.parseTrackArray(node.path("tracks"))
-                            : SoundCloudSearchClient.parseLikes(node));
+                    .map(node -> {
+                        List<YtDlpResolver.TrackMetadata> all = SoundCloudSearchClient.parseLikes(node);
+                        if (safeOffset >= all.size()) return List.<YtDlpResolver.TrackMetadata>of();
+                        return all.subList(safeOffset, Math.min(all.size(), safeOffset + safeLimit));
+                    });
         });
     }
 
