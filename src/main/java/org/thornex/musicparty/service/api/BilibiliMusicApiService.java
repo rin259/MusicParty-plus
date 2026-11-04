@@ -449,9 +449,16 @@ public class BilibiliMusicApiService implements IMusicApiService {
     public Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit) {
         int safeLimit = Math.clamp(limit, 1, 20);
         int safeOffset = Math.max(0, offset);
-        int pageNumber = safeOffset / safeLimit + 1;
         return getPlaylistMusics(playlistId, safeOffset, safeLimit)
-                .map(items -> new PagedPlaylist(items, pageNumber * safeLimit, items.size() >= safeLimit));
+                .map(items -> new PagedPlaylist(items, nextOffsetAlignedToPage(safeOffset, safeLimit),
+                        items.size() >= safeLimit));
+    }
+
+    /** 下一页偏移必须落在页边界上（接口按 pn 取数，不是按 offset）。 */
+    static int nextOffsetAlignedToPage(int offset, int limit) {
+        int safeLimit = Math.clamp(limit, 1, 20);
+        int safeOffset = Math.max(0, offset);
+        return (safeOffset / safeLimit + 1) * safeLimit;
     }
 
     @Override
