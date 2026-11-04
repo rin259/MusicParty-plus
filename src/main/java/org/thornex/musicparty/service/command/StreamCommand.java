@@ -5,7 +5,6 @@ import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessageType;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.stereotype.Component;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.ChatMessage;
 import org.thornex.musicparty.dto.User;
@@ -15,14 +14,20 @@ import org.thornex.musicparty.service.stream.StreamTokenService;
 
 import java.util.UUID;
 
-@Component
-@RequiredArgsConstructor
 public class StreamCommand implements ChatCommand {
 
     private final StreamTokenService tokenService;
     private final LiveStreamService liveStreamService;
     private final SimpMessagingTemplate messagingTemplate;
     private final AppProperties appProperties;
+
+    public StreamCommand(StreamTokenService tokenService, LiveStreamService liveStreamService,
+                         SimpMessagingTemplate messagingTemplate, AppProperties appProperties) {
+        this.tokenService = tokenService;
+        this.liveStreamService = liveStreamService;
+        this.messagingTemplate = messagingTemplate;
+        this.appProperties = appProperties;
+    }
 
     @Override
     public String getCommand() {

@@ -1,9 +1,7 @@
 package org.thornex.musicparty.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.stereotype.Service;
 import org.thornex.musicparty.dto.ChatMessage;
 import org.thornex.musicparty.dto.User;
 import org.thornex.musicparty.enums.MessageType;
@@ -18,9 +16,10 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-@Service
 @Slf4j
 public class ChatService {
+
+    private final String roomId;
 
     private final ConcurrentLinkedDeque<ChatMessage> history = new ConcurrentLinkedDeque<>();
     private final SimpMessagingTemplate messagingTemplate;
@@ -30,7 +29,9 @@ public class ChatService {
     private final Map<String, ChatCommand> commandMap;
     private final Map<String, Long> lastMessageTime = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public ChatService(SimpMessagingTemplate messagingTemplate, UserService userService, AppProperties appProperties, List<ChatCommand> commands) {
+    public ChatService(SimpMessagingTemplate messagingTemplate, UserService userService,
+                       AppProperties appProperties, List<ChatCommand> commands, String roomId) {
+        this.roomId = roomId == null || roomId.isBlank() ? "main" : roomId;
         this.messagingTemplate = messagingTemplate;
         this.userService = userService;
         this.appProperties = appProperties;
@@ -142,6 +143,10 @@ public class ChatService {
         broadcastSystemMessage("聊天记录已由管理员清空");
     }
 
+    public String getRoomId() {
+        return roomId;
+    }
+
     private void broadcastSystemMessage(String content) {
         ChatMessage sysMsg = new ChatMessage(
                 UUID.randomUUID().toString(),
@@ -152,14 +157,12 @@ public class ChatService {
                 MessageType.SYSTEM
         );
         addMessage(sysMsg);
-        messagingTemplate.convertAndSend("/topic/chat", sysMsg);
+        messagingTemplate.convertAndSend("/topic/r/" + roomId + "/chat", sysMsg);
     }
 
     /**
-     * 监听系统事件，自动生成系统消息
-     * 这里实现了将“操作日志”写入“系统聊天Tab”的需求
+     * 处理系统事件，自动生成系统消息（由 RoomEventBridge 按房间分发）。
      */
-    @EventListener
     public void onSystemEvent(SystemMessageEvent event) {
         // 忽略错误提示，只记录操作成功的事件（根据需求调整）
         // 这里我们记录所有 INFO, WARN, SUCCESS 级别的事件，忽略 ERROR (通常 ERROR 只弹 Toast)
@@ -206,7 +209,7 @@ public class ChatService {
         // 1. 存入历史
         addMessage(sysMsg);
 
-        // 2. 广播到聊天频道
-        messagingTemplate.convertAndSend("/topic/chat", sysMsg);
+        // 2. 广播到本房间聊天频道
+        messagingTemplate.convertAndSend("/topic/r/" + roomId + "/chat", sysMsg);
     }
 }

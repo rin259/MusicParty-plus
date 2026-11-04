@@ -6,17 +6,18 @@ import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessageType;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.stereotype.Component;
 import org.thornex.musicparty.dto.PlayerEvent;
 import org.thornex.musicparty.dto.User;
 import org.thornex.musicparty.enums.PlayerAction;
 
-@Component
-@RequiredArgsConstructor
 @Slf4j
 public class AdminCommand implements ChatCommand {
 
     private final SimpMessagingTemplate messagingTemplate;
+
+    public AdminCommand(SimpMessagingTemplate messagingTemplate) {
+        this.messagingTemplate = messagingTemplate;
+    }
 
     @Override
     public String getCommand() {

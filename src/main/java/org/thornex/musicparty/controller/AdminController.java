@@ -5,8 +5,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.*;
-import org.thornex.musicparty.service.ChatService;
-import org.thornex.musicparty.service.MusicPlayerService;
+import org.thornex.musicparty.room.RoomRegistry;
 import org.thornex.musicparty.service.RuntimeConfigService;
 import org.thornex.musicparty.service.api.BilibiliMusicApiService;
 import org.thornex.musicparty.service.api.NeteaseMusicApiService;
@@ -18,8 +17,7 @@ import java.util.Map;
 @RequestMapping("/api/admin")
 public class AdminController {
 
-    private final MusicPlayerService musicPlayerService;
-    private final ChatService chatService;
+    private final RoomRegistry roomRegistry;
     private final String adminPassword;
     private final AuthController authController;
     private final NeteaseMusicApiService neteaseMusicApiService;
@@ -27,9 +25,8 @@ public class AdminController {
     private final LiveStreamService liveStreamService;
     private final RuntimeConfigService runtimeConfigService;
 
-    public AdminController(MusicPlayerService musicPlayerService, ChatService chatService, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService, RuntimeConfigService runtimeConfigService) {
-        this.musicPlayerService = musicPlayerService;
-        this.chatService = chatService;
+    public AdminController(RoomRegistry roomRegistry, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService, RuntimeConfigService runtimeConfigService) {
+        this.roomRegistry = roomRegistry;
         this.adminPassword = appProperties.getAdminPassword();
         this.authController = authController;
         this.neteaseMusicApiService = neteaseMusicApiService;
@@ -40,6 +37,15 @@ public class AdminController {
 
     private boolean isValid(String password) {
         return adminPassword != null && adminPassword.equals(password);
+    }
+
+    /** 管理端操作默认作用于主房间；分房管理属于后续阶段。 */
+    private org.thornex.musicparty.service.MusicPlayerService player() {
+        return roomRegistry.mainRuntime().player();
+    }
+
+    private org.thornex.musicparty.service.ChatService chat() {
+        return roomRegistry.mainRuntime().chat();
     }
 
     @PostMapping("/verify")
@@ -56,10 +62,10 @@ public class AdminController {
         
         String type = request.type().toUpperCase();
         if ("ALL".equalsIgnoreCase(type)) {
-            musicPlayerService.setAllLocks(request.locked());
+            player().setAllLocks(request.locked());
             return ResponseEntity.ok(Map.of("message", (request.locked() ? "已开启全频道操作锁定" : "已解除全频道操作锁定")));
         } else {
-            musicPlayerService.setLock(type, request.locked());
+            player().setLock(type, request.locked());
             String desc = switch (type) {
                 case "PAUSE" -> "暂停控制";
                 case "SKIP" -> "切歌控制";
@@ -77,23 +83,23 @@ public class AdminController {
         String action = request.action().toUpperCase();
         String msg = switch (action) {
             case "PAUSE" -> {
-                musicPlayerService.togglePause("SYSTEM");
+                player().togglePause("SYSTEM");
                 yield "播放状态已切换";
             }
             case "SKIP" -> {
-                musicPlayerService.skipToNext("SYSTEM");
+                player().skipToNext("SYSTEM");
                 yield "已强制跳过当前歌曲";
             }
             case "SHUFFLE" -> {
-                musicPlayerService.cyclePlayMode("SYSTEM");
+                player().cyclePlayMode("SYSTEM");
                 yield "播放模式已切换";
             }
             case "TOGGLE_FAIR_SHUFFLE" -> {
-                musicPlayerService.toggleFairShuffle("SYSTEM");
+                player().toggleFairShuffle("SYSTEM");
                 yield "随机算法已切换";
             }
             case "TOGGLE_ALLOW_OFFLINE" -> {
-                musicPlayerService.toggleAllowOfflineShuffle("SYSTEM");
+                player().toggleAllowOfflineShuffle("SYSTEM");
                 yield "离线成员过滤规则已更新";
             }
             default -> null;
@@ -109,7 +115,8 @@ public class AdminController {
 
         String newPwd = request.password() == null ? "" : request.password();
         authController.forceSetPassword(newPwd);
-        musicPlayerService.broadcastPasswordChanged();
+        roomRegistry.syncMainPasswordFromAdmin(newPwd);
+        player().broadcastPasswordChanged();
         return ResponseEntity.ok(Map.of("message", newPwd.isEmpty() ? "房间已设为公开访问" : "房间访问密码已更新"));
     }
 
@@ -119,13 +126,13 @@ public class AdminController {
 
         String target = request.target().toUpperCase();
         if ("CHAT".equalsIgnoreCase(target)) {
-            chatService.clearHistoryAndNotify();
+            chat().clearHistoryAndNotify();
             return ResponseEntity.ok(Map.of("message", "聊天历史记录已清空"));
         } else if ("OFFLINE".equalsIgnoreCase(target)) {
-            int count = musicPlayerService.clearOfflineSongs();
+            int count = player().clearOfflineSongs();
             return ResponseEntity.ok(Map.of("message", "已清理 " + count + " 首离线成员的点播歌曲"));
         } else {
-            musicPlayerService.clearQueue();
+            player().clearQueue();
             return ResponseEntity.ok(Map.of("message", "播放队列已全部重置"));
         }
     }
@@ -134,7 +141,7 @@ public class AdminController {
     public ResponseEntity<?> resetSystem(@RequestHeader("X-Admin-Password") String password) {
         if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
 
-        musicPlayerService.resetSystem();
+        player().resetSystem();
         return ResponseEntity.ok(Map.of("message", "系统核心已完成全量重置并重启"));
     }
 
@@ -161,7 +168,7 @@ public class AdminController {
 
         liveStreamService.setEnabled(request.enabled());
         runtimeConfigService.save();
-        musicPlayerService.broadcastFullPlayerState();
+        player().broadcastFullPlayerState();
         return ResponseEntity.ok(Map.of("message", request.enabled() ? "直播流同步服务已启动" : "直播流同步服务已停止"));
     }
 
@@ -169,7 +176,7 @@ public class AdminController {
     public ResponseEntity<?> updateConfig(@RequestHeader("X-Admin-Password") String password, @RequestBody AdminConfigUpdateRequest request) {
         if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
 
-        musicPlayerService.updateConfig(request);
+        roomRegistry.runtimes().forEach(runtime -> runtime.player().updateConfig(request));
         return ResponseEntity.ok(Map.of("message", "系统配置已刷新"));
     }
 

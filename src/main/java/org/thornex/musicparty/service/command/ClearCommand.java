@@ -2,20 +2,24 @@ package org.thornex.musicparty.service.command;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.stereotype.Component;
 import org.thornex.musicparty.dto.User;
 import org.thornex.musicparty.enums.PlayerAction;
 import org.thornex.musicparty.event.SystemMessageEvent;
 import org.thornex.musicparty.service.MusicQueueManager;
 import org.thornex.musicparty.service.MusicPlayerService;
 
-@Component
-@RequiredArgsConstructor
 public class ClearCommand implements ChatCommand {
 
     private final MusicQueueManager queueManager;
     private final MusicPlayerService musicPlayerService;
     private final ApplicationEventPublisher eventPublisher;
+
+    public ClearCommand(MusicQueueManager queueManager, MusicPlayerService musicPlayerService,
+                        ApplicationEventPublisher eventPublisher) {
+        this.queueManager = queueManager;
+        this.musicPlayerService = musicPlayerService;
+        this.eventPublisher = eventPublisher;
+    }
 
     @Override
     public String getCommand() {

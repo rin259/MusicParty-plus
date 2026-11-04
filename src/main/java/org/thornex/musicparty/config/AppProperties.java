@@ -26,6 +26,19 @@ public class AppProperties {
     private ChatConfig chat = new ChatConfig();
     private CacheConfig cache = new CacheConfig();
     private AuthConfig auth = new AuthConfig();
+    private RoomsConfig rooms = new RoomsConfig();
+
+    @Data
+    public static class RoomsConfig {
+        /** 同时存在的房间上限（含默认房） */
+        private int maxRooms = 50;
+        /** 单个设备最多创建多少个房间 */
+        private int maxRoomsPerDevice = 5;
+        /** 无人在线多久后卸载运行时（元数据与快照保留） */
+        private int idleUnloadMinutes = 30;
+        /** 房间码长度 */
+        private int codeLength = 8;
+    }
 
     @Data
     public static class QueueConfig {

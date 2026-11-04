@@ -1,7 +1,6 @@
 package org.thornex.musicparty.service;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.Music;
 import org.thornex.musicparty.dto.MusicQueueItem;
@@ -17,7 +16,6 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
-@Service
 @RequiredArgsConstructor
 public class MusicQueueManager {
 
