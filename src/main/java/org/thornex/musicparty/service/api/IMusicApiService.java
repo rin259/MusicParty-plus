@@ -23,13 +23,20 @@ public interface IMusicApiService {
     default Mono<List<Music>> searchMusic(String keyword, int offset, int limit) { return searchMusic(keyword); }
 
     /** 歌单分页结果：items + 下一页的偏移 + 是否还有（应对「部分曲目不可用」导致的短页）。 */
-    record PagedPlaylist(java.util.List<Music> items, int nextOffset, boolean hasMore) {}
+    record PagedPlaylist(java.util.List<Music> items, int nextOffset, boolean hasMore) {
+        /** 统一语义：本页是否满 = 是否还有下一页。手写 hasMore 是这类 bug 的温床。 */
+        public static PagedPlaylist of(java.util.List<Music> items, int offset, int limit) {
+            int size = items == null ? 0 : items.size();
+            return new PagedPlaylist(items == null ? java.util.List.of() : items,
+                    offset + size, size >= Math.max(1, limit));
+        }
+    }
 
     default Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit) {
         return getPlaylistMusics(playlistId, offset, limit)
                 // 没有精确元数据的平台：按「本页是否满」推断，绝不能写死 false，
                 // 否则网易云/B站这类超过一页的歌单会立刻被判为到底。
-                .map(items -> new PagedPlaylist(items, offset + items.size(), items.size() >= limit));
+                .map(items -> PagedPlaylist.of(items, offset, limit));
     }
 
     /** 由曲目 ID 反查用户可读的源站页面地址；拼不出页面的平台返回空。 */

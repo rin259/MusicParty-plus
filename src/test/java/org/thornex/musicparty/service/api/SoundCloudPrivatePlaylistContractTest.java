@@ -156,6 +156,21 @@ class SoundCloudPrivatePlaylistContractTest {
     }
 
     @Test
+    void nonNumericPlaylistIdStillReportsMoreWhenPageIsFull() {
+        // own: 走的是默认分页映射；2 首 < limit 50 -> 到底
+        var page = service.getPlaylistMusicsPaged("own:djtest:111", 0, 50).block();
+        assertThat(page).isNotNull();
+        assertThat(page.items()).hasSize(2);
+        assertThat(page.hasMore()).isFalse();
+
+        // limit 1 -> 满页，必须告诉前端「还有」
+        var small = service.getPlaylistMusicsPaged("own:djtest:111", 0, 1).block();
+        assertThat(small).isNotNull();
+        assertThat(small.items()).hasSize(1);
+        assertThat(small.hasMore()).isTrue();
+    }
+
+    @Test
     void sendsAValidAuthorizationHeader() {
         service.getUserPlaylists("djtest").block();
         assertThat(authHeaders).isNotEmpty();

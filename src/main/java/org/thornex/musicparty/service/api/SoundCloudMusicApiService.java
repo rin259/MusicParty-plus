@@ -158,7 +158,7 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
     public Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit) {
         if (!playlistId.matches("\\d+")) {
             return getPlaylistMusics(playlistId, offset, limit)
-                    .map(items -> new PagedPlaylist(items, offset + items.size(), false));
+                    .map(items -> PagedPlaylist.of(items, offset, limit));
         }
         int safeOffset = Math.max(0, offset);
         int safeLimit = Math.clamp(limit, 1, 50);
