@@ -99,26 +99,36 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     const fetchSongsPage = async () => {
         if (!currentPlaylistId.value) return;
         try {
-            const rawSongs = await musicApi.getPlaylistSongs(
+            const startOffset = offset.value;
+            const response = await musicApi.getPlaylistSongsPage(
                 platformRef.value,
                 currentPlaylistId.value,
-                offset.value,
+                startOffset,
                 limit.value
             );
+            const rawSongs = response.data || [];
 
-            // B站特殊的分页判定
-            if (platformRef.value === 'bilibili') {
-                if (rawSongs.length === 0) hasMore.value = false;
+            // 服务端会返回「下一页的偏移」与「是否还有」：
+            // 因为部分曲目在区域不可用时会被丢弃，短页不等于到底。
+            const nextOffsetHeader = Number(response.headers?.['x-playlist-next-offset']);
+            const hasMoreHeader = response.headers?.['x-playlist-has-more'];
+
+            if (Number.isFinite(nextOffsetHeader)) {
+                offset.value = nextOffsetHeader;
             } else {
-                if (rawSongs.length < limit.value) hasMore.value = false;
+                offset.value = startOffset + rawSongs.length;
             }
+
+            if (hasMoreHeader === 'true') hasMore.value = true;
+            else if (hasMoreHeader === 'false') hasMore.value = false;
+            else if (platformRef.value === 'bilibili') hasMore.value = rawSongs.length > 0;
+            else hasMore.value = rawSongs.length >= limit.value;
 
             const validSongs = rawSongs.filter(s => s.id !== 'INVALID_SKIP');
             songsRef.value.push(...validSongs);
 
-            // 贪婪加载：如果有效数据太少，自动加载下一页
+            // 贪婪加载：如果有效数据太少，自动加载下一页（offset 已由服务端给出）
             if (hasMore.value && rawSongs.length > 0 && validSongs.length < 10) {
-                offset.value += limit.value;
                 setTimeout(fetchSongsPage, 50);
             }
 
@@ -220,8 +230,12 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         // 0 首的条目是失败加载的残留，绝不能当命中——否则点击歌单会毫无反应
         if (cached && (cached.songs || []).length > 0) {
             songsRef.value = cached.songs || [];
-            offset.value = cached.offset || songsRef.value.length;
-            hasMore.value = cached.hasMore !== false;
+            // offset 是「下一页的 id 偏移」，可能大于已显示条数（有曲目不可用），
+            // 所以优先用缓存里保存的值
+            offset.value = Number.isFinite(cached.offset) ? cached.offset : songsRef.value.length;
+            // 缓存里的 hasMore 可能是历史遗留的错误状态（后端修好前写入的 false），
+            // 恢复时一律按「可能还有更多」处理：真到底了，翻页会拿到 0 条再收尾。
+            hasMore.value = true;
             loadingRef.value = false;
             viewportScrollTop = cached.scrollTop || 0;
             pendingRestoreScrollTop = cached.scrollTop || 0;
@@ -249,7 +263,6 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
 
         if (bottom < 100 && hasMore.value && !isLoadingMore.value && !loadingRef.value) {
             isLoadingMore.value = true;
-            offset.value += limit.value;
             try {
                 await fetchSongsPage();
             } finally {
@@ -264,7 +277,6 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         isLoadingMore.value = true;
         try {
             while (hasMore.value) {
-                offset.value += limit.value;
                 await fetchSongsPage();
             }
         } finally {

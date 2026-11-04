@@ -12,7 +12,8 @@
  *  - 最多保留 8 个歌单，按最近使用淘汰。
  */
 
-const STORAGE_KEY = 'mp_playlist_cache_v1';
+// v2：v1 里存过「提前到底」的 hasMore=false，导致重新进入后直接 END。
+const STORAGE_KEY = 'mp_playlist_cache_v2';
 const TTL_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 8;
 

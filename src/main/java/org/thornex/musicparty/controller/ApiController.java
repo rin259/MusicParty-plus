@@ -132,17 +132,21 @@ public class ApiController {
     }
 
     @GetMapping("/playlist/songs/{platform}/{playlistId}")
-    public Mono<List<Music>> getPlaylistSongs(@PathVariable String platform,
-                                              @PathVariable String playlistId,
-                                              @RequestParam(defaultValue = "0") int offset,
-                                              @RequestParam(defaultValue = "20") int limit) {
+    public Mono<ResponseEntity<List<Music>>> getPlaylistSongs(@PathVariable String platform,
+                                                              @PathVariable String playlistId,
+                                                              @RequestParam(defaultValue = "0") int offset,
+                                                              @RequestParam(defaultValue = "20") int limit) {
         log.info("playlist songs request: platform={} id={} offset={} limit={}",
                 platform, playlistId, offset, limit);
-        return getService(platform).getPlaylistMusics(playlistId, offset, limit)
-                .doOnNext(musics -> log.info("playlist songs response: platform={} id={} offset={} -> {} items",
-                        platform, playlistId, offset, musics.size()))
-                .doOnError(error -> log.warn("playlist songs failed: platform={} id={} offset={} -> {}",
-                        platform, playlistId, offset, error.getMessage()));
+        return getService(platform).getPlaylistMusicsPaged(playlistId, offset, limit)
+                .map(page -> {
+                    log.info("playlist songs response: platform={} id={} offset={} -> {} items, next={}, hasMore={}",
+                            platform, playlistId, offset, page.items().size(), page.nextOffset(), page.hasMore());
+                    return ResponseEntity.ok()
+                            .header("X-Playlist-Next-Offset", String.valueOf(page.nextOffset()))
+                            .header("X-Playlist-Has-More", String.valueOf(page.hasMore()))
+                            .body(page.items());
+                });
     }
 
     @GetMapping("/user/search/{platform}/{keyword}")

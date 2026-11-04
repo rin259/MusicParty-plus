@@ -149,6 +149,48 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         });
     }
 
+    /**
+     * 按 id 分页取公开 Set：因为「区域不可用」的曲目会被 /tracks?ids= 丢弃，
+     * 直接按 offset+limit 取会得到短页，前端据此误判到底（提前 END OF PLAYLIST）。
+     * 这里多取一些 id，凑够一页，并把「下一页的 id 偏移」与「是否还有」交给控制器写进响应头。
+     */
+    @Override
+    public Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit) {
+        if (!playlistId.matches("\\d+")) {
+            return getPlaylistMusics(playlistId, offset, limit)
+                    .map(items -> new PagedPlaylist(items, offset + items.size(), false));
+        }
+        int safeOffset = Math.max(0, offset);
+        int safeLimit = Math.clamp(limit, 1, 50);
+        return resolver.getSoundCloudPlaylistTrackIds(playlistId)
+                .flatMap(ids -> {
+                    int total = ids.size();
+                    if (safeOffset >= total) {
+                        return Mono.just(new PagedPlaylist(List.of(), total, false));
+                    }
+                    // 最多看 3 倍 id，抵消不可用曲目
+                    int windowEnd = Math.min(total, safeOffset + safeLimit * 3);
+                    List<String> window = ids.subList(safeOffset, windowEnd);
+                    return searchClient.tracksByIds(window).map(tracks -> {
+                        int take = Math.min(safeLimit, tracks.size());
+                        List<YtDlpResolver.TrackMetadata> page = tracks.subList(0, take);
+                        // 找出这一页最后一个可用曲目在 id 列表里的位置，作为下一页的起点
+                        int nextOffset = total;
+                        if (take > 0) {
+                            String lastId = page.get(take - 1).id();
+                            for (int i = 0; i < window.size(); i++) {
+                                if (window.get(i).equals(lastId)) {
+                                    nextOffset = safeOffset + i + 1;
+                                    break;
+                                }
+                            }
+                        }
+                        boolean hasMore = nextOffset < total;
+                        return new PagedPlaylist(toMusicList(page), nextOffset, hasMore);
+                    });
+                });
+    }
+
     @Override
     public Mono<List<Music>> getPlaylistMusics(String playlistId, int offset, int limit) {
         if (playlistId.startsWith(LIKES_PREFIX)) {

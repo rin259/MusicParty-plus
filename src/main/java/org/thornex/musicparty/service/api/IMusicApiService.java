@@ -22,6 +22,14 @@ public interface IMusicApiService {
     default Mono<List<Music>> getAlbumMusics(String albumId) { return Mono.just(List.of()); }
     default Mono<List<Music>> searchMusic(String keyword, int offset, int limit) { return searchMusic(keyword); }
 
+    /** 歌单分页结果：items + 下一页的偏移 + 是否还有（应对「部分曲目不可用」导致的短页）。 */
+    record PagedPlaylist(java.util.List<Music> items, int nextOffset, boolean hasMore) {}
+
+    default Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit) {
+        return getPlaylistMusics(playlistId, offset, limit)
+                .map(items -> new PagedPlaylist(items, offset + items.size(), false));
+    }
+
     /** 由曲目 ID 反查用户可读的源站页面地址；拼不出页面的平台返回空。 */
     default Mono<String> resolvePageUrl(String musicId) { return Mono.empty(); }
 }

@@ -36,9 +36,9 @@ test('keeps platforms and playlists apart', () => {
 
 test('expires entries past the ttl', () => {
   writePlaylistCache('netease', 'old', { songs: [song('x')], offset: 1, hasMore: false, scrollTop: 0 });
-  const raw = JSON.parse(store.get('mp_playlist_cache_v1'));
+  const raw = JSON.parse(store.get('mp_playlist_cache_v2'));
   raw['netease:old'].at = Date.now() - 31 * 60 * 1000;
-  store.set('mp_playlist_cache_v1', JSON.stringify(raw));
+  store.set('mp_playlist_cache_v2', JSON.stringify(raw));
 
   assert.equal(readPlaylistCache('netease', 'old'), null);
 });
@@ -60,7 +60,7 @@ test('drop removes a single entry', () => {
 });
 
 test('survives corrupt storage', () => {
-  store.set('mp_playlist_cache_v1', '{not json');
+  store.set('mp_playlist_cache_v2', '{not json');
   assert.equal(readPlaylistCache('netease', 'whatever'), null);
   writePlaylistCache('netease', 'ok', { songs: [], offset: 0, hasMore: true, scrollTop: 0 });
   assert.ok(readPlaylistCache('netease', 'ok'));
