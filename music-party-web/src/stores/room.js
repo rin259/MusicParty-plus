@@ -22,7 +22,9 @@ const roomError = (error, fallback) => {
 export const useRoomStore = defineStore('room', () => {
     const deviceId = computed(() => localStorage.getItem(STORAGE_KEYS.TOKEN) || '');
 
-    const rooms = ref([]);
+    const myRooms = ref([]);
+    const publicRooms = ref([]);
+    const rooms = computed(() => [...myRooms.value, ...publicRooms.value]);
     const roomId = ref(localStorage.getItem(STORAGE_KEYS.ROOM_ID) || '');
     const info = ref(null);
     const entered = ref(false);
@@ -53,7 +55,11 @@ export const useRoomStore = defineStore('room', () => {
         loading.value = true;
         error.value = '';
         try {
-            rooms.value = (await roomsApi.mine()) || [];
+            // mine = 默认房 + 本设备创建；list = 其他设备创建的房间
+            const [mine, all] = await Promise.all([roomsApi.mine(), roomsApi.list()]);
+            myRooms.value = mine || [];
+            const known = new Set(myRooms.value.map((room) => room.id));
+            publicRooms.value = (all || []).filter((room) => !known.has(room.id));
             return rooms.value;
         } catch (e) {
             error.value = roomError(e, '无法读取房间列表');
@@ -63,14 +69,26 @@ export const useRoomStore = defineStore('room', () => {
         }
     };
 
+    /** 房主关闭房间（服务端会广播 ROOM_CLOSED 并删除元数据/快照）。 */
+    const deleteRoom = async (id) => {
+        await roomsApi.remove(id);
+        await loadRooms();
+    };
+
     const fetchInfo = async (id) => {
         const data = await roomsApi.info(id);
         info.value = data;
         return data;
     };
 
-    const createRoom = async (name, password) => {
-        const data = await roomsApi.create({ name, password: password || null });
+    const createRoom = async (name, password, visibility = 'public') => {
+        const data = await roomsApi.create({ name, password: password || null, visibility });
+        await loadRooms();
+        return data;
+    };
+
+    const updateRoom = async (id, payload) => {
+        const data = await roomsApi.update(id, payload);
         await loadRooms();
         return data;
     };
@@ -142,9 +160,9 @@ export const useRoomStore = defineStore('room', () => {
     const clearError = () => { error.value = ''; };
 
     return {
-        deviceId, rooms, roomId, info, entered, loading, error,
+        deviceId, rooms, myRooms, publicRooms, roomId, info, entered, loading, error,
         currentName, hasPassword,
         passwordFor, rememberPassword, forgetPassword,
-        loadRooms, fetchInfo, createRoom, verify, enter, leave, reject, clearError
+        loadRooms, fetchInfo, createRoom, updateRoom, verify, enter, leave, reject, clearError, deleteRoom
     };
 });

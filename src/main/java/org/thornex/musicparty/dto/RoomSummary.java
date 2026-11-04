@@ -5,6 +5,7 @@ public record RoomSummary(
         String id,
         String name,
         boolean hasPassword,
+        boolean listed,
         int onlineCount,
         boolean owner,
         boolean mainRoom

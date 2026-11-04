@@ -8,6 +8,7 @@ const deviceHeaders = () => ({
 
 export const roomsApi = {
     mine: () => client.get('/api/rooms/mine', { headers: deviceHeaders() }),
+    list: () => client.get('/api/rooms', { headers: deviceHeaders() }),
     info: (id) => client.get(`/api/rooms/${encodeURIComponent(id)}`, { headers: deviceHeaders() }),
     create: (payload) => client.post('/api/rooms', payload, { headers: deviceHeaders() }),
     update: (id, payload) => client.patch(`/api/rooms/${encodeURIComponent(id)}`, payload, { headers: deviceHeaders() }),

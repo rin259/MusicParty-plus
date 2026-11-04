@@ -49,7 +49,7 @@ class RoomRegistryTest {
 
         assertThat(registry.get(Room.MAIN_ROOM_ID)).isNotNull();
 
-        Room room = registry.create("测试房", "device-a", "secret1");
+        Room room = registry.create("测试房", "device-a", "secret1", null);
 
         assertThat(room.id()).hasSize(8);
         assertThat(room.ownerDeviceId()).isEqualTo("device-a");
@@ -59,12 +59,13 @@ class RoomRegistryTest {
         assertThat(registry.verifyPassword(room.id(), "wrong")).isFalse();
         assertThat(registry.listOwned("device-a")).extracting(Room::id).contains(room.id());
         assertThat(registry.listOwned("device-b")).isEmpty();
+        assertThat(room.listed()).isTrue();
     }
 
     @Test
     void onlyOwnerCanModifyOrDelete() {
         RoomRegistry registry = registry();
-        Room room = registry.create("测试房", "device-a", null);
+        Room room = registry.create("测试房", "device-a", null, null);
 
         assertThatThrownBy(() -> registry.rename(room.id(), "device-b", "偷改"))
                 .isInstanceOf(ApiRequestException.class)
@@ -72,6 +73,10 @@ class RoomRegistryTest {
 
         Room renamed = registry.rename(room.id(), "device-a", "新名字");
         assertThat(renamed.name()).isEqualTo("新名字");
+
+        assertThatThrownBy(() -> registry.delete(room.id(), "device-b"))
+                .isInstanceOf(ApiRequestException.class)
+                .hasMessageContaining("房主");
 
         assertThatThrownBy(() -> registry.delete(Room.MAIN_ROOM_ID, "device-a"))
                 .isInstanceOf(ApiRequestException.class)
@@ -82,10 +87,26 @@ class RoomRegistryTest {
     }
 
     @Test
+    void unlistedRoomsOnlyReachableByCode() {
+        RoomRegistry registry = registry();
+        Room room = registry.create("隐身房", "device-a", null, "unlisted");
+
+        assertThat(room.listed()).isFalse();
+        assertThat(registry.get(room.id())).isNotNull();
+        assertThat(registry.listAll()).extracting(Room::id).contains(room.id());
+
+        // mine 必须包含 unlisted（只是不出现在公共目录）
+        assertThat(registry.listOwned("device-a")).extracting(Room::id).contains(room.id());
+
+        Room renamed = registry.setVisibility(room.id(), "device-a", "public");
+        assertThat(renamed.listed()).isTrue();
+    }
+
+    @Test
     void roomCodeIsUniqueAndNoPasswordRoomsAcceptAnyone() {
         RoomRegistry registry = registry();
-        Room first = registry.create("A", "device-a", null);
-        Room second = registry.create("B", "device-a", null);
+        Room first = registry.create("A", "device-a", null, null);
+        Room second = registry.create("B", "device-a", null, null);
 
         assertThat(first.id()).isNotEqualTo(second.id());
         assertThat(registry.verifyPassword(first.id(), null)).isTrue();
@@ -95,7 +116,7 @@ class RoomRegistryTest {
     @Test
     void runtimeIsLazyAndLoadedPerRoom() {
         RoomRegistry registry = registry();
-        Room room = registry.create("A", "device-a", null);
+        Room room = registry.create("A", "device-a", null, null);
 
         assertThat(registry.runtimeQuietly(room.id())).isNull();
         assertThat(registry.getOrCreateRuntime(room.id())).isNotNull();

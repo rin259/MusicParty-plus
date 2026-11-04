@@ -11,10 +11,24 @@ public record Room(
         String name,
         String ownerDeviceId,
         String passwordHash,
+        String visibility,
         long createdAt,
         long lastActiveAt
 ) {
     public static final String MAIN_ROOM_ID = "main";
+    public static final String VISIBILITY_PUBLIC = "public";
+    public static final String VISIBILITY_UNLISTED = "unlisted";
+
+    public Room {
+        visibility = visibility == null || visibility.isBlank()
+                ? VISIBILITY_PUBLIC
+                : visibility.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** public 会出现在房间目录；unlisted 只能通过房间码/邀请链接进入。 */
+    public boolean listed() {
+        return !VISIBILITY_UNLISTED.equals(visibility);
+    }
 
     public boolean hasPassword() {
         return passwordHash != null && !passwordHash.isBlank();
@@ -29,14 +43,18 @@ public record Room(
     }
 
     public Room withName(String newName) {
-        return new Room(id, newName, ownerDeviceId, passwordHash, createdAt, lastActiveAt);
+        return new Room(id, newName, ownerDeviceId, passwordHash, visibility, createdAt, lastActiveAt);
     }
 
     public Room withPasswordHash(String newHash) {
-        return new Room(id, name, ownerDeviceId, newHash, createdAt, lastActiveAt);
+        return new Room(id, name, ownerDeviceId, newHash, visibility, createdAt, lastActiveAt);
+    }
+
+    public Room withVisibility(String newVisibility) {
+        return new Room(id, name, ownerDeviceId, passwordHash, newVisibility, createdAt, lastActiveAt);
     }
 
     public Room touched(long at) {
-        return new Room(id, name, ownerDeviceId, passwordHash, createdAt, at);
+        return new Room(id, name, ownerDeviceId, passwordHash, visibility, createdAt, at);
     }
 }

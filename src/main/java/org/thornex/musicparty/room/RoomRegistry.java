@@ -54,7 +54,8 @@ public class RoomRegistry {
         }
         if (!rooms.containsKey(Room.MAIN_ROOM_ID)) {
             long now = System.currentTimeMillis();
-            rooms.put(Room.MAIN_ROOM_ID, new Room(Room.MAIN_ROOM_ID, "主房间", null, null, now, now));
+            rooms.put(Room.MAIN_ROOM_ID, new Room(Room.MAIN_ROOM_ID, "主房间", null, null,
+                    Room.VISIBILITY_PUBLIC, now, now));
         }
         persistence.saveRooms(metadataSnapshot());
         log.info("Room registry ready: {} room(s)", rooms.size());
@@ -82,6 +83,11 @@ public class RoomRegistry {
         return room;
     }
 
+    /** 所有房间（含密码房；main 由调用方决定是否排除）。 */
+    public List<Room> listAll() {
+        return new ArrayList<>(rooms.values());
+    }
+
     public List<Room> listOwned(String deviceId) {
         if (deviceId == null || deviceId.isBlank()) return List.of();
         return rooms.values().stream()
@@ -90,7 +96,7 @@ public class RoomRegistry {
                 .toList();
     }
 
-    public synchronized Room create(String name, String ownerDeviceId, String rawPassword) {
+    public synchronized Room create(String name, String ownerDeviceId, String rawPassword, String visibility) {
         if (ownerDeviceId == null || ownerDeviceId.isBlank()) {
             throw new ApiRequestException("设备凭证缺失，请刷新页面后重试");
         }
@@ -103,7 +109,8 @@ public class RoomRegistry {
         }
         String id = generateRoomId();
         long now = System.currentTimeMillis();
-        Room room = new Room(id, name, ownerDeviceId, PasswordHasher.hash(rawPassword), now, now);
+        Room room = new Room(id, name, ownerDeviceId, PasswordHasher.hash(rawPassword),
+                normalizeVisibility(visibility), now, now);
         rooms.put(id, room);
         persistence.saveRooms(metadataSnapshot());
         log.info("Room created: {} ({}) by device {}", id, name, ownerDeviceId);
@@ -116,6 +123,20 @@ public class RoomRegistry {
         rooms.put(roomId, updated);
         persistence.saveRooms(metadataSnapshot());
         return updated;
+    }
+
+    public synchronized Room setVisibility(String roomId, String deviceId, String visibility) {
+        Room room = requireOwned(roomId, deviceId);
+        Room updated = room.withVisibility(normalizeVisibility(visibility)).touched(System.currentTimeMillis());
+        rooms.put(roomId, updated);
+        persistence.saveRooms(metadataSnapshot());
+        return updated;
+    }
+
+    private static String normalizeVisibility(String visibility) {
+        return Room.VISIBILITY_UNLISTED.equalsIgnoreCase(visibility)
+                ? Room.VISIBILITY_UNLISTED
+                : Room.VISIBILITY_PUBLIC;
     }
 
     public synchronized Room setPassword(String roomId, String deviceId, String rawPassword) {

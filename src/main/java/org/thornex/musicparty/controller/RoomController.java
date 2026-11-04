@@ -3,6 +3,7 @@ package org.thornex.musicparty.controller;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.thornex.musicparty.dto.PlayerEvent;
 import org.thornex.musicparty.dto.RoomCreateRequest;
 import org.thornex.musicparty.dto.RoomSummary;
 import org.thornex.musicparty.dto.RoomUpdateRequest;
@@ -10,6 +11,7 @@ import org.thornex.musicparty.dto.RoomVerifyRequest;
 import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.room.Room;
 import org.thornex.musicparty.room.RoomRegistry;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -27,9 +29,11 @@ import java.util.Map;
 public class RoomController {
 
     private final RoomRegistry roomRegistry;
+    private final SimpMessagingTemplate messagingTemplate;
 
-    public RoomController(RoomRegistry roomRegistry) {
+    public RoomController(RoomRegistry roomRegistry, SimpMessagingTemplate messagingTemplate) {
         this.roomRegistry = roomRegistry;
+        this.messagingTemplate = messagingTemplate;
     }
 
     private RoomSummary summary(Room room, String deviceId) {
@@ -37,10 +41,22 @@ public class RoomController {
                 room.id(),
                 room.name(),
                 roomRegistry.hasPassword(room.id()),
+                room.listed(),
                 roomRegistry.onlineCount(room.id()),
                 room.ownedBy(deviceId),
                 room.isMain()
         );
+    }
+
+    /** 公共房间目录（不含默认房）：其他设备创建的房间也能被发现。 */
+    @GetMapping
+    public List<RoomSummary> list(@RequestHeader(value = "X-Device-Id", required = false) String deviceId) {
+        return roomRegistry.listAll().stream()
+                .filter(room -> !room.isMain() && room.listed())
+                .map(room -> summary(room, deviceId))
+                .sorted(Comparator.comparingInt(RoomSummary::onlineCount).reversed()
+                        .thenComparing(RoomSummary::name, String.CASE_INSENSITIVE_ORDER))
+                .toList();
     }
 
     /** 我的房间（按设备）+ 默认房。 */
@@ -82,7 +98,7 @@ public class RoomController {
         if (roomName.length() > 30) roomName = roomName.substring(0, 30);
         String password = normalizePassword(request.password());
 
-        Room room = roomRegistry.create(roomName, deviceId, password);
+        Room room = roomRegistry.create(roomName, deviceId, password, request.visibility());
         return ResponseEntity.ok(summary(room, deviceId));
     }
 
@@ -95,6 +111,9 @@ public class RoomController {
             if (name.isEmpty()) throw new ApiRequestException("房间名不能为空");
             if (name.length() > 30) name = name.substring(0, 30);
             roomRegistry.rename(id, deviceId, name);
+        }
+        if (request.visibility() != null) {
+            roomRegistry.setVisibility(id, deviceId, request.visibility());
         }
         if (Boolean.TRUE.equals(request.clearPassword())) {
             roomRegistry.setPassword(id, deviceId, null);
@@ -109,6 +128,19 @@ public class RoomController {
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable String id,
                                     @RequestHeader(value = "X-Device-Id", required = false) String deviceId) {
+        Room room = roomRegistry.get(id);
+        if (room == null) return ResponseEntity.notFound().build();
+        if (room.isMain()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "默认房间不能删除"));
+        }
+        if (!room.ownedBy(deviceId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("message", "只有房主可以关闭这个房间"));
+        }
+
+        // 先通知在线成员，再卸载运行时/删除元数据。前端收到后会回到房间选择页。
+        messagingTemplate.convertAndSend("/topic/r/" + id + "/player/events",
+                new PlayerEvent("WARN", "ROOM_CLOSED", "SYSTEM", "房间已被房主关闭", null));
         roomRegistry.delete(id, deviceId);
         return ResponseEntity.ok(Map.of("message", "房间已关闭"));
     }

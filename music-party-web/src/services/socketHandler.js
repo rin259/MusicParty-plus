@@ -14,6 +14,7 @@ import { socketService } from './socket';
  */
 function handleGameEvent(event) {
     const userStore = useUserStore();
+    const roomStore = useRoomStore();
     const chatStore = useChatStore();
     const adminStore = useAdminStore();
     const { show, error, like } = useToast(); // This now uses the Pinia store wrapper
@@ -24,6 +25,16 @@ function handleGameEvent(event) {
         window.dispatchEvent(new CustomEvent('player:like', { detail: { userId: event.userId } }));
         // 点赞 toast 堆叠：连续点赞合并为一条，右上角 ×N 计数，淡出节奏不变
         like(event.message || `${userName} 点赞了`);
+        return;
+    }
+
+    if (event.action === 'ROOM_CLOSED') {
+        // 房主关闭房间：断开连接并回到落地页，避免停留在一个已不存在的房间
+        error(event.message || '房间已被房主关闭');
+        socketService.disconnect();
+        playerStore.connected = false;
+        playerStore.resetRoomState();
+        roomStore.reject('房间已被房主关闭');
         return;
     }
 

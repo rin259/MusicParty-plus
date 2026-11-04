@@ -39,33 +39,32 @@
             LOADING ROOMS...
           </div>
 
-          <div v-else class="space-y-2">
-            <button
-                v-for="room in roomStore.rooms"
-                :key="room.id"
-                type="button"
-                @click="selectRoom(room)"
-                :disabled="busy"
-                class="group flex w-full items-stretch gap-3 border border-medical-200 bg-surface-1 p-3 text-left transition-all hover:border-accent hover:shadow-sm disabled:opacity-60"
-            >
-              <span class="w-1 flex-shrink-0" :class="room.mainRoom ? 'bg-accent' : 'bg-medical-200'"></span>
-              <span class="min-w-0 flex-1">
-                <span class="flex items-center gap-2">
-                  <span class="truncate text-sm font-bold text-medical-900">{{ room.name }}</span>
-                  <span v-if="room.owner" class="flex-shrink-0 border border-accent/40 px-1 font-mono text-[9px] leading-4 text-accent-text">OWNER</span>
-                  <Lock v-if="room.hasPassword" class="h-3.5 w-3.5 flex-shrink-0 text-medical-500" aria-label="需要密码" />
-                </span>
-                <span class="mt-0.5 block truncate font-mono text-[10px] text-medical-500">
-                  {{ room.id }} · {{ room.onlineCount }} ONLINE
-                </span>
-              </span>
-              <ChevronRight class="h-4 w-4 flex-shrink-0 self-center text-medical-400 transition-colors group-hover:text-accent-text" />
-            </button>
+          <div v-else class="space-y-5">
+            <section v-for="section in sections" :key="section.key">
+              <div class="mb-2 flex items-center justify-between">
+                <h3 class="m-0 font-mono text-[10px] tracking-[0.18em] text-medical-500">{{ section.title }}</h3>
+                <span class="font-mono text-[10px] text-medical-500">{{ section.rooms.length }}</span>
+              </div>
 
-            <div v-if="!roomStore.rooms.length" class="border border-dashed border-medical-300 bg-medical-50 p-6 text-center">
-              <div class="font-mono text-[10px] tracking-[0.16em] text-medical-500">NO ROOMS YET</div>
-              <div class="mt-2 text-xs text-medical-600">在右侧创建一个房间，或输入房间码加入。</div>
-            </div>
+              <div v-if="section.rooms.length" class="space-y-2">
+                <RoomCard
+                    v-for="room in section.rooms"
+                    :key="room.id"
+                    :room="room"
+                    :disabled="busy"
+                    @select="selectRoom"
+                    @edit="openEdit"
+                    @delete="askDelete"
+                />
+              </div>
+
+              <div v-else class="border border-dashed border-medical-300 bg-medical-50 p-5 text-center">
+                <div class="font-mono text-[10px] tracking-[0.16em] text-medical-500">NO ROOMS YET</div>
+                <div class="mt-1.5 text-xs text-medical-600">
+                  {{ section.key === 'public' ? '还没有其他人创建的房间，点 REFRESH 再试。' : '在右侧创建一个房间，或输入房间码加入。' }}
+                </div>
+              </div>
+            </section>
           </div>
         </section>
 
@@ -109,6 +108,20 @@
                 aria-label="房间名" @focus="ensureVisible"
                 class="mb-1.5 min-h-10 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
             />
+            <div class="mb-1.5 grid grid-cols-2 gap-1" role="group" aria-label="房间可见性">
+              <button
+                  type="button"
+                  @click="createVisibility = 'public'"
+                  class="min-h-9 border px-2 font-mono text-[10px] font-bold tracking-[0.08em] transition-colors"
+                  :class="createVisibility === 'public' ? 'border-accent bg-accent text-accent-fg' : 'border-medical-200 bg-medical-50 text-medical-600 hover:border-medical-300'"
+              >PUBLIC · 房间列表可见</button>
+              <button
+                  type="button"
+                  @click="createVisibility = 'unlisted'"
+                  class="min-h-9 border px-2 font-mono text-[10px] font-bold tracking-[0.08em] transition-colors"
+                  :class="createVisibility === 'unlisted' ? 'border-accent bg-accent text-accent-fg' : 'border-medical-200 bg-medical-50 text-medical-600 hover:border-medical-300'"
+              >LINK ONLY · 仅房间码</button>
+            </div>
             <input
                 v-model="createPassword"
                 type="password"
@@ -158,6 +171,60 @@
       </footer>
     </div>
 
+    <!-- 房主编辑房间 -->
+    <div v-if="editTarget" class="fixed inset-0 z-[150] flex items-center justify-center bg-scrim/80 p-4 backdrop-blur-sm">
+      <div role="dialog" aria-modal="true" aria-labelledby="room-edit-title" class="w-[calc(100vw-2rem)] max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto border border-medical-200 bg-surface-1 p-6 shadow-2xl chamfer-br mp-scroll">
+        <h2 id="room-edit-title" class="m-0 text-xl font-bold tracking-tighter text-medical-900">ROOM SETTINGS</h2>
+        <p class="mb-4 mt-1 font-mono text-[10px] tracking-[0.14em] text-medical-500">{{ editTarget.id }}</p>
+
+        <label class="mb-1 block font-mono text-[10px] tracking-[0.14em] text-medical-500" for="edit-room-name">NAME</label>
+        <input id="edit-room-name" v-model="editName" maxlength="30" @focus="ensureVisible" class="mb-3 min-h-10 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none focus:border-accent" />
+
+        <div class="mb-1 font-mono text-[10px] tracking-[0.14em] text-medical-500">VISIBILITY</div>
+        <div class="mb-3 grid grid-cols-2 gap-1" role="group" aria-label="房间可见性">
+          <button type="button" @click="editVisibility = 'public'" class="min-h-9 border px-2 font-mono text-[10px] font-bold transition-colors" :class="editVisibility === 'public' ? 'border-accent bg-accent text-accent-fg' : 'border-medical-200 bg-medical-50 text-medical-600'">PUBLIC</button>
+          <button type="button" @click="editVisibility = 'unlisted'" class="min-h-9 border px-2 font-mono text-[10px] font-bold transition-colors" :class="editVisibility === 'unlisted' ? 'border-accent bg-accent text-accent-fg' : 'border-medical-200 bg-medical-50 text-medical-600'">LINK ONLY</button>
+        </div>
+
+        <label class="mb-1 block font-mono text-[10px] tracking-[0.14em] text-medical-500" for="edit-room-password">
+          PASSWORD（{{ editTarget.hasPassword ? '当前已设置' : '当前无密码' }}）
+        </label>
+        <input id="edit-room-password" v-model="editPassword" type="password" maxlength="64" :disabled="editClearPassword" placeholder="留空则不修改" @focus="ensureVisible" class="mb-1.5 min-h-10 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none focus:border-accent disabled:opacity-50" />
+        <label class="mb-4 flex items-center gap-2 text-[11px] text-medical-600">
+          <input v-model="editClearPassword" type="checkbox" class="h-4 w-4 accent-[rgb(var(--accent))]" />
+          移除房间密码
+        </label>
+
+        <div v-if="editError" role="alert" class="mb-3 border border-danger/40 bg-danger-bg px-2 py-1.5 font-mono text-[10px] text-danger">> {{ editError }}</div>
+        <div class="flex gap-2">
+          <button type="button" @click="editTarget = null" class="min-h-11 flex-1 border border-medical-200 px-3 text-xs font-bold text-medical-600 hover:bg-medical-100">CANCEL</button>
+          <button type="button" @click="saveEdit" :disabled="editSaving" class="min-h-11 flex-1 bg-surface-strong px-3 text-xs font-bold text-white hover:bg-accent hover:text-accent-fg disabled:opacity-50">{{ editSaving ? 'SAVING...' : 'SAVE' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 房主关闭房间确认 -->
+    <div v-if="deleteTarget" class="fixed inset-0 z-[150] flex items-center justify-center bg-scrim/80 p-4 backdrop-blur-sm">
+      <div role="dialog" aria-modal="true" aria-labelledby="room-delete-title" class="w-[calc(100vw-2rem)] max-w-sm border border-medical-200 bg-surface-1 p-6 shadow-2xl chamfer-br">
+        <h2 id="room-delete-title" class="m-0 text-xl font-bold tracking-tighter text-medical-900">CLOSE ROOM</h2>
+        <p class="mb-3 mt-1 font-mono text-[10px] tracking-[0.14em] text-medical-500">
+          {{ deleteTarget.name }} · {{ deleteTarget.id }}
+        </p>
+        <p class="mb-5 text-xs leading-relaxed text-medical-600">
+          房间会被永久关闭，在线成员会收到提示并返回房间选择页。此操作不可撤销。
+        </p>
+        <div v-if="deleteError" role="alert" class="mb-3 border border-danger/40 bg-danger-bg px-2 py-1.5 font-mono text-[10px] text-danger">
+          > {{ deleteError }}
+        </div>
+        <div class="flex gap-2">
+          <button type="button" @click="deleteTarget = null" class="min-h-11 flex-1 border border-medical-200 px-3 text-xs font-bold text-medical-600 hover:bg-medical-100">CANCEL</button>
+          <button type="button" @click="confirmDelete" :disabled="deleting" class="min-h-11 flex-1 bg-danger px-3 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50">
+            {{ deleting ? 'CLOSING...' : 'CLOSE ROOM' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 密码弹层 -->
     <div v-if="pendingRoom" class="fixed inset-0 z-[140] flex items-center justify-center bg-scrim/80 p-4 backdrop-blur-sm">
       <div role="dialog" aria-modal="true" aria-labelledby="room-pass-title" class="w-[calc(100vw-2rem)] max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto border border-medical-200 bg-surface-1 p-6 shadow-2xl chamfer-br mp-scroll">
@@ -189,25 +256,44 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
-import { ArrowRight, ChevronRight, Lock, Plus, RefreshCw } from 'lucide-vue-next';
+import { ArrowRight, Plus, RefreshCw } from 'lucide-vue-next';
 import { useRoomStore } from '../stores/room';
+import { useToast } from '../composables/useToast';
+import RoomCard from './RoomCard.vue';
 import { useUserStore } from '../stores/user';
 import { STORAGE_KEYS } from '../constants/keys';
 
 const emit = defineEmits(['enter']);
 const roomStore = useRoomStore();
 const userStore = useUserStore();
+const { info, error: toastError } = useToast();
 
 const profileName = ref(localStorage.getItem(STORAGE_KEYS.USERNAME) || '');
 const nameDraft = ref(profileName.value);
 const nameError = ref('');
 const createName = ref('');
 const createPassword = ref('');
+const createVisibility = ref('public');
 const joinCode = ref('');
 const busy = ref(false);
 const pendingRoom = ref(null);
 const pendingPassword = ref('');
 const passwordError = ref('');
+const deleteTarget = ref(null);
+const deleting = ref(false);
+const deleteError = ref('');
+const editTarget = ref(null);
+const editName = ref('');
+const editVisibility = ref('public');
+const editPassword = ref('');
+const editClearPassword = ref(false);
+const editSaving = ref(false);
+const editError = ref('');
+
+const sections = computed(() => [
+  { key: 'mine', title: 'MY ROOMS', rooms: roomStore.myRooms },
+  { key: 'public', title: 'OTHER ROOMS', rooms: roomStore.publicRooms }
+]);
 
 const hasName = computed(() => !!profileName.value && !isGuestName(profileName.value));
 const canCreate = computed(() => hasName.value);
@@ -222,12 +308,71 @@ function ensureVisible(event) {
   }, 260);
 }
 
-// 密码弹层打开时锁住背后的 landing 滚动；关闭/进入房间后交回 App 控制
-watch(pendingRoom, (value) => {
-  const scrollable = !value && !roomStore.entered;
+// 密码/删除确认弹层打开时锁住背后的 landing 滚动；关闭/进入房间后交回 App 控制
+watch([pendingRoom, deleteTarget, editTarget], ([pending, deletingRoom, editingRoom]) => {
+  const scrollable = !pending && !deletingRoom && !editingRoom && !roomStore.entered;
   document.body.classList.toggle('mp-scrollable', scrollable);
   document.documentElement.classList.toggle('mp-scrollable', scrollable);
 });
+
+function askDelete(room) {
+  deleteTarget.value = room;
+  deleteError.value = '';
+}
+
+function openEdit(room) {
+  editTarget.value = room;
+  editName.value = room.name;
+  editVisibility.value = room.listed ? 'public' : 'unlisted';
+  editPassword.value = '';
+  editClearPassword.value = false;
+  editError.value = '';
+}
+
+async function saveEdit() {
+  const room = editTarget.value;
+  if (!room) return;
+  const name = editName.value.trim();
+  if (!name) {
+    editError.value = '房间名不能为空';
+    return;
+  }
+  editSaving.value = true;
+  editError.value = '';
+  try {
+    const payload = { name, visibility: editVisibility.value };
+    if (editClearPassword.value) {
+      payload.clearPassword = true;
+    } else if (editPassword.value.trim()) {
+      payload.password = editPassword.value.trim();
+    }
+    await roomStore.updateRoom(room.id, payload);
+    editTarget.value = null;
+    info('房间设置已更新');
+  } catch (e) {
+    editError.value = e?.response?.data?.message || '保存失败';
+    toastError(editError.value);
+  } finally {
+    editSaving.value = false;
+  }
+}
+
+async function confirmDelete() {
+  const room = deleteTarget.value;
+  if (!room) return;
+  deleting.value = true;
+  deleteError.value = '';
+  try {
+    await roomStore.deleteRoom(room.id);
+    deleteTarget.value = null;
+    info('房间已关闭');
+  } catch (e) {
+    deleteError.value = e?.response?.data?.message || '关闭房间失败';
+    toastError(deleteError.value);
+  } finally {
+    deleting.value = false;
+  }
+}
 
 function isGuestName(name) {
   const value = (name || '').trim().toLowerCase();
@@ -311,7 +456,7 @@ async function createRoom() {
   roomStore.clearError();
   try {
     const password = createPassword.value;
-    const room = await roomStore.createRoom(createName.value.trim(), password);
+    const room = await roomStore.createRoom(createName.value.trim(), password, createVisibility.value);
     createName.value = '';
     createPassword.value = '';
     // 刚设置的密码直接用于首次进入，不要马上再问一遍
