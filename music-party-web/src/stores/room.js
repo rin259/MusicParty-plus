@@ -155,6 +155,14 @@ export const useRoomStore = defineStore('room', () => {
         entered.value = false;
         error.value = message || '无法进入房间';
         if (info.value) forgetPassword(info.value.id);
+        // 清掉 ?room=，否则 landing 挂载时会再次自动进入一个已不存在的房间
+        try {
+            const url = new URL(window.location.href);
+            if (url.searchParams.has('room')) {
+                url.searchParams.delete('room');
+                window.history.replaceState({}, '', url);
+            }
+        } catch { /* ignore */ }
     };
 
     const clearError = () => { error.value = ''; };

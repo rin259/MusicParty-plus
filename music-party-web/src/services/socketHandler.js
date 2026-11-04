@@ -14,6 +14,7 @@ import { socketService } from './socket';
  */
 function handleGameEvent(event) {
     const userStore = useUserStore();
+    const playerStore = usePlayerStore();
     const roomStore = useRoomStore();
     const chatStore = useChatStore();
     const adminStore = useAdminStore();
