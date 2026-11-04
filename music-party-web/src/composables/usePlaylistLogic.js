@@ -177,9 +177,11 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
                 if (fetched.length >= target) break;                // 已核对完用户手里的量
             }
 
-            // 服务端一页都没给（限流/故障）时绝不能用空列表覆盖已有数据
+            // 服务端一页都没给时：原本就没有内容 -> 视为空歌单；原本有内容 -> 保留并提示
             if (fetched.length === 0) {
-                error('刷新歌单失败（源返回为空），已保留原数据');
+                if (target > 0) {
+                    error('刷新歌单失败（源返回为空），已保留原数据');
+                }
                 return;
             }
             songsRef.value = fetched;

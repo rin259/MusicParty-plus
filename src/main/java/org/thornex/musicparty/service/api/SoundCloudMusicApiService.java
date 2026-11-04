@@ -177,11 +177,22 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         if (!playlistId.matches("\\d+")) {
             return Mono.error(new ApiRequestException("SoundCloud 歌单 ID 无效"));
         }
-        return resolver.getSoundCloudPlaylistTracks(playlistId, offset, limit)
-                .map(tracks -> tracks.stream()
-                        .map(track -> new Music(track.id(), track.title(), List.of(track.artist()), track.durationMs(),
-                                getPlatformName(), track.thumbnail()))
-                        .toList());
+        // 顺序：flat 取 id 列表（快）→ 按页批量取元数据（api-v2 /tracks?ids=）→ yt-dlp 兜底
+        int safeOffset = Math.max(0, offset);
+        int safeLimit = Math.clamp(limit, 1, 50);
+        return resolver.getSoundCloudPlaylistTrackIds(playlistId)
+                .flatMap(ids -> {
+                    if (safeOffset >= ids.size()) return Mono.just(List.<Music>of());
+                    List<String> slice = ids.subList(safeOffset, Math.min(ids.size(), safeOffset + safeLimit));
+                    return searchClient.tracksByIds(slice)
+                            .map(this::toMusicList)
+                            .onErrorResume(error -> {
+                                log.warn("SoundCloud batch metadata failed for {}, using yt-dlp: {}",
+                                        playlistId, error.getMessage());
+                                return resolver.getSoundCloudPlaylistTracks(playlistId, offset, limit)
+                                        .map(this::toMusicList);
+                            });
+                });
     }
 
 
@@ -211,13 +222,24 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
                 page.at = System.currentTimeMillis();
             }
             int want = offset + limit;
-            String url = page.items.isEmpty() ? firstUrl : page.nextHref;
-            while (page.items.size() < want && url != null) {
+            String url = firstUrl;
+            while (page.items.size() < want) {
                 JsonNode response = authorizedGet(url, token);
-                page.items.addAll(SoundCloudSearchClient.parseLikes(response));
+                List<YtDlpResolver.TrackMetadata> batch = SoundCloudSearchClient.parseLikes(response);
+                if (batch.isEmpty()) break;
+                page.items.addAll(batch);
+
+                // 新接口给 next_href；但 /me/likes、/me/tracks 实际返回的是裸数组（没有游标），
+                // 只能用 offset 继续翻页——这也是「LIKES 只有 50 首」的根因。
                 String next = response.path("next_href").asText("");
-                page.nextHref = next.isBlank() ? null : next;
-                url = page.nextHref;
+                if (!next.isBlank()) {
+                    url = next;
+                } else if (response.isArray()) {
+                    url = withOffset(firstUrl, page.items.size());
+                } else {
+                    break;
+                }
+                log.info("SoundCloud page {}: +{} items (total {})", pathOf(url), batch.size(), page.items.size());
             }
             if (offset >= page.items.size()) return List.of();
             return new java.util.ArrayList<>(
@@ -272,6 +294,12 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         String base = appProperties.getSoundcloudOAuth().getApiBase();
         if (base == null || base.isBlank()) return "https://api.soundcloud.com";
         return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+    }
+
+    /** 在 URL 上设置 offset（已有则替换），用于数组形状的分页 */
+    private static String withOffset(String url, int offset) {
+        String cleaned = url.replaceAll("([?&])offset=\\d+&?", "$1").replaceAll("[?&]$", "");
+        return cleaned + (cleaned.contains("?") ? "&" : "?") + "offset=" + offset;
     }
 
     private static String pathOf(String url) {
@@ -388,7 +416,11 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         return Mono.fromCallable(() -> {
             Map<String, Object> out = new java.util.LinkedHashMap<>();
             for (String handle : oauthService.tokenHandles()) {
-                out.put(handle, diagnoseBlocking(handle));
+                try {
+                    out.put(handle, diagnoseBlocking(handle));
+                } catch (RuntimeException error) {
+                    out.put(handle, Map.of("status", "error", "message", String.valueOf(error.getMessage())));
+                }
             }
             if (out.isEmpty()) out.put("_note", "没有任何有效的 SoundCloud token（未绑定或服务重启过）");
             return out;
@@ -439,6 +471,9 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
             JsonNode node = authorizedGet(url, token);
             result.put("status", "ok");
             result.put("count", SoundCloudSearchClient.parseLikes(node).size());
+            result.put("shape", node.isArray() ? "array:" + node.size()
+                    : (node.path("collection").isArray() ? "collection:" + node.path("collection").size()
+                    : "object:" + String.join(",", iterableToList(node.fieldNames()))));
             JsonNode collection = node.path("collection");
             if (collection.isArray() && collection.size() > 0) {
                 JsonNode item = collection.get(0);
@@ -451,6 +486,12 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
             result.put("message", error.getMessage());
         }
         return result;
+    }
+
+    private static List<String> iterableToList(java.util.Iterator<String> it) {
+        List<String> out = new java.util.ArrayList<>();
+        while (it.hasNext() && out.size() < 8) out.add(it.next());
+        return out;
     }
 
     private Map<String, Object> probePlaylists(String handle, String token) {
@@ -502,6 +543,8 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
 
         String candidate = value.trim();
         if (candidate.startsWith("@")) candidate = candidate.substring(1).trim();
+        // 形如 "dj-test?si=xxx" 的脏输入（历史上从 permalink_url 里误取）
+        if (!candidate.contains("/")) candidate = candidate.split("[?#]")[0];
         if (!candidate.contains("/") && HANDLE_PATTERN.matcher(candidate).matches()) {
             return candidate;
         }

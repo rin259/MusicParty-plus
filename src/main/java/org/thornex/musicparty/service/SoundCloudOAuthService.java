@@ -78,14 +78,21 @@ public class SoundCloudOAuthService {
         try {
             if (!java.nio.file.Files.exists(TOKEN_FILE)) return;
             JsonNode root = MAPPER.readTree(java.nio.file.Files.readString(TOKEN_FILE));
-            root.fields().forEachRemaining(entry -> {
+            boolean migrated = false;
+            for (java.util.Iterator<Map.Entry<String, JsonNode>> it = root.fields(); it.hasNext(); ) {
+                Map.Entry<String, JsonNode> entry = it.next();
                 JsonNode node = entry.getValue();
                 String access = node.path("accessToken").asText("");
-                if (access.isBlank()) return;
-                tokens.put(entry.getKey(), new UserToken(access,
+                if (access.isBlank()) continue;
+                // 旧的键可能来自带 ?utm_... 的 permalink_url，统一归一成纯 handle
+                String clean = handleFromPermalink(entry.getKey()).toLowerCase(java.util.Locale.ROOT);
+                if (clean.isBlank()) continue;
+                if (!clean.equals(entry.getKey())) migrated = true;
+                tokens.put(clean, new UserToken(access,
                         node.path("refreshToken").asText(""), node.path("expiresAt").asLong(0L)));
-            });
+            }
             log.info("Restored {} SoundCloud token(s) from disk", tokens.size());
+            if (migrated) persistTokens();
         } catch (Exception error) {
             log.warn("Could not restore SoundCloud tokens: {}", error.getMessage());
         }
@@ -181,7 +188,7 @@ public class SoundCloudOAuthService {
                                 Map<String, Object> profile = profileOf(me);
                                 String handle = String.valueOf(profile.get("handle"));
                                 if (!handle.isBlank()) {
-                                    tokens.put(handle.toLowerCase(java.util.Locale.ROOT),
+                                    tokens.put(handleFromPermalink(handle).toLowerCase(java.util.Locale.ROOT),
                                             new UserToken(accessToken, refreshToken,
                                                     System.currentTimeMillis() + expiresIn * 1000L));
                                     persistTokens();
@@ -226,13 +233,13 @@ public class SoundCloudOAuthService {
 
     /** 该 handle 是否有可用的用户 token（决定能否展示「喜欢的音乐」） */
     public boolean hasUserToken(String handle) {
-        return handle != null && tokens.containsKey(handle.toLowerCase(java.util.Locale.ROOT));
+        return handle != null && tokens.containsKey(handleFromPermalink(handle).toLowerCase(java.util.Locale.ROOT));
     }
 
     /** 返回可用的 access token；过期时用 refresh_token 续期，失败则移除。 */
     public synchronized java.util.Optional<String> validAccessToken(String handle) {
         if (handle == null) return java.util.Optional.empty();
-        String key = handle.toLowerCase(java.util.Locale.ROOT);
+        String key = handleFromPermalink(handle).toLowerCase(java.util.Locale.ROOT);
         UserToken token = tokens.get(key);
         if (token == null) return java.util.Optional.empty();
         if (System.currentTimeMillis() < token.expiresAt() - 60_000) {
@@ -284,10 +291,24 @@ public class SoundCloudOAuthService {
         String permalink = me.path("permalink_url").asText("");
         String name = me.path("username").asText(me.path("display_name").asText("SoundCloud 用户"));
         String avatar = me.path("avatar_url").asText("");
-        String handle = permalink.startsWith("https://soundcloud.com/")
-                ? permalink.substring("https://soundcloud.com/".length()).split("/")[0]
-                : permalink;
-        return Map.of("handle", handle, "name", name, "avatarUrl", avatar);
+        return Map.of("handle", handleFromPermalink(permalink), "name", name, "avatarUrl", avatar);
+    }
+
+    /** permalink → handle：只取路径第一段，丢掉查询串/尾部斜杠（否则会拼出非法 handle） */
+    static String handleFromPermalink(String permalink) {
+        if (permalink == null || permalink.isBlank()) return "";
+        String value = permalink.trim();
+        try {
+            java.net.URI uri = java.net.URI.create(value);
+            String path = uri.getPath() == null ? "" : uri.getPath();
+            String first = path.replaceAll("^/+", "").split("/")[0];
+            if (!first.isBlank()) return first;
+        } catch (RuntimeException ignored) {
+            // 非标准 URL，退回手工解析
+        }
+        int domain = value.toLowerCase(java.util.Locale.ROOT).indexOf("soundcloud.com/");
+        if (domain >= 0) value = value.substring(domain + "soundcloud.com/".length());
+        return value.split("[/?#]")[0];
     }
 
     private void trimPending() {
