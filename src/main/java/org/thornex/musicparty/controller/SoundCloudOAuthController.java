@@ -29,7 +29,7 @@ import java.util.Map;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/soundcloud/oauth")
+@RequestMapping("/api/soundcloud")
 public class SoundCloudOAuthController {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -41,13 +41,13 @@ public class SoundCloudOAuthController {
     }
 
     /** 前端探测：OAuth 是否已配置（决定「一键绑定」按钮是否显示） */
-    @GetMapping("/status")
+    @GetMapping("/oauth/status")
     public Map<String, Boolean> status() {
         return Map.of("configured", oauthService.configured());
     }
 
     /** 生成授权跳转地址并 302。未配置 OAuth 时返回 501，前端会隐藏一键绑定入口。 */
-    @GetMapping("/start")
+    @GetMapping("/oauth/start")
     public Mono<ResponseEntity<Void>> start() {
         return Mono.fromSupplier(oauthService::start)
                 .map(url -> ResponseEntity.status(HttpStatus.FOUND)

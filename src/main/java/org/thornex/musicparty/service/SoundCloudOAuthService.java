@@ -162,10 +162,11 @@ public class SoundCloudOAuthService {
     }
 
     private String newToken() {
+        // Base64URL 的输出本来就在 [A-Za-z0-9_-] 内，直接使用；
+        // 早前用 STATE_TAKER.matcher(raw).replaceAll("") 会把整串删掉，生成空 state。
         byte[] bytes = new byte[32];
         random.nextBytes(bytes);
-        String raw = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-        return STATE_TAKER.matcher(raw).replaceAll("");
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     private static String urlEncode(String value) {

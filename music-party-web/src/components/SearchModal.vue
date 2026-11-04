@@ -387,6 +387,7 @@ import AddButton from './search/AddButton.vue';
 import ImportMeter from './search/ImportMeter.vue';
 import { musicApi } from '../api/music';
 import { useFocusTrap } from '../composables/useFocusTrap';
+import { useEventListener } from '@vueuse/core';
 import { useToast } from '../composables/useToast';
 import { formatDuration, looksLikeLink, PLATFORM_LABEL, songKey as mergeKey } from '../logic/searchMerge.js';
 

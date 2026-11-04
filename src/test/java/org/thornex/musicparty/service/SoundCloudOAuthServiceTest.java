@@ -52,6 +52,8 @@ class SoundCloudOAuthServiceTest {
                 .contains("response_type=code")
                 .contains("code_challenge_method=S256")
                 .contains("state=");
+        String state = stateFrom(url);
+        assertThat(state).as("state 不能为空——空 state 会让回调无法核销").hasSizeGreaterThanOrEqualTo(16);
         assertThat(SoundCloudOAuthService.pkceChallenge(RFC7636_VERIFIER)).isNotBlank();
     }
 
