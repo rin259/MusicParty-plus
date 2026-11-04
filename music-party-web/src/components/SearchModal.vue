@@ -188,11 +188,11 @@
                 </button>
               </div>
 
-              <div v-if="isPlaylistsLoading" class="flex justify-center py-8">
+              <div v-if="isPlaylistsLoading && !playlists.length" class="flex justify-center py-8">
                 <Loader2 class="w-6 h-6 animate-spin text-accent-text" />
               </div>
-              
-              <button v-else v-for="pl in playlists" :key="pl.id" @click="handleSelectPlaylist(pl.id)" class="w-full min-h-14 flex items-center gap-3 p-2 hover:bg-medical-100 cursor-pointer group transition-colors text-left">
+
+              <button v-for="pl in playlists" :key="pl.id" @click="handleSelectPlaylist(pl.id)" class="w-full min-h-14 flex items-center gap-3 p-2 hover:bg-medical-100 cursor-pointer group transition-colors text-left">
                 <div class="w-10 h-10 bg-medical-200 flex-shrink-0 overflow-hidden"><CoverImage :src="pl.coverImgUrl" class="w-full h-full" /></div>
                 <div class="overflow-hidden">
                   <div class="text-sm font-bold truncate group-hover:text-accent-text text-medical-900">{{ pl.name }}</div>
@@ -471,7 +471,7 @@ useEventListener(window, 'message', (event) => {
     userStore.saveBindingProfile('soundcloud', { name: profile.name, avatarUrl: profile.avatarUrl });
     userSearchResults.value = [];
     userSearchAttempted.value = false;
-    fetchPlaylists();
+    // bindings 变化会触发 usePlaylistLogic 里的 watch，不需要在这里手动刷新
   } else {
     toastError('SoundCloud 绑定失败：' + (data.payload?.message || '未知错误'));
   }
@@ -481,8 +481,9 @@ useEventListener(window, 'message', (event) => {
 const {
   playlists, currentPlaylistId, searchUserKeyword, userSearchResults,
   isSearchingUser, isPlaylistsLoading, hasMore, isLoadingMore, bindings,
-  searchUser, bindUser, loadPlaylist, handleScroll, loadRemainingSongs, userSearchAttempted,
-  saveCurrentPlaylist, refreshPlaylist, refreshState, setPlaylistScrollTop, takeRestoreScrollTop
+  searchUser, bindUser, prefetchPlaylists, loadPlaylist, handleScroll, loadRemainingSongs,
+  userSearchAttempted, saveCurrentPlaylist, refreshPlaylist, refreshState,
+  setPlaylistScrollTop, takeRestoreScrollTop
 } = usePlaylistLogic(platform, songs, listMode, loading);
 
 // 3. 专辑搜索
@@ -663,7 +664,11 @@ const useRecent = (term) => {
   keyword.value = term;
   handleSearchAction();
 };
-onMounted(loadRecent);
+onMounted(() => {
+  loadRecent();
+  // 页面加载就预热歌单列表：SoundCloud 冷启动 ~1.5s，等用户点开面板时通常已经就绪
+  prefetchPlaylists();
+});
 
 const handleSearchAction = async () => {
   rememberQuery(keyword.value);
@@ -716,7 +721,13 @@ const soundcloudPlaylistLabel = (pl) => {
   const id = pl.id || '';
   if (id.startsWith('likes:')) return 'LIKES · 喜欢的音乐';
   if (id.startsWith('mytracks:')) return 'MY TRACKS · 我上传的';
-  if (id.startsWith('own:')) return 'MY SET · 含私密';
+  if (id.startsWith('own:')) {
+    // 「own:」只表示这条是通过授权读的（公开+私密都能读），不等于私密；
+    // 私密与否看服务端在名称后缀上的标记
+    const isPrivate = (pl.name || '').endsWith('· 私密');
+    const count = (pl.trackCount || 0) > 0 ? `${pl.trackCount} TRACKS` : 'EMPTY';
+    return `MY SET · ${count}${isPrivate ? ' · 私密' : ''}`;
+  }
   return 'PUBLIC SET';
 };
 
@@ -744,10 +755,29 @@ function loadScrollPositions() {
 
 const scrollKey = () => `${platform.value}:${listMode.value}:${currentPlaylistId.value || 'results'}`;
 
+let scrollPersistTimer = null;
+const persistScrollPositions = () => {
+  try {
+    localStorage.setItem(SCROLL_STORAGE_KEY, JSON.stringify(savedScrollPositions.value));
+  } catch { /* 配额满 / 隐私模式：位置只是体验优化 */ }
+};
+// 滚动事件很密，每次同步写 localStorage 会掉帧：内存立即可读，落盘节流 300ms
 const saveScrollPosition = () => {
   if (!contentScrollRef.value) return;
   savedScrollPositions.value[scrollKey()] = contentScrollRef.value.scrollTop;
-  localStorage.setItem(SCROLL_STORAGE_KEY, JSON.stringify(savedScrollPositions.value));
+  if (scrollPersistTimer) return;
+  scrollPersistTimer = setTimeout(() => {
+    scrollPersistTimer = null;
+    persistScrollPositions();
+  }, 300);
+};
+const flushScrollPosition = () => {
+  saveScrollPosition();
+  if (scrollPersistTimer) {
+    clearTimeout(scrollPersistTimer);
+    scrollPersistTimer = null;
+  }
+  persistScrollPositions();
 };
 
 const restoreScrollPosition = async () => {
@@ -772,14 +802,14 @@ const onContentScroll = (event) => {
 };
 
 const closeModal = () => {
-  saveScrollPosition();
+  flushScrollPosition();
   saveCurrentPlaylist();
   emit('close');
 };
 
 const switchPlatform = (nextPlatform) => {
   if (!isPlatformEnabled(nextPlatform) && nextPlatform !== 'all') return;
-  saveScrollPosition();
+  flushScrollPosition();
   saveCurrentPlaylist();
   platform.value = nextPlatform;
 };
@@ -816,6 +846,8 @@ watch(() => props.isOpen, async (val) => {
     mobileView.value = supportsPlaylists.value ? 'playlists' : 'songs';
     await restoreScrollPosition();
     probeHealth();
+    // 预取歌单列表：SoundCloud 冷启动约 1.5s，用户点开再切过去就不用等
+    prefetchPlaylists();
   } else {
     saveScrollPosition();
   }

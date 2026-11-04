@@ -41,26 +41,83 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
 
     const bindings = computed(() => userStore.bindings);
 
-    // 获取用户歌单
+    // 获取用户歌单。
+    // 服务端生成一份 SoundCloud 歌单列表要 1~4 秒，而列表内容几乎不变：
+    //  - 会话内缓存：切回同一平台时先显示上次结果，后台再刷新（不白屏、不重复等）
+    //  - 请求序号：切平台后迟到的响应直接丢弃，不能覆盖当前平台的列表
+    const playlistsCache = new Map();
+    const playlistsCacheAt = new Map();    // key -> 上次取到的时间
+    const PLAYLISTS_FRESH_MS = 60_000;     // 与服务端缓存同寿命：一分钟内切回无需再问
+    const playlistsInFlight = new Map();   // key -> 同一个请求，避免预热和正式加载各打一次
+    let playlistsRequestSeq = 0;
+
+    const requestPlaylists = (platform, uid) => {
+        const key = `${platform}:${uid}`;
+        const running = playlistsInFlight.get(key);
+        if (running) return running;
+        const request = musicApi.getUserPlaylists(platform, uid);
+        playlistsInFlight.set(key, request);
+        request.catch(() => {}).finally(() => playlistsInFlight.delete(key));
+        return request;
+    };
+
     const fetchPlaylists = async () => {
-        const uid = bindings.value[platformRef.value];
+        const platform = platformRef.value;
+        const uid = bindings.value[platform];
+        // 先占号：即使这个平台没绑定（下面直接 return），也要让上一平台的在途请求作废
+        const seq = ++playlistsRequestSeq;
         if (!uid) {
             playlists.value = [];
+            isPlaylistsLoading.value = false;
             return;
         }
-        isPlaylistsLoading.value = true;
+
+        const key = `${platform}:${uid}`;
+        const cached = playlistsCache.get(key);
+        if (cached) playlists.value = cached;
+        if (cached && Date.now() - (playlistsCacheAt.get(key) || 0) < PLAYLISTS_FRESH_MS) {
+            // 一分钟内刚取过：直接用缓存，不再发请求
+            isPlaylistsLoading.value = false;
+            return;
+        }
+
+        isPlaylistsLoading.value = !cached;   // 有缓存就静默刷新，不再用 spinner 盖住列表
         try {
-            const data = await musicApi.getUserPlaylists(platformRef.value, uid);
-            playlists.value = data;
+            const data = await requestPlaylists(platform, uid);
+            if (seq !== playlistsRequestSeq) return;   // 已切到别的平台，丢弃过期响应
+            playlists.value = data || [];
+            playlistsCache.set(key, playlists.value);
+            playlistsCacheAt.set(key, Date.now());
         } catch (e) {
+            if (seq !== playlistsRequestSeq) return;
             console.error(e);
-            playlists.value = [];
+            // 失败不清空：有旧列表就继续用，别让用户对着空面板
             if (e.response?.data?.message) {
                 error(e.response.data.message);
             }
         } finally {
-            isPlaylistsLoading.value = false;
+            if (seq === playlistsRequestSeq) isPlaylistsLoading.value = false;
         }
+    };
+
+    /**
+     * 预热已绑定平台的歌单列表（打开「添加歌曲」时调用）。
+     * SoundCloud 冷启动要 1.5 秒左右，提前在后台取好，用户真正切过去时列表已经在缓存里。
+     * 只写缓存，不碰当前 UI 状态，避免和正常流程抢 playlists/isPlaylistsLoading。
+     */
+    const prefetchPlaylists = () => {
+        Object.entries(bindings.value || {}).forEach(([platform, uid]) => {
+            if (!platform || !uid) return;
+            const key = `${platform}:${uid}`;
+            if (playlistsCache.has(key)) return;
+            requestPlaylists(platform, uid)
+                .then((data) => {
+                    if (!Array.isArray(data)) return;
+                    playlistsCache.set(key, data);
+                    playlistsCacheAt.set(key, Date.now());
+                })
+                .catch(() => { /* 预热失败无所谓，切过去时会正常重试 */ });
+        });
     };
 
     // 搜索用户 (用于绑定)
@@ -92,7 +149,8 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         userSearchResults.value = [];
         userSearchAttempted.value = false;
         searchUserKeyword.value = '';
-        fetchPlaylists(); // 立即刷新
+        // 不再手动 fetchPlaylists()：bindings 的 deep watch 会触发一次，
+        // 手动调用只会让同一份列表请求两次（各 1~4 秒）
     };
 
     // 分页获取歌单歌曲 (核心复杂逻辑)
@@ -328,6 +386,7 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         bindings,
         searchUser,
         bindUser,
+        prefetchPlaylists,
         saveCurrentPlaylist,
         refreshPlaylist,
         refreshState,
