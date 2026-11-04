@@ -54,6 +54,11 @@ export const useChatStore = defineStore('chat', () => {
             offset: currentCount,
             limit: LIMIT_PER_PAGE
         });
+
+        // socket 断开或服务端无响应时不能永久卡在「加载中」
+        setTimeout(() => {
+            if (isLoadingMore.value) isLoadingMore.value = false;
+        }, 8000);
     };
 
     // 4. 处理加载到的更多历史数据 (回调)
@@ -61,8 +66,10 @@ export const useChatStore = defineStore('chat', () => {
         if (moreMessages.length === 0) {
             hasMore.value = false;
         } else {
-            // 将旧消息拼接到数组头部
-            messages.value = [...moreMessages, ...messages.value];
+            // 防重叠：offset 分页期间若有新消息插入，返回页可能包含已有 id
+            const existing = new Set(messages.value.map((message) => message.id));
+            const unique = moreMessages.filter((message) => !existing.has(message.id));
+            messages.value = [...unique, ...messages.value];
             if (moreMessages.length < LIMIT_PER_PAGE) {
                 hasMore.value = false;
             }

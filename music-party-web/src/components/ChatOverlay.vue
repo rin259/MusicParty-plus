@@ -6,7 +6,7 @@
   -->
   <div
       :style="{ left: x + 'px', top: y + 'px' }"
-      class="fixed z-[55] flex flex-col items-center touch-none pointer-events-none"
+      class="fixed z-[55] flex flex-col items-center pointer-events-none"
   >
 
     <!--
@@ -26,8 +26,9 @@
           v-if="chatStore.isOpen"
           role="dialog"
           aria-label="聊天窗口"
-          class="pointer-events-auto bg-surface-1 border border-medical-200 shadow-2xl flex flex-col chamfer-br overflow-hidden"
+          class="pointer-events-auto relative bg-surface-1 border border-medical-200 shadow-2xl flex flex-col chamfer-br overflow-hidden"
           :class="dynamicWindowClasses"
+          :style="mobileWindowStyle"
           @mousedown.stop
           @touchstart.stop
       >
@@ -69,8 +70,8 @@
         <!-- 3. Messages List -->
         <div
             ref="msgListRef"
-            @scroll="handleScroll"
-            class="flex-1 overflow-y-auto p-3 space-y-4 bg-medical-50/30 chat-scroll"
+            @scroll.passive="handleScroll"
+            class="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 space-y-4 bg-medical-50/30 chat-scroll mp-scroll"
             aria-live="polite"
         >
           <!-- Loading More Indicator -->
@@ -83,8 +84,9 @@
           </div>
 
           <div
-              v-for="(item, index) in processedMessages"
-              :key="item.msg.id"
+              v-for="item in processedMessages"
+              :key="item.id"
+              :data-msg-id="item.id"
           >
             <!-- 时间戳 (如果与上一条间隔超过3分钟则显示) -->
             <div v-if="item.showTime" class="flex justify-center mb-3">
@@ -132,6 +134,10 @@
               <div class="bg-accent/5 border border-accent/20 text-accent-text px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-sm">
                 <Zap class="w-3 h-3 fill-accent stroke-accent"/>
                 <span>{{ item.msg.content }}</span>
+                <span
+                    v-if="item.count > 1"
+                    class="ml-0.5 px-1.5 py-0.5 rounded-full bg-accent/10 border border-accent/30 text-[10px] leading-none"
+                >×{{ item.count }}</span>
               </div>
             </div>
 
@@ -149,16 +155,29 @@
           </div>
         </div>
 
+        <button
+            v-if="newBelow > 0"
+            type="button"
+            @click="jumpToLatest"
+            class="absolute left-1/2 -translate-x-1/2 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-20 flex items-center gap-1.5 px-3 py-1.5 bg-surface-strong text-white text-[10px] font-mono tracking-[0.12em] shadow-lg"
+            aria-label="跳到最新消息"
+        >
+          <ChevronDown class="w-3.5 h-3.5" />
+          NEW {{ newBelow }}
+        </button>
+
         <!-- 4. Input Area (仅在 Chat Tab 显示) -->
-        <div v-if="activeTab === 'CHAT'" class="p-2 bg-surface-1 border-t border-medical-200 flex gap-2 flex-shrink-0">
+        <div v-if="activeTab === 'CHAT'" class="p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] bg-surface-1 border-t border-medical-200 flex gap-2 flex-shrink-0">
           <input
               v-model="inputContent"
               @keyup.enter="send"
               @mousedown.stop
               @touchstart.stop
+              enterkeyhint="send"
+              autocomplete="off"
               placeholder="TYPE MESSAGE..."
               aria-label="输入聊天内容"
-              class="flex-1 min-h-11 bg-medical-50 border border-medical-200 px-2 py-1.5 text-xs outline-none focus:border-accent font-sans transition-colors rounded-sm text-medical-900 placeholder:text-medical-500"
+              class="flex-1 min-h-11 bg-medical-50 border border-medical-200 px-2 py-1.5 text-base md:text-xs outline-none focus:border-accent font-sans transition-colors rounded-sm text-medical-900 placeholder:text-medical-500"
           />
           <button
               @click="send"
@@ -186,7 +205,7 @@
         @click="handleClick"
         :aria-label="chatStore.unreadCount > 0 ? `打开聊天，${chatStore.unreadCount} 条未读` : '打开聊天'"
         :aria-expanded="chatStore.isOpen"
-        class="pointer-events-auto w-11 h-11 border flex items-center justify-center transition-all cursor-move select-none rounded-sm relative overflow-hidden"
+        class="pointer-events-auto w-11 h-11 border flex items-center justify-center transition-all cursor-move select-none rounded-sm relative overflow-hidden touch-none"
         :class="chatStore.unreadCount > 0
             ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(249,115,22,0.6)] scale-110'
             : 'bg-surface-1 border-medical-200 text-medical-500 shadow-lg hover:text-medical-900 hover:border-medical-300'"
@@ -201,14 +220,16 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, computed } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useChatStore } from '../stores/chat';
 import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
 import { useUiStore } from '../stores/ui';
 import { useToast } from '../composables/useToast';
 import { useDraggable, useWindowSize, useEventListener, clamp } from '@vueuse/core';
-import { MessageSquare, X, Send, Terminal, Zap, Loader2 } from 'lucide-vue-next';
+import { ChevronDown, Loader2, MessageSquare, Send, Terminal, X, Zap } from 'lucide-vue-next';
+import { useVisualViewport } from '../composables/useVisualViewport';
+import { buildChatRows } from '../logic/chatRows.js';
 import dayjs from 'dayjs';
 
 const chatStore = useChatStore();
@@ -217,6 +238,7 @@ const userStore = useUserStore();
 const uiStore = useUiStore();
 const { success, error } = useToast();
 const { width: windowWidth, height: windowHeight } = useWindowSize();
+const vv = useVisualViewport();
 
 // 新增: 创建一个计算属性来判断是否为移动端
 const isMobile = computed(() => windowWidth.value < 768);
@@ -305,11 +327,27 @@ const windowPositionClasses = computed(() => {
 // 新增: 动态计算窗口的样式类
 const dynamicWindowClasses = computed(() => {
   if (isMobile.value) {
-    // 移动端: 返回固定居中的模态框样式
-    return ['fixed', 'inset-0', 'm-auto', 'w-[90vw]', 'h-[75vh]', 'max-h-[600px]', 'max-w-[420px]'];
+    // 移动端的位置/高度由 visualViewport 计算，见 mobileWindowStyle
+    return [];
   }
-  // PC端: 返回原有的绝对定位浮窗样式
+  // PC端: 保留原有浮窗样式
   return ['absolute', 'w-[85vw]', 'max-w-[340px]', 'h-[50vh]', 'md:h-[480px]', windowPositionClasses.value];
+});
+
+// iOS/Android 键盘只缩视觉视口：用 vv.height/offsetTop 让聊天窗始终落在键盘上方
+const mobileWindowStyle = computed(() => {
+  if (!isMobile.value) return {};
+  const available = Math.max(240, vv.visibleHeight.value || window.innerHeight);
+  const height = Math.min(640, Math.max(260, Math.round(available * 0.92)));
+  const top = Math.round(vv.offsetTop.value + Math.max(6, (available - height) / 2));
+  return {
+    position: 'fixed',
+    left: '50%',
+    top: `${top}px`,
+    width: 'min(92vw, 420px)',
+    height: `${height}px`,
+    transform: 'translateX(-50%)'
+  };
 });
 
 
@@ -320,87 +358,139 @@ const resetPosition = () => {
 useEventListener(window, 'resize', resetPosition);
 resetPosition(); // 初始化时执行一次
 
-// === 5. 消息处理与展示逻辑 ===
+// === 5. 消息处理 ===
 const isSelf = (msg) => msg.userId === userStore.userToken;
-
 const formatTime = (ts) => dayjs(ts).format('MM-DD HH:mm');
+const processedMessages = computed(() => buildChatRows(chatStore.messages, activeTab.value));
 
-// 核心：过滤并计算时间戳显示
-const processedMessages = computed(() => {
-  // 1. 根据 Tab 过滤
-  const filtered = chatStore.messages.filter(msg => {
-    // CHAT Tab: 聊天 + 点赞 + 开始播放
-    if (activeTab.value === 'CHAT') {
-      return msg.type === 'CHAT' || msg.type === 'LIKE' || msg.type === 'PLAY_START';
-    }
-    // SYSTEM Tab: 系统 + 点赞 + 开始播放
-    if (activeTab.value === 'SYSTEM INFO') {
-      return msg.type === 'SYSTEM' || msg.type === 'LIKE' || msg.type === 'PLAY_START';
-    }
-    return false;
+// === 6. 滚动（聊天列表的契约：位置优先，贴底才跟随） ===
+const NEAR_BOTTOM = 72;
+const stickToBottom = ref(true);
+const newBelow = ref(0);
+const loadArmed = ref(true);
+const pendingAnchor = ref(null);
+let anchorTimeout = 0;
+
+const isAtBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM;
+
+const scrollToBottom = async (force = false) => {
+  if (!force && !stickToBottom.value) return;
+  await nextTick();
+  const el = msgListRef.value;
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
+  stickToBottom.value = true;
+  newBelow.value = 0;
+  requestAnimationFrame(() => {
+    const node = msgListRef.value;
+    if (node) node.scrollTop = node.scrollHeight;
   });
+};
 
-  // 2. 计算是否显示时间
-  const result = [];
-  let lastTime = 0;
-  const TIME_THRESHOLD = 3 * 60 * 1000; // 3分钟
+const anchorSelector = (id) => `[data-msg-id="${String(id).replace(/["\\]/g, '\\$&')}"]`;
 
-  for (const msg of filtered) {
-    let showTime = false;
-    if (msg.timestamp - lastTime > TIME_THRESHOLD) {
-      showTime = true;
-      lastTime = msg.timestamp;
+/** 记录当前视口里第一条可见消息，作为加载旧消息后的位置锚点。 */
+const captureAnchor = (el) => {
+  const top = el.getBoundingClientRect().top;
+  for (const node of el.querySelectorAll('[data-msg-id]')) {
+    const rect = node.getBoundingClientRect();
+    if (rect.bottom > top + 1) {
+      return { id: node.getAttribute('data-msg-id'), top: rect.top };
     }
-    result.push({ msg, showTime });
+  }
+  return null;
+};
+
+const restoreAnchor = (el, anchor) => {
+  if (!anchor) return;
+  const node = el.querySelector(anchorSelector(anchor.id));
+  if (!node) return;
+  const delta = node.getBoundingClientRect().top - anchor.top;
+  if (Math.abs(delta) > 0.5) el.scrollTop += delta;
+};
+
+const handleScroll = () => {
+  const el = msgListRef.value;
+  if (!el) return;
+
+  stickToBottom.value = isAtBottom(el);
+  if (stickToBottom.value) newBelow.value = 0;
+  if (el.scrollTop > NEAR_BOTTOM) loadArmed.value = true;
+
+  // 到顶只触发一次；离开顶部再回来才会触发下一页。
+  // 没有消息时不发请求（初始历史可能还在路上，否则会重复请求 offset=0）。
+  if (el.scrollTop <= 28 && loadArmed.value && chatStore.messages.length > 0
+      && chatStore.hasMore && !chatStore.isLoadingMore) {
+    loadArmed.value = false;
+    pendingAnchor.value = captureAnchor(el);
+    chatStore.loadMoreHistory();
+    clearTimeout(anchorTimeout);
+    anchorTimeout = setTimeout(() => { pendingAnchor.value = null; }, 12_000);
+  }
+};
+
+const jumpToLatest = () => scrollToBottom(true);
+
+/**
+ * 列表短到无法滚动时，用户没有机会"滚到顶部"触发加载。
+ * 打开时补 1–2 页，保证历史可达（有上限，避免一次拉完整段历史）。
+ */
+const fillViewport = async (attempts = 2) => {
+  await nextTick();
+  const el = msgListRef.value;
+  if (!el || attempts <= 0 || !chatStore.messages.length) return;
+  if (!chatStore.hasMore || chatStore.isLoadingMore) return;
+  if (el.scrollHeight > el.clientHeight + 8) return;
+  chatStore.loadMoreHistory();
+  setTimeout(() => fillViewport(attempts - 1), 450);
+};
+
+watch(() => chatStore.messages.length, async (next, prev) => {
+  if (next === prev) return;
+  await nextTick();
+  const el = msgListRef.value;
+  if (!el) return;
+
+  if (pendingAnchor.value) {
+    restoreAnchor(el, pendingAnchor.value);
+    pendingAnchor.value = null;
+    clearTimeout(anchorTimeout);
+    return;
   }
 
-  return result;
+  if (stickToBottom.value) {
+    await scrollToBottom(true);
+    if (chatStore.isOpen) fillViewport(1);
+  } else if (next > prev) {
+    newBelow.value += next - prev;
+  }
 });
 
-// === 6. 滚动与分页逻辑 ===
-const scrollToBottom = async (force = false) => {
-  await nextTick();
-  if (msgListRef.value) {
-    const el = msgListRef.value;
-    // 只有当用户已经在底部，或者强制滚动时，才自动滚到底
-    // 允许 50px 的误差
-    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-    if (isAtBottom || force) {
-      el.scrollTop = el.scrollHeight;
-
-      // 如果是强制滚动（如打开窗口），在下一帧再次检查，防止因动画或布局导致的计算偏差
-      if (force) {
-        requestAnimationFrame(() => {
-          if (el) el.scrollTop = el.scrollHeight;
-        });
-      }
-    }
+watch(() => chatStore.isLoadingMore, (loading) => {
+  if (!loading) {
+    setTimeout(() => {
+      const el = msgListRef.value;
+      // 只有离开顶部才重新武装，否则一次触底会把整段历史连续拉完
+      if (el && el.scrollTop > NEAR_BOTTOM) loadArmed.value = true;
+    }, 150);
   }
-};
+});
 
-// 监听滚动加载更多
-const handleScroll = (e) => {
-  const el = e.target;
-  // 触顶 && 还有更多 && 没在加载
-  if (el.scrollTop < 20 && chatStore.hasMore && !chatStore.isLoadingMore) {
-    // 记录加载前的高度
-    const oldHeight = el.scrollHeight;
+watch([() => chatStore.isOpen, activeTab], async ([open]) => {
+  if (!open) return;
+  chatStore.unreadCount = 0;
+  stickToBottom.value = true;
+  newBelow.value = 0;
+  await scrollToBottom(true);
+  fillViewport(2);
+});
 
-    // 触发加载
-    chatStore.loadMoreHistory();
+// 键盘弹出/收起、旋转都会改变视觉视口；原本贴底就继续贴底
+watch(() => vv.height.value, () => {
+  if (chatStore.isOpen && stickToBottom.value) scrollToBottom(true);
+});
 
-    // 加载完成后恢复位置
-    // 我们需要监听 messages 长度变化来执行恢复
-    const unwatch = watch(() => chatStore.messages.length, async () => {
-      await nextTick();
-      const newHeight = el.scrollHeight;
-      el.scrollTop = newHeight - oldHeight; // 保持视口停留在原来的消息处
-      unwatch(); // 仅执行一次
-    });
-  }
-};
-
-// === 7. 交互动作 ===
+// === 7. 交互 ===
 const send = () => {
   const text = inputContent.value.trim();
   if (!text) return;
@@ -411,7 +501,6 @@ const send = () => {
     return;
   }
 
-  // 拦截本地保活指令
   if (text === '//alive') {
     uiStore.toggleKeepAlive();
     success(`Keep-Alive ${uiStore.keepAliveEnabled ? 'ENABLED' : 'DISABLED'}. Please refresh to apply.`);
@@ -421,26 +510,10 @@ const send = () => {
 
   playerStore.sendChatMessage(text);
   inputContent.value = '';
-  // 发送后强制滚到底部
-  setTimeout(() => scrollToBottom(true), 100);
+  setTimeout(() => scrollToBottom(true), 60);
 };
 
-// 监听：打开窗口或切换 Tab 时滚到底部
-watch([() => chatStore.isOpen, activeTab], async ([isOpen]) => {
-  if (isOpen) {
-    chatStore.unreadCount = 0; // 只要打开就清空未读
-    await scrollToBottom(true);
-  }
-});
-
-// 监听：收到新消息时 (且在当前Tab)，尝试滚到底部
-watch(() => processedMessages.value.length, (newLen, oldLen) => {
-  // 如果是增量追加(正常聊天)，且在底部，则自动滚
-  // 如果是历史加载(头部追加)，则不由这里处理(由handleScroll处理)
-  if (newLen > oldLen) {
-    scrollToBottom(false);
-  }
-});
+onUnmounted(() => clearTimeout(anchorTimeout));
 </script>
 
 <style scoped>

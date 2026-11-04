@@ -1,6 +1,6 @@
 <template>
-  <div class="min-h-[100dvh] w-screen overflow-y-auto bg-medical-50 text-medical-900">
-    <div class="mx-auto w-full max-w-6xl px-4 py-8 md:px-8 md:py-12">
+  <div class="min-h-app w-full bg-medical-50 text-medical-900">
+    <div class="mx-auto w-full max-w-6xl px-4 py-8 md:px-8 md:py-12 pt-[max(2rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))]">
       <header class="flex items-end justify-between gap-4 border-b border-medical-200 pb-5">
         <div class="min-w-0">
           <div class="mb-3 h-3 w-3 bg-accent"></div>
@@ -86,7 +86,7 @@
                   @keyup.enter="applyName"
                   maxlength="20"
                   placeholder="ENTER CODENAME"
-                  aria-label="你的名字"
+                  aria-label="你的名字" @focus="ensureVisible"
                   class="min-h-10 min-w-0 flex-1 border border-medical-200 bg-medical-50 px-2.5 text-sm font-bold text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
               />
               <button
@@ -106,7 +106,7 @@
                 v-model="createName"
                 maxlength="30"
                 placeholder="房间名（可留空）"
-                aria-label="房间名"
+                aria-label="房间名" @focus="ensureVisible"
                 class="mb-1.5 min-h-10 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
             />
             <input
@@ -114,7 +114,7 @@
                 type="password"
                 maxlength="64"
                 placeholder="可选：房间密码（至少 4 位）"
-                aria-label="房间密码（可选）"
+                aria-label="房间密码（可选）" @focus="ensureVisible"
                 class="mb-2 min-h-10 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
             />
             <button
@@ -139,7 +139,7 @@
                   v-model="joinCode"
                   @keyup.enter="joinByCode"
                   placeholder="房间码，或粘贴邀请链接"
-                  aria-label="房间码"
+                  aria-label="房间码" @focus="ensureVisible"
                   class="min-h-10 min-w-0 flex-1 border border-medical-200 bg-medical-50 px-2.5 font-mono text-sm lowercase text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
               />
               <button
@@ -160,7 +160,7 @@
 
     <!-- 密码弹层 -->
     <div v-if="pendingRoom" class="fixed inset-0 z-[140] flex items-center justify-center bg-scrim/80 p-4 backdrop-blur-sm">
-      <div role="dialog" aria-modal="true" aria-labelledby="room-pass-title" class="w-full max-w-sm border border-medical-200 bg-surface-1 p-6 shadow-2xl chamfer-br">
+      <div role="dialog" aria-modal="true" aria-labelledby="room-pass-title" class="w-[calc(100vw-2rem)] max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto border border-medical-200 bg-surface-1 p-6 shadow-2xl chamfer-br mp-scroll">
         <h2 id="room-pass-title" class="m-0 text-xl font-bold tracking-tighter text-medical-900">ROOM LOCKED</h2>
         <p class="mb-4 mt-1 font-mono text-[10px] tracking-[0.14em] text-medical-500">
           {{ pendingRoom.name }} · {{ pendingRoom.id }}
@@ -170,7 +170,7 @@
             type="password"
             maxlength="64"
             placeholder="INPUT ROOM PASSWORD"
-            aria-label="房间密码"
+            aria-label="房间密码" @focus="ensureVisible"
             @keyup.enter="confirmPassword"
             class="mb-2 min-h-11 w-full border border-medical-200 bg-medical-50 p-3 text-center font-mono text-lg tracking-widest text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
             autofocus
@@ -188,7 +188,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { ArrowRight, ChevronRight, Lock, Plus, RefreshCw } from 'lucide-vue-next';
 import { useRoomStore } from '../stores/room';
 import { useUserStore } from '../stores/user';
@@ -212,6 +212,22 @@ const passwordError = ref('');
 const hasName = computed(() => !!profileName.value && !isGuestName(profileName.value));
 const canCreate = computed(() => hasName.value);
 const deviceShort = computed(() => (roomStore.deviceId || '').slice(0, 8));
+
+// 移动端键盘弹出后把输入框滚到可视区中间，避免按钮被键盘盖住
+function ensureVisible(event) {
+  const el = event?.target;
+  if (!el) return;
+  setTimeout(() => {
+    try { el.scrollIntoView({ block: 'center' }); } catch { /* 老浏览器忽略 */ }
+  }, 260);
+}
+
+// 密码弹层打开时锁住背后的 landing 滚动；关闭/进入房间后交回 App 控制
+watch(pendingRoom, (value) => {
+  const scrollable = !value && !roomStore.entered;
+  document.body.classList.toggle('mp-scrollable', scrollable);
+  document.documentElement.classList.toggle('mp-scrollable', scrollable);
+});
 
 function isGuestName(name) {
   const value = (name || '').trim().toLowerCase();

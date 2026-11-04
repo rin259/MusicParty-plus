@@ -95,6 +95,49 @@ html, #app {
   transition: background-color 380ms cubic-bezier(.22, 1, .36, 1), color 380ms cubic-bezier(.22, 1, .36, 1);
 }
 
+/* 视口高度：先给旧浏览器 100vh 回退，再覆盖为 100dvh */
+.h-app { height: 100vh; height: 100dvh; }
+.min-h-app { min-height: 100vh; min-height: 100dvh; }
+
+/* landing 需要文档级滚动：body 默认 overflow:hidden 会把 min-h 页面直接裁掉 */
+body.mp-scrollable {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: none;
+}
+html.mp-scrollable { height: auto; }
+
+/* 移动端滚动容器：iOS 惯性滚动 + 不把滚动传给背后页面 */
+.mp-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* 聊天列表自己做锚点补偿（兼容老 Safari），关掉浏览器原生锚定避免双倍修正 */
+.chat-scroll { overflow-anchor: none; }
+
+/* 去掉移动端 300ms 点击延迟（不改变布局） */
+button, [role="button"], a, input[type="range"] {
+  touch-action: manipulation;
+}
+
+/*
+ * iOS Safari：输入框字号 <16px 会在聚焦时自动放大整个页面，缩放后
+ * visualViewport/键盘计算全部失真。移动端强制 16px（视觉层级靠 padding/字重维持）。
+ */
+@supports (-webkit-touch-callout: none) {
+  @media (max-width: 767px) {
+    input, textarea, select, [contenteditable="true"] {
+      font-size: 16px !important;
+    }
+  }
+}
+
+/* 刘海/底部指示条安全区 */
+.safe-bottom { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }
+.safe-top { padding-top: max(0.5rem, env(safe-area-inset-top)); }
+
 /* 暗色模式经 CSS 变量天然翻转；仅阴影需要单独调暗。 */
 html.dark .shadow-lg,
 html.dark .shadow-xl,

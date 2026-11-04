@@ -3,7 +3,10 @@
   <!-- 全局 Toast 挂载点 -->
   <ToastNotification />
 
-  <div class="h-screen w-screen overflow-hidden font-sans transition-colors duration-500">
+  <div
+      class="w-full font-sans transition-colors duration-500"
+      :class="roomStore.entered ? 'h-app overflow-hidden' : 'min-h-app overflow-x-hidden'"
+  >
     <!-- 0. 房间选择 / 创建（landing） -->
     <RoomLanding v-if="!roomStore.entered" />
 
@@ -30,7 +33,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { onUnmounted, ref, watch } from 'vue';
 import { useEventListener } from '@vueuse/core';
 import { usePlayerStore } from './stores/player';
 import { useUserStore } from './stores/user';
@@ -61,6 +64,18 @@ const hasStarted = ref(false);
 const showSearch = ref(false);
 const chatStore = useChatStore();
 const roomStore = useRoomStore();
+
+// landing 用文档级滚动（body 默认 overflow:hidden 会裁掉长页面）；
+// 进入房间后恢复锁定，避免主界面被页面滚动带着跑。
+const syncPageScroll = () => {
+  document.body.classList.toggle('mp-scrollable', !roomStore.entered);
+  document.documentElement.classList.toggle('mp-scrollable', !roomStore.entered);
+};
+watch(() => roomStore.entered, syncPageScroll, { immediate: true });
+onUnmounted(() => {
+  document.body.classList.remove('mp-scrollable');
+  document.documentElement.classList.remove('mp-scrollable');
+});
 
 // 键盘可达性(antislop R-32)：Escape 自上而下关闭最上层浮层
 useEventListener(window, 'keydown', (e) => {

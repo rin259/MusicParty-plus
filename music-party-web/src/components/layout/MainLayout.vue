@@ -49,7 +49,7 @@ const handleSearchClick = () => {
 </script>
 
 <template>
-  <div class="h-[100dvh] w-screen flex flex-col relative overflow-hidden bg-medical-50">
+  <div class="h-app w-full flex flex-col relative overflow-hidden bg-medical-50">
     <!-- 1. 顶部栏 Header -->
     <header v-if="!uiStore.isLiteMode" class="h-14 bg-surface-1 border-b border-medical-200 flex justify-between items-center gap-3 px-3 md:px-6 flex-shrink-0 relative z-50">
       <div class="flex min-w-0 items-center gap-2">
@@ -133,7 +133,7 @@ const handleSearchClick = () => {
           role="dialog"
           aria-modal="true"
           aria-label="菜单"
-          class="md:hidden fixed inset-y-0 right-0 z-[70] w-[min(18rem,calc(100vw-1rem))] bg-surface-1 border-l border-medical-200 shadow-2xl p-4 flex flex-col gap-3"
+          class="md:hidden fixed inset-y-0 right-0 z-[70] w-[min(18rem,calc(100vw-1rem))] bg-surface-1 border-l border-medical-200 shadow-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] flex flex-col gap-3 overflow-y-auto mp-scroll"
       >
         <div class="flex items-center justify-between border-b border-medical-200 pb-3">
           <span class="font-mono text-xs font-bold text-medical-500">MENU</span>
@@ -194,14 +194,14 @@ const handleSearchClick = () => {
     </div>
 
     <!-- 3. 精简模式视图 -->
-    <div v-else class="flex-1 flex flex-col items-center justify-center bg-medical-50 relative overflow-hidden p-6">
+    <div v-else class="relative flex-1 min-h-0 overflow-y-auto bg-medical-50 p-4 md:p-6 mp-scroll">
       <!-- 背景装饰 -->
-      <div class="absolute inset-0 z-0 pointer-events-none opacity-40">
+      <div class="fixed inset-0 z-0 pointer-events-none opacity-40">
         <div class="absolute inset-0 bg-[linear-gradient(rgb(var(--medical-900)/0.04)_1px,transparent_1px),linear-gradient(90deg,rgb(var(--medical-900)/0.04)_1px,transparent_1px)] bg-[size:32px_32px]"></div>
         <div class="absolute top-0 left-0 w-full h-full bg-[repeating-linear-gradient(45deg,transparent,transparent_20px,rgb(var(--medical-900)/0.03)_20px,rgb(var(--medical-900)/0.03)_21px)]"></div>
       </div>
 
-      <div class="relative z-10 w-full max-w-lg flex flex-col items-center gap-10">
+      <div class="relative z-10 mx-auto w-full max-w-lg flex flex-col items-center gap-6 md:gap-10 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         <!-- 头部状态 (文案简化) -->
         <div class="flex items-center gap-3 text-[11px] text-medical-500 tracking-[0.2em] uppercase font-sans">
           <Activity class="w-3 h-3 text-accent-text animate-pulse" />
@@ -285,6 +285,15 @@ const handleSearchClick = () => {
         >
           <Search class="w-5 h-5" />
           <span class="text-sm tracking-widest">添加歌曲</span>
+        </button>
+
+        <button
+            type="button"
+            @click="switchRoom"
+            class="w-full border border-medical-200 text-medical-600 font-bold py-3 flex items-center justify-center gap-2 transition-all hover:border-accent hover:text-accent-text active:scale-[0.98]"
+        >
+          <LogOut class="w-4 h-4" />
+          <span class="text-xs tracking-widest uppercase">切换房间 · {{ roomStore.currentName }}</span>
         </button>
 
         <!-- 退出动作（次级） -->
