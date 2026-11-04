@@ -147,10 +147,10 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     };
 
     /** 把当前歌单的曲目、分页状态与滚动位置写进缓存（切走/关闭时调用） */
-    const saveCurrentPlaylist = () => {
+    const saveCurrentPlaylist = (platformOverride) => {
         if (!currentPlaylistId.value || listModeRef.value !== 'playlist') return;
         if (!songsRef.value.length) return;   // 空列表不落盘：防止失败加载污染缓存
-        writePlaylistCache(platformRef.value, currentPlaylistId.value, {
+        writePlaylistCache(platformOverride || platformRef.value, currentPlaylistId.value, {
             songs: songsRef.value,
             offset: offset.value,
             hasMore: hasMore.value,
@@ -251,6 +251,8 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         songsRef.value = [];
         offset.value = 0;
         hasMore.value = true;
+        // 全新加载：视口回到顶部（否则会把上一个歌单的滚动位置写进这个歌单的缓存）
+        viewportScrollTop = 0;
         pendingRestoreScrollTop = 0;
         loadingRef.value = true;
 
@@ -292,11 +294,10 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     };
 
     // 监听平台切换 -> 刷新歌单列表
-    watch(platformRef, () => {
-        // 换平台相当于离开当前歌单，先落盘
-        saveCurrentPlaylist();
-        viewportScrollTop = 0;
-        pendingRestoreScrollTop = 0;
+    watch(platformRef, (next, prev) => {
+        // 换平台 = 离开当前歌单：必须按「旧平台」保存，否则会把旧歌单写进新平台的键；
+        // 也不能把 viewportScrollTop 清零——那是刚存下的滚动位置，清零后再回来就跳到顶部。
+        if (prev) saveCurrentPlaylist(prev);
     });
 
     // 绑定是原地改对象属性（bindings.value[platform] = id），ref 本身不变，
