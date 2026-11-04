@@ -127,6 +127,19 @@
             <!-- 未绑定 -->
             <div v-if="!bindings[platform]" class="p-4 border border-dashed border-medical-300 bg-medical-50">
               <div class="text-xs text-medical-500 mb-2 text-center font-sans">{{ platform === 'soundcloud' ? '绑定公开主页以获取公开 Sets' : '绑定用户以获取用户歌单' }}</div>
+              <!-- 一键绑定：完整 OAuth 授权，身份由服务端确认 -->
+              <button
+                  v-if="platform === 'soundcloud' && scOauthConfigured"
+                  type="button"
+                  @click="startSoundcloudOauth"
+                  class="w-full min-h-11 bg-accent hover:bg-accent-hover text-accent-fg font-bold text-sm flex items-center justify-center gap-2 transition-colors mb-2"
+              >
+                <Search class="w-4 h-4" />
+                使用 SoundCloud 账号一键绑定
+              </button>
+              <div v-if="platform === 'soundcloud' && scOauthConfigured" class="mb-2 flex items-center gap-2 text-[10px] font-mono text-medical-500">
+                <span class="flex-1 border-t border-medical-200"></span><span>或手动输入</span><span class="flex-1 border-t border-medical-200"></span>
+              </div>
               <div class="flex gap-1">
                 <input v-model="searchUserKeyword" @keyup.enter="searchUser" :placeholder="platform === 'soundcloud' ? '粘贴主页/短链，或 @handle' : '搜索用户名'" aria-label="搜索用户" class="flex-1 min-w-0 min-h-11 bg-surface-1 border border-medical-200 p-2 text-sm outline-none focus:border-accent font-sans text-medical-900 placeholder:text-medical-500" />
                 <button @click="searchUser" :disabled="isSearchingUser || !searchUserKeyword.trim()" class="flex items-center justify-center w-11 h-11 bg-accent hover:bg-accent-hover transition-colors flex-shrink-0 disabled:opacity-50" aria-label="搜索用户"><Search class="w-4 h-4 text-accent-fg"/></button>
@@ -422,6 +435,46 @@ const SLOW_LABEL = { netease: 'NET', bilibili: 'BILI', soundcloud: 'SC', ytmusic
 const slowSources = computed(() => Object.entries(sources.value)
   .filter(([, s]) => s.state === 'loading' ? s.slow : (s.slow || ((s.latencyMs || 0) > 2500 && s.state === 'ok')))
   .map(([p]) => SLOW_LABEL[p] || p));
+
+// SoundCloud OAuth 一键绑定：弹窗走完整授权，回跳页面用 postMessage 把身份交回本窗
+const scOauthConfigured = ref(false);
+const scOauthChecked = ref(false);
+const checkScOauth = async () => {
+  if (scOauthChecked.value) return;
+  try {
+    const data = await musicApi.soundcloudOauthStatus();
+    scOauthConfigured.value = !!data?.configured;
+  } catch {
+    scOauthConfigured.value = false;
+  }
+  scOauthChecked.value = true;
+};
+watch(() => platform.value === 'soundcloud', (onSoundcloud) => {
+  if (onSoundcloud) checkScOauth();
+}, { immediate: true });
+
+const startSoundcloudOauth = () => {
+  const popup = window.open('/api/soundcloud/oauth/start', 'soundcloud-oauth', 'width=520,height=720');
+  if (!popup) {
+    toastError('弹窗被拦截：请允许本站弹窗，或改用手动输入 handle');
+  }
+};
+
+useEventListener(window, 'message', (event) => {
+  if (event.origin !== window.location.origin) return;
+  const data = event.data;
+  if (!data || data.source !== 'soundcloud-oauth') return;
+  const profile = data.payload?.profile;
+  if (data.payload?.ok && profile?.handle) {
+    player.bindAccount('soundcloud', profile.handle);
+    userStore.saveBindingProfile('soundcloud', { name: profile.name, avatarUrl: profile.avatarUrl });
+    userSearchResults.value = [];
+    userSearchAttempted.value = false;
+    fetchPlaylists();
+  } else {
+    toastError('SoundCloud 绑定失败：' + (data.payload?.message || '未知错误'));
+  }
+});
 
 // 2. 歌单逻辑
 const {

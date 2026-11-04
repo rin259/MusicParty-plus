@@ -26,6 +26,7 @@ export const musicApi = {
 
     // 搜索用户
     searchUser: (platform, keyword) => client.get(`/api/user/search/${platform}`, { params: { keyword } }),
+    soundcloudOauthStatus: () => client.get('/api/soundcloud/oauth/status'),
 
     // 搜索专辑（query 参数，含 "/" 的专辑名不会再 404）
     searchAlbums: (platform, keyword) => client.get('/api/search/albums', { params: { platform, q: keyword } }),

@@ -45,3 +45,6 @@ music_party/data/
 /data/
 *.mp3
 *.m4a
+
+# 运行时密钥
+.env.production

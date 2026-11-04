@@ -10,6 +10,8 @@ public class AppProperties {
     private NeteaseApiConfig  netease;
     private BilibiliApiConfig bilibili;
     private YtDlpSourceConfig soundcloud = new YtDlpSourceConfig();
+    /** SoundCloud OAuth 2.1（注册应用的凭据；redirect_uri 必须与应用设置完全一致） */
+    private SoundCloudOAuthConfig soundcloudOAuth = new SoundCloudOAuthConfig();
     private YtDlpSourceConfig ytmusic = new YtDlpSourceConfig();
     private String adminPassword;
     private String baseUrl;
@@ -68,6 +70,13 @@ public class AppProperties {
         private String path = "yt-dlp";
         private long timeoutSeconds = 45;
         private long downloadTimeoutSeconds = 180;
+    }
+
+    @Data
+    public static class SoundCloudOAuthConfig {
+        private String clientId = "";
+        private String clientSecret = "";
+        private String redirectUri = "";
     }
 
     @Data

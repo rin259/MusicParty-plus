@@ -8,6 +8,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.service.YtDlpResolver;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -45,10 +46,12 @@ public class SoundCloudSearchClient {
     private static final Logger log = LoggerFactory.getLogger(SoundCloudSearchClient.class);
 
     private final WebClient webClient;
+    private final String configuredClientId;
     private volatile String clientId;
 
-    public SoundCloudSearchClient(WebClient webClient) {
+    public SoundCloudSearchClient(WebClient webClient, AppProperties appProperties) {
         this.webClient = webClient;
+        this.configuredClientId = appProperties.getSoundcloudOAuth().getClientId();
     }
 
     public Mono<List<YtDlpResolver.TrackMetadata>> search(String keyword, int offset, int limit) {
@@ -172,6 +175,10 @@ public class SoundCloudSearchClient {
     }
 
     private String resolveClientId(boolean forceRefresh) {
+        // 注册应用的 client_id 优先（不再依赖首页抓取）；401/403 时仍可回退到抓取
+        if (!forceRefresh && configuredClientId != null && !configuredClientId.isBlank()) {
+            return configuredClientId;
+        }
         String cached = clientId;
         if (!forceRefresh && cached != null) return cached;
         synchronized (this) {
