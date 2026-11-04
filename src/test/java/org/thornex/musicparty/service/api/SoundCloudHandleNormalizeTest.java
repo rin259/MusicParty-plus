@@ -18,7 +18,9 @@ class SoundCloudHandleNormalizeTest {
     private SoundCloudMusicApiService service() {
         AppProperties props = new AppProperties();
         return new SoundCloudMusicApiService(
-                mock(LocalCacheService.class), mock(YtDlpResolver.class), props, mock(SoundCloudSearchClient.class));
+                mock(LocalCacheService.class), mock(YtDlpResolver.class), props,
+                mock(SoundCloudSearchClient.class), mock(org.thornex.musicparty.service.SoundCloudOAuthService.class),
+                mock(org.springframework.web.reactive.function.client.WebClient.class));
     }
 
     @Test

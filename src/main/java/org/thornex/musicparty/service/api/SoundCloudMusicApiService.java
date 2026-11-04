@@ -8,7 +8,10 @@ import org.thornex.musicparty.dto.Music;
 import org.thornex.musicparty.dto.Playlist;
 import org.thornex.musicparty.dto.UserSearchResult;
 import org.thornex.musicparty.exception.ApiRequestException;
+import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.web.reactive.function.client.WebClient;
 import org.thornex.musicparty.service.LocalCacheService;
+import org.thornex.musicparty.service.SoundCloudOAuthService;
 import org.thornex.musicparty.service.YtDlpResolver;
 import reactor.core.publisher.Mono;
 
@@ -19,6 +22,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -27,13 +31,23 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
     private static final Logger log = LoggerFactory.getLogger(SoundCloudMusicApiService.class);
     private static final Pattern HANDLE_PATTERN = Pattern.compile("[A-Za-z0-9_-]{1,64}");
 
+    private static final String LIKES_PREFIX = "likes:";
+    private static final String MY_TRACKS_PREFIX = "mytracks:";
+    /** own:<handle>:<playlistId> —— 带 token 取的歌单（可能包含私密） */
+    private static final String OWN_PLAYLIST_PREFIX = "own:";
+
     private final SoundCloudSearchClient searchClient;
+    private final SoundCloudOAuthService oauthService;
+    private final WebClient webClient;
 
     public SoundCloudMusicApiService(LocalCacheService localCacheService, YtDlpResolver resolver,
-                                     AppProperties properties, SoundCloudSearchClient searchClient) {
+                                     AppProperties properties, SoundCloudSearchClient searchClient,
+                                     SoundCloudOAuthService oauthService, WebClient webClient) {
         super("soundcloud", localCacheService, resolver, properties.getSoundcloud().getSearchLimit(),
                 properties.getSoundcloud().getFetchLimit());
         this.searchClient = searchClient;
+        this.oauthService = oauthService;
+        this.webClient = webClient;
     }
 
     @Override
@@ -74,15 +88,99 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
     @Override
     public Mono<List<Playlist>> getUserPlaylists(String userId) {
         String handle = normalizeHandle(userId);
-        return resolver.getSoundCloudUserSets(handle)
-                .map(playlists -> playlists.stream()
+        // OAuth 绑定后最先出现的三个入口，是公开接口根本拿不到的：
+        // 喜欢的音乐、我自己的歌单（含私密）、我上传的曲目。
+        Playlist likes = new Playlist(LIKES_PREFIX + handle, "喜欢的音乐", "", 0, getPlatformName());
+        Playlist myTracks = new Playlist(MY_TRACKS_PREFIX + handle, "我上传的曲目", "", 0, getPlatformName());
+
+        Mono<List<Playlist>> publicSets = resolver.getSoundCloudUserSets(handle)
+                .map(sets -> sets.stream()
                         .map(playlist -> new Playlist(playlist.id(), playlist.name(), playlist.coverUrl(),
                                 playlist.trackCount(), getPlatformName()))
-                        .toList());
+                        .toList())
+                .onErrorResume(error -> Mono.just(List.of()));
+
+        Mono<List<Playlist>> ownPlaylists = ownPlaylistsWithToken(handle)
+                .onErrorResume(error -> Mono.empty())
+                .defaultIfEmpty(List.of());
+
+        return ownPlaylists.zipWith(publicSets, (own, sets) -> {
+            List<Playlist> merged = new java.util.ArrayList<>();
+            merged.add(likes);
+            merged.add(myTracks);
+            merged.addAll(own);
+            // 公开 Sets 与自己的歌单按底层 id 去重（自己那份更完整，含私密）
+            java.util.Set<String> seen = own.stream().map(SoundCloudMusicApiService::underlyingPlaylistId)
+                    .collect(java.util.stream.Collectors.toSet());
+            sets.stream()
+                    .filter(playlist -> !seen.contains(playlist.id()))
+                    .forEach(merged::add);
+            return merged;
+        });
+    }
+
+    private static String underlyingPlaylistId(Playlist playlist) {
+        String id = playlist.id();
+        if (id.startsWith(OWN_PLAYLIST_PREFIX)) {
+            int second = id.indexOf(':', OWN_PLAYLIST_PREFIX.length());
+            return second > 0 ? id.substring(second + 1) : id;
+        }
+        return id;
+    }
+
+    /** GET /me/playlists —— 含私密歌单（仅 token 可读） */
+    private Mono<List<Playlist>> ownPlaylistsWithToken(String handle) {
+        return Mono.defer(() -> {
+            Optional<String> token = oauthService.validAccessToken(handle);
+            if (token.isEmpty()) return Mono.empty();
+            return webClient.get()
+                    .uri(URI.create("https://api.soundcloud.com/me/playlists?limit=100&linked_partitioning=1"))
+                    .header("Authorization", "OAuth " + token.get())
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .timeout(Duration.ofSeconds(12))
+                    .map(node -> {
+                        List<Playlist> out = new java.util.ArrayList<>();
+                        for (JsonNode playlist : node.path("collection")) {
+                            long id = playlist.path("id").asLong(0L);
+                            String title = playlist.path("title").asText("");
+                            if (id == 0L || title.isEmpty()) continue;
+                            boolean privatePlaylist = !"public".equalsIgnoreCase(playlist.path("sharing").asText("public"));
+                            String cover = SoundCloudSearchClient.highResArtwork(playlist.path("artwork_url").asText(""));
+                            out.add(new Playlist(OWN_PLAYLIST_PREFIX + handle + ":" + id,
+                                    privatePlaylist ? title + " · 私密" : title,
+                                    cover, playlist.path("track_count").asInt(0), getPlatformName()));
+                        }
+                        return out;
+                    });
+        });
     }
 
     @Override
     public Mono<List<Music>> getPlaylistMusics(String playlistId, int offset, int limit) {
+        if (playlistId.startsWith(LIKES_PREFIX)) {
+            String handle = playlistId.substring(LIKES_PREFIX.length());
+            return likedTracks(handle, offset, limit).map(this::toMusicList);
+        }
+        if (playlistId.startsWith(MY_TRACKS_PREFIX)) {
+            String handle = playlistId.substring(MY_TRACKS_PREFIX.length());
+            return userScopedTracks(handle, "https://api.soundcloud.com/me/tracks?limit="
+                            + Math.clamp(limit, 1, 200) + "&offset=" + Math.max(offset, 0))
+                    .map(this::toMusicList)
+                    .onErrorResume(error -> Mono.error(new ApiRequestException("读取「我上传的曲目」失败，请重新绑定授权")));
+        }
+        if (playlistId.startsWith(OWN_PLAYLIST_PREFIX)) {
+            // own:<handle>:<id>
+            String rest = playlistId.substring(OWN_PLAYLIST_PREFIX.length());
+            int split = rest.indexOf(':');
+            if (split <= 0) return Mono.error(new ApiRequestException("歌单标识无效"));
+            String handle = rest.substring(0, split);
+            String realId = rest.substring(split + 1);
+            return ownPlaylistTracks(handle, realId, offset, limit)
+                    .map(this::toMusicList)
+                    .onErrorResume(error -> resolver.getSoundCloudPlaylistTracks(realId, offset, limit)
+                            .map(this::toMusicList));
+        }
         if (!playlistId.matches("\\d+")) {
             return Mono.error(new ApiRequestException("SoundCloud 歌单 ID 无效"));
         }
@@ -91,6 +189,81 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
                         .map(track -> new Music(track.id(), track.title(), List.of(track.artist()), track.durationMs(),
                                 getPlatformName(), track.thumbnail()))
                         .toList());
+    }
+
+    private List<Music> toMusicList(List<YtDlpResolver.TrackMetadata> tracks) {
+        return tracks.stream()
+                .map(track -> new Music(track.id(), track.title(), List.of(track.artist()),
+                        track.durationMs(), getPlatformName(), track.thumbnail(), track.pageUrl()))
+                .toList();
+    }
+
+    /** 任何以 OAuth token 授权的用户级集合（/me/tracks 等），返回 collection 里的 track 列表 */
+    private Mono<List<YtDlpResolver.TrackMetadata>> userScopedTracks(String handle, String url) {
+        return Mono.defer(() -> {
+            Optional<String> token = oauthService.validAccessToken(handle);
+            if (token.isEmpty()) return Mono.error(new ApiRequestException("需要重新绑定 SoundCloud 以读取该列表"));
+            return webClient.get()
+                    .uri(URI.create(url))
+                    .header("Authorization", "OAuth " + token.get())
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .timeout(Duration.ofSeconds(12))
+                    .map(SoundCloudSearchClient::parseLikes);
+        });
+    }
+
+    /** 自己的歌单（可能是私密）：GET /playlists/{id} 返回 tracks 数组 */
+    private Mono<List<YtDlpResolver.TrackMetadata>> ownPlaylistTracks(String handle, String playlistId, int offset, int limit) {
+        return Mono.defer(() -> {
+            Optional<String> token = oauthService.validAccessToken(handle);
+            if (token.isEmpty()) return Mono.empty();
+            int safeLimit = Math.clamp(limit, 1, 200);
+            int safeOffset = Math.max(offset, 0);
+            return webClient.get()
+                    .uri(URI.create("https://api.soundcloud.com/playlists/" + playlistId
+                            + "?limit=" + safeLimit + "&offset=" + safeOffset))
+                    .header("Authorization", "OAuth " + token.get())
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .timeout(Duration.ofSeconds(12))
+                    .map(node -> node.path("tracks").isArray()
+                            ? SoundCloudSearchClient.parseTrackArray(node.path("tracks"))
+                            : SoundCloudSearchClient.parseLikes(node));
+        });
+    }
+
+    /**
+     * 「喜欢的音乐」取数顺序：
+     * 1) OAuth token 调 /me/likes/tracks（能拿到用户自己的完整点赞，含非公开项）
+     * 2) 退回 api-v2 /users/{id}/likes（公开点赞，无需授权）
+     * 3) 再退回 yt-dlp 的 likes 页面
+     */
+    private Mono<List<YtDlpResolver.TrackMetadata>> likedTracks(String handle, int offset, int limit) {
+        return userLikesWithToken(handle, offset, limit)
+                .filter(tracks -> !tracks.isEmpty())
+                .switchIfEmpty(searchClient.likedTracks(handle, offset, limit))
+                .onErrorResume(error -> searchClient.likedTracks(handle, offset, limit))
+                .flatMap(tracks -> tracks.isEmpty()
+                        ? resolver.getSoundCloudUserLikes(handle, offset, limit)
+                        : Mono.just(tracks));
+    }
+
+    private Mono<List<YtDlpResolver.TrackMetadata>> userLikesWithToken(String handle, int offset, int limit) {
+        return Mono.defer(() -> {
+            Optional<String> token = oauthService.validAccessToken(handle);
+            if (token.isEmpty()) return Mono.empty();
+            int safeLimit = Math.clamp(limit, 1, 200);
+            int safeOffset = Math.max(offset, 0);
+            return webClient.get()
+                    .uri(URI.create("https://api.soundcloud.com/me/likes/tracks"
+                            + "?limit=" + safeLimit + "&offset=" + safeOffset + "&linked_partitioning=1"))
+                    .header("Authorization", "OAuth " + token.get())
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .timeout(Duration.ofSeconds(12))
+                    .map(SoundCloudSearchClient::parseLikes);
+        });
     }
 
     private static final Set<String> RESERVED_PATHS = Set.of(

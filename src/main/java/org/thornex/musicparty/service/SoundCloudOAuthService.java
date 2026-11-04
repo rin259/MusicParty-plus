@@ -52,6 +52,13 @@ public class SoundCloudOAuthService {
     /** state → {verifier, createdAt}。单次使用，超时即弃。 */
     private final Map<String, PendingAuth> pending = new ConcurrentHashMap<>();
 
+    /**
+     * handle → 用户 token。OAuth 的价值就在这里：带上它才能读「喜欢的音乐」
+     * 这类需要用户身份的数据；公开 Sets 用 client_id 就够了。
+     * 只存内存、按 TTL 过期，服务重启即失效（不落盘，避免长期保管凭据）。
+     */
+    private final Map<String, UserToken> tokens = new ConcurrentHashMap<>();
+
     public SoundCloudOAuthService(AppProperties appProperties, WebClient webClient) {
         this.appProperties = appProperties;
         this.webClient = webClient;
@@ -98,7 +105,7 @@ public class SoundCloudOAuthService {
      * 授权回调：换 token、取身份。state 必须存在且未被使用（防 CSRF / 重放）。
      * 返回绑定所需的用户资料（handle = permalink 最后一段）。
      */
-    public Mono<Map<String, Object>> exchange(String code, String state) {
+    public synchronized Mono<Map<String, Object>> exchange(String code, String state) {
         if (!notBlank(code) || !notBlank(state)) {
             return Mono.error(new IllegalStateException("缺少 code 或 state"));
         }
@@ -111,11 +118,25 @@ public class SoundCloudOAuthService {
         }
 
         return exchangeToken(code, auth.verifier())
-                .flatMap(token -> fetchMe(token))
-                .map(SoundCloudOAuthService::profileOf);
+                .flatMap(tokenResponse -> {
+                    String accessToken = tokenResponse.path("access_token").asText("");
+                    String refreshToken = tokenResponse.path("refresh_token").asText("");
+                    long expiresIn = tokenResponse.path("expires_in").asLong(3600L);
+                    return fetchMe(accessToken)
+                            .map(me -> {
+                                Map<String, Object> profile = profileOf(me);
+                                String handle = String.valueOf(profile.get("handle"));
+                                if (!handle.isBlank()) {
+                                    tokens.put(handle.toLowerCase(java.util.Locale.ROOT),
+                                            new UserToken(accessToken, refreshToken,
+                                                    System.currentTimeMillis() + expiresIn * 1000L));
+                                }
+                                return profile;
+                            });
+                });
     }
 
-    private Mono<String> exchangeToken(String code, String verifier) {
+    private Mono<JsonNode> exchangeToken(String code, String verifier) {
         AppProperties.SoundCloudOAuthConfig cfg = config();
         return webClient.post()
                 .uri(URI.create(TOKEN_URL))
@@ -130,8 +151,7 @@ public class SoundCloudOAuthService {
                 .retrieve()
                 .bodyToMono(JsonNode.class)
                 .timeout(Duration.ofSeconds(10))
-                .map(node -> node.path("access_token").asText(""))
-                .filter(token -> !token.isBlank())
+                .filter(node -> !node.path("access_token").asText("").isBlank())
                 .switchIfEmpty(Mono.error(new IllegalStateException("SoundCloud 未返回 access_token")));
     }
 
@@ -143,6 +163,60 @@ public class SoundCloudOAuthService {
                 .bodyToMono(JsonNode.class)
                 .timeout(Duration.ofSeconds(10));
     }
+
+    /** 该 handle 是否有可用的用户 token（决定能否展示「喜欢的音乐」） */
+    public boolean hasUserToken(String handle) {
+        return handle != null && tokens.containsKey(handle.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /** 返回可用的 access token；过期时用 refresh_token 续期，失败则移除。 */
+    public synchronized java.util.Optional<String> validAccessToken(String handle) {
+        if (handle == null) return java.util.Optional.empty();
+        String key = handle.toLowerCase(java.util.Locale.ROOT);
+        UserToken token = tokens.get(key);
+        if (token == null) return java.util.Optional.empty();
+        if (System.currentTimeMillis() < token.expiresAt() - 60_000) {
+            return java.util.Optional.of(token.accessToken());
+        }
+        if (token.refreshToken() == null || token.refreshToken().isBlank()) {
+            tokens.remove(key);
+            return java.util.Optional.empty();
+        }
+        try {
+            JsonNode refreshed = refreshToken(token.refreshToken());
+            String access = refreshed.path("access_token").asText("");
+            if (access.isBlank()) {
+                tokens.remove(key);
+                return java.util.Optional.empty();
+            }
+            long expiresIn = refreshed.path("expires_in").asLong(3600L);
+            String nextRefresh = refreshed.path("refresh_token").asText(token.refreshToken());
+            tokens.put(key, new UserToken(access, nextRefresh, System.currentTimeMillis() + expiresIn * 1000L));
+            return java.util.Optional.of(access);
+        } catch (RuntimeException error) {
+            log.warn("SoundCloud token refresh failed: {}", error.getMessage());
+            tokens.remove(key);
+            return java.util.Optional.empty();
+        }
+    }
+
+    private JsonNode refreshToken(String refreshToken) {
+        AppProperties.SoundCloudOAuthConfig cfg = config();
+        return webClient.post()
+                .uri(URI.create(TOKEN_URL))
+                .header("Accept", "application/json; charset=utf-8")
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .bodyValue("grant_type=refresh_token"
+                        + "&client_id=" + urlEncode(cfg.getClientId())
+                        + "&client_secret=" + urlEncode(cfg.getClientSecret())
+                        + "&refresh_token=" + urlEncode(refreshToken))
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .timeout(Duration.ofSeconds(10))
+                .block();
+    }
+
+    private record UserToken(String accessToken, String refreshToken, long expiresAt) {}
 
     static Map<String, Object> profileOf(JsonNode me) {
         String permalink = me.path("permalink_url").asText("");

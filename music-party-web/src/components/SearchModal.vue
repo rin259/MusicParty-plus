@@ -196,7 +196,7 @@
                 <div class="w-10 h-10 bg-medical-200 flex-shrink-0 overflow-hidden"><CoverImage :src="pl.coverImgUrl" class="w-full h-full" /></div>
                 <div class="overflow-hidden">
                   <div class="text-sm font-bold truncate group-hover:text-accent-text text-medical-900">{{ pl.name }}</div>
-                  <div class="text-xs font-mono text-medical-500">{{ pl.platform === 'soundcloud' ? 'PUBLIC SET' : `${pl.trackCount} TRACKS` }}</div>
+                  <div class="text-xs font-mono text-medical-500">{{ pl.platform === 'soundcloud' ? soundcloudPlaylistLabel(pl) : `${pl.trackCount} TRACKS` }}</div>
                 </div>
                 <ChevronRight class="w-4 h-4 text-medical-500 md:hidden ml-auto" />
               </button>
@@ -709,6 +709,15 @@ const handleSelectPlaylist = async (pid) => {
 const handleImportPlaylist = () => {
   if (userStore.isGuest) return promptNameThen(() => handleImportPlaylist());
   player.enqueuePlaylist(platform.value, currentPlaylistId.value);
+};
+
+// 歌单类型标签：OAuth 才拿得到的三个入口要能一眼区分
+const soundcloudPlaylistLabel = (pl) => {
+  const id = pl.id || '';
+  if (id.startsWith('likes:')) return 'LIKES · 喜欢的音乐';
+  if (id.startsWith('mytracks:')) return 'MY TRACKS · 我上传的';
+  if (id.startsWith('own:')) return 'MY SET · 含私密';
+  return 'PUBLIC SET';
 };
 
 const getSourceUrl = (song) => {

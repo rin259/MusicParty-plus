@@ -127,6 +127,19 @@ public class YtDlpResolver {
                 .timeout(Duration.ofSeconds(timeoutSeconds + 5));
     }
 
+    /** 用户「喜欢的音乐」：api-v2 不可用时的最后兜底。 */
+    public Mono<List<TrackMetadata>> getSoundCloudUserLikes(String handle, int offset, int limit) {
+        requireEnabled();
+        int safeOffset = Math.max(offset, 0);
+        int safeLimit = Math.clamp(limit, 1, 100);
+        return Mono.fromCallable(() -> parseSearchResult(runJsonCommand(List.of(
+                        "--dump-single-json", "--playlist-start", String.valueOf(safeOffset + 1),
+                        "--playlist-end", String.valueOf(safeOffset + safeLimit),
+                        soundCloudProfileUrl(handle) + "/likes")), "soundcloud"))
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(Duration.ofSeconds(timeoutSeconds + 5));
+    }
+
     /**
      * Downloads a single platform source through yt-dlp itself. This keeps extractor
      * headers, signed URLs and HLS fragment handling in the same client session.

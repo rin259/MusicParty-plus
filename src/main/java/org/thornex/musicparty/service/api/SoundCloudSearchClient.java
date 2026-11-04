@@ -143,25 +143,113 @@ public class SoundCloudSearchClient {
     private List<YtDlpResolver.TrackMetadata> parseTracks(JsonNode response) {
         List<YtDlpResolver.TrackMetadata> tracks = new ArrayList<>();
         for (JsonNode track : response.path("collection")) {
-            long id = track.path("id").asLong(0L);
-            String title = track.path("title").asText("");
-            if (id == 0L || title.isEmpty()) continue;
-
-            String artwork = highResArtwork(track.path("artwork_url").asText(""));
-            if (artwork.isEmpty()) {
-                artwork = highResArtwork(track.path("user").path("avatar_url").asText(""));
-            }
-
-            // permalink_url 才是用户可读页面（soundcloud.com/artist/track）；
-            // TRACK_URL 是 api.soundcloud.com 接口地址，只用于解析/校验。
-            String permalink = track.path("permalink_url").asText("");
-            if (permalink.isBlank() || !permalink.contains("soundcloud.com/")) permalink = null;
-
-            tracks.add(new YtDlpResolver.TrackMetadata(String.valueOf(id), title,
-                    track.path("user").path("username").asText("Unknown"),
-                    track.path("duration").asLong(0L), artwork, TRACK_URL + id, permalink));
+            YtDlpResolver.TrackMetadata mapped = toMetadata(track);
+            if (mapped != null) tracks.add(mapped);
         }
         return tracks;
+    }
+
+    /** 单条 track → TrackMetadata；ID/标题缺失返回 null。 */
+    static YtDlpResolver.TrackMetadata toMetadata(JsonNode track) {
+        long id = track.path("id").asLong(0L);
+        String title = track.path("title").asText("");
+        if (id == 0L || title.isEmpty()) return null;
+
+        String artwork = highResArtwork(track.path("artwork_url").asText(""));
+        if (artwork.isEmpty()) {
+            artwork = highResArtwork(track.path("user").path("avatar_url").asText(""));
+        }
+
+        // permalink_url 才是用户可读页面（soundcloud.com/artist/track）；
+        // TRACK_URL 是 api.soundcloud.com 接口地址，只用于解析/校验。
+        String permalink = track.path("permalink_url").asText("");
+        if (permalink.isBlank() || !permalink.contains("soundcloud.com/")) permalink = null;
+
+        return new YtDlpResolver.TrackMetadata(String.valueOf(id), title,
+                track.path("user").path("username").asText("Unknown"),
+                track.path("duration").asLong(0L), artwork, TRACK_URL + id, permalink);
+    }
+
+    /**
+     * 用户「喜欢的音乐」。公开 Sets 走 /users/{id}/playlists 拿不到点赞，
+     * 必须单独查 /users/{id}/likes——返回的是 like 对象，里面包着 track。
+     */
+    public Mono<List<YtDlpResolver.TrackMetadata>> likedTracks(String handle, int offset, int limit) {
+        return Mono.fromCallable(() -> likesBlocking(handle, offset, limit))
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(OVERALL_TIMEOUT);
+    }
+
+    private List<YtDlpResolver.TrackMetadata> likesBlocking(String handle, int offset, int limit) {
+        if (handle == null || handle.isBlank()) return List.of();
+        int safeLimit = Math.clamp(limit, 1, 200);
+        int safeOffset = Math.max(offset, 0);
+
+        JsonNode response;
+        try {
+            long userId = resolveUserId(handle, resolveClientId(false));
+            if (userId <= 0) return List.of();
+            response = fetchLikes(userId, safeOffset, safeLimit, resolveClientId(false));
+        } catch (WebClientResponseException error) {
+            int status = error.getStatusCode().value();
+            if (status != 401 && status != 403) throw error;
+            long userId = resolveUserId(handle, resolveClientId(true));
+            if (userId <= 0) return List.of();
+            response = fetchLikes(userId, safeOffset, safeLimit, resolveClientId(true));
+        }
+        return parseLikes(response);
+    }
+
+    /** 解析纯 track 数组（/playlists/{id}.tracks 这种形状） */
+    static List<YtDlpResolver.TrackMetadata> parseTrackArray(JsonNode array) {
+        List<YtDlpResolver.TrackMetadata> tracks = new ArrayList<>();
+        if (array == null || !array.isArray()) return tracks;
+        for (JsonNode item : array) {
+            YtDlpResolver.TrackMetadata mapped = toMetadata(item);
+            if (mapped != null) tracks.add(mapped);
+        }
+        return tracks;
+    }
+
+    static List<YtDlpResolver.TrackMetadata> parseLikes(JsonNode response) {
+        List<YtDlpResolver.TrackMetadata> tracks = new ArrayList<>();
+        for (JsonNode item : response.path("collection")) {
+            JsonNode track = item.has("track") ? item.path("track") : item;
+            YtDlpResolver.TrackMetadata mapped = toMetadata(track);
+            if (mapped != null) tracks.add(mapped);
+        }
+        return tracks;
+    }
+
+    private long resolveUserId(String handle, String clientId) {
+        JsonNode node = webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .scheme("https")
+                        .host("api-v2.soundcloud.com")
+                        .path("/resolve")
+                        .queryParam("url", "https://soundcloud.com/" + handle)
+                        .queryParam("client_id", clientId)
+                        .build())
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(REQUEST_TIMEOUT);
+        return node == null ? 0L : node.path("id").asLong(0L);
+    }
+
+    private JsonNode fetchLikes(long userId, int offset, int limit, String clientId) {
+        return webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .scheme("https")
+                        .host("api-v2.soundcloud.com")
+                        .path("/users/" + userId + "/likes")
+                        .queryParam("limit", limit)
+                        .queryParam("offset", offset)
+                        .queryParam("linked_partitioning", "1")
+                        .queryParam("client_id", clientId)
+                        .build())
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(REQUEST_TIMEOUT);
     }
 
     /**
