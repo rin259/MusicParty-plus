@@ -242,17 +242,31 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
     /** 用户级集合的游标分页缓存：key = handle|首屏 URL */
     private final Map<String, TrackPage> trackPages = new ConcurrentHashMap<>();
 
-    private static final class TrackPage {
+    /** 累积中的用户级集合：已取到的曲目 + 去重集合 + 游标。 */
+    static final class TrackPage {
         final List<YtDlpResolver.TrackMetadata> items = new java.util.ArrayList<>();
+        final Set<String> seen = new java.util.LinkedHashSet<>();
+        /** 下一次要取的游标；null 表示还没开始取过 */
         String nextHref;
+        /** 上游已给不出新曲目（取完了，或游标回绕到了开头） */
+        boolean complete;
         long at = System.currentTimeMillis();
     }
 
     private static final long TRACK_PAGE_TTL_MS = 5 * 60 * 1000L;
 
     /**
-     * 顺序跟随 next_href 取到满足 offset+limit 为止（SoundCloud 的用户级集合用游标分页，
-     * 不认 offset，所以必须按游标累积后再切片；结果缓存 5 分钟避免每翻一页重抓）。
+     * 取用户级集合（喜欢的音乐 / 我上传的 / 自己的歌单）。
+     *
+     * <p>这些端点用游标分页，不认 offset，所以必须按游标累积后再按 offset 切片，结果缓存 5 分钟。
+     *
+     * <p>2026-11 线上「滚动时一直循环约 200 首」的根因就在这里：
+     * <ol>
+     *   <li>每次请求都从第一页（firstUrl）重新取，再把整页追加进缓存。只要缓存条数还不够
+     *       offset+limit，就会把第一页又追加一遍——前 200 首被重复插入，前端看起来像在循环。</li>
+     *   <li>游标越过末尾时上游会「回绕」到第一页而不是返回空数组，所以不能拿空数组当结束信号；
+     *       按 id 去重后「这一页没有新 id」才是到底的唯一可靠判断。</li>
+     * </ol>
      */
     private List<YtDlpResolver.TrackMetadata> loadUserTracks(String handle, String firstUrl,
                                                              String token, int offset, int limit) {
@@ -261,32 +275,62 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         synchronized (page) {
             if (System.currentTimeMillis() - page.at > TRACK_PAGE_TTL_MS) {
                 page.items.clear();
+                page.seen.clear();
                 page.nextHref = null;
+                page.complete = false;
                 page.at = System.currentTimeMillis();
             }
-            int want = offset + limit;
-            String url = firstUrl;
-            while (page.items.size() < want) {
-                JsonNode response = authorizedGet(url, token);
-                List<YtDlpResolver.TrackMetadata> batch = SoundCloudSearchClient.parseLikes(response);
-                if (batch.isEmpty()) break;
-                page.items.addAll(batch);
-
-                // 新接口给 next_href；但 /me/likes、/me/tracks 实际返回的是裸数组（没有游标），
-                // 只能用 offset 继续翻页——这也是「LIKES 只有 50 首」的根因。
-                String next = response.path("next_href").asText("");
-                if (!next.isBlank()) {
-                    url = next;
-                } else if (response.isArray()) {
-                    url = withOffset(firstUrl, page.items.size());
-                } else {
-                    break;
-                }
-                log.info("SoundCloud page {}: +{} items (total {})", pathOf(url), batch.size(), page.items.size());
-            }
+            drainPages(page, offset + limit, firstUrl, url -> authorizedGet(url, token));
             if (offset >= page.items.size()) return List.of();
             return new java.util.ArrayList<>(
                     page.items.subList(offset, Math.min(page.items.size(), offset + limit)));
+        }
+    }
+
+    /**
+     * 从缓存里记下的游标继续取，直到够 want 条、上游结束或游标回绕。
+     * 抽成静态方法便于用假的 fetcher 做回归测试（不联网）。
+     */
+    static void drainPages(TrackPage page, int want, String firstUrl,
+                           java.util.function.Function<String, JsonNode> fetcher) {
+        // 关键：从 nextHref 继续，绝不能每次都回到 firstUrl
+        String url = page.complete ? null : (page.nextHref != null ? page.nextHref : firstUrl);
+        int guard = 0;
+        while (!page.complete && page.items.size() < want
+                && url != null && !url.isBlank() && guard++ < 250) {
+            JsonNode response = fetcher.apply(url);
+            List<YtDlpResolver.TrackMetadata> batch = SoundCloudSearchClient.parseLikes(response);
+            if (batch.isEmpty()) {
+                page.complete = true;
+                page.nextHref = null;
+                break;
+            }
+            int added = 0;
+            for (YtDlpResolver.TrackMetadata track : batch) {
+                if (track.id() != null && page.seen.add(track.id())) {
+                    page.items.add(track);
+                    added++;
+                }
+            }
+            if (added == 0) {
+                // 整页都是见过的曲目：上游回绕到开头（或分页失效），到此为止
+                page.complete = true;
+                page.nextHref = null;
+                break;
+            }
+            String next = response.path("next_href").asText("");
+            if (!next.isBlank()) {
+                // 注意：上游偶尔会连续两页返回同一个 next_href 但数据仍在前进，
+                // 所以不能拿 next == url 当结束条件，只能靠「没有新 id」判断。
+                url = next;
+            } else if (response.isArray()) {
+                url = withOffset(firstUrl, page.items.size());
+            } else {
+                page.complete = true;
+                url = null;
+            }
+            page.nextHref = url;
+            log.info("SoundCloud track page: +{} new (total {} unique)", added, page.items.size());
         }
     }
 

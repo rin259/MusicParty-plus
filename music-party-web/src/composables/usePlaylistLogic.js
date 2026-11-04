@@ -125,10 +125,19 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
             else hasMore.value = rawSongs.length >= limit.value;
 
             const validSongs = rawSongs.filter(s => s.id !== 'INVALID_SKIP');
-            songsRef.value.push(...validSongs);
+            // 只追加没见过的曲目：服务端若回绕/重复分页，用户会看到同一批歌被反复接在列表后面
+            const known = new Set(songsRef.value.map(s => `${s.platform}:${s.id}`));
+            const fresh = validSongs.filter(s => !known.has(`${s.platform}:${s.id}`));
+            songsRef.value.push(...fresh);
+
+            // 整页都是已加载过的曲目 = 分页回绕/失效；必须收尾，否则会无限循环下去
+            if (validSongs.length > 0 && fresh.length === 0) {
+                console.warn('[playlist] 服务端返回了整页重复曲目，停止翻页', currentPlaylistId.value);
+                hasMore.value = false;
+            }
 
             // 贪婪加载：如果有效数据太少，自动加载下一页（offset 已由服务端给出）
-            if (hasMore.value && rawSongs.length > 0 && validSongs.length < 10) {
+            if (hasMore.value && rawSongs.length > 0 && fresh.length < 10) {
                 setTimeout(fetchSongsPage, 50);
             }
 
