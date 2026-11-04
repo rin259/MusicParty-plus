@@ -4,63 +4,47 @@
   <ToastNotification />
 
   <div class="h-screen w-screen overflow-hidden font-sans transition-colors duration-500">
-    <AudioEngine />
-    <!-- 1. 认证遮罩 -->
-    <AuthOverlay @unlocked="userStore.isAuthPassed = true" v-if="!userStore.isAuthPassed" />
+    <!-- 0. 房间选择 / 创建（landing） -->
+    <RoomLanding v-if="!roomStore.entered" />
 
-    <!-- 2. 启动页 (Start Screen) -->
-    <!-- 注意：点击 Connect 后，我们先不销毁它，直到 socket 连接成功，或者直接切换布局 -->
-    <div v-if="userStore.isAuthPassed && !hasStarted" class="absolute inset-0 z-40 bg-medical-50 flex flex-col items-center justify-center space-y-8">
-      <h1 class="text-4xl font-bold tracking-tighter text-medical-900">MUSIC PARTY</h1>
-      <p class="font-mono text-xs text-medical-500 tracking-widest">SYSTEM READY</p>
-      <button
-          @click="startGame"
-          class="px-12 py-4 min-h-12 bg-surface-strong text-white font-bold text-xl hover:bg-accent hover:text-accent-fg transition-colors chamfer-br"
-      >
-        CONNECT
-      </button>
-    </div>
+    <template v-else>
+      <AudioEngine />
 
-    <!-- 3. 主界面 (当 hasStarted 为 true 时显示) -->
-    <MainLayout v-if="hasStarted" @search="handleSearchClick">
-      <!-- 中间插槽: 视觉控制台 -->
-      <CenterConsole />
+      <!-- 主界面 -->
+      <MainLayout v-if="hasStarted" @search="handleSearchClick">
+        <CenterConsole />
+        <template #player>
+          <PlayerControl />
+        </template>
+      </MainLayout>
 
-      <!-- 底部插槽: 播放器 -->
-      <!-- 注意：这里不使用 v-if，而是 v-show，或者因为在 MainLayout 里是 slot，
-           只有 MainLayout 渲染了，它才会渲染。
-           关键是 useAudio 里的逻辑已经修好了，会自动处理播放。
-      -->
-      <template #player>
-        <PlayerControl />
-      </template>
-    </MainLayout>
-
-    <!-- 4. 全局弹窗 -->
-    <SearchModal :isOpen="showSearch" @close="showSearch = false" />
-    <NamePromptModal />
-    <ChatOverlay v-if="hasStarted && !uiStore.isLiteMode" />
-    <TutorialOverlay v-if="hasStarted && !uiStore.isLiteMode" />
-    <AdminAuthModal />
-    <AdminDashboard />
+      <!-- 全局弹窗 -->
+      <SearchModal :isOpen="showSearch" @close="showSearch = false" />
+      <NamePromptModal />
+      <ChatOverlay v-if="hasStarted && !uiStore.isLiteMode" />
+      <TutorialOverlay v-if="hasStarted && !uiStore.isLiteMode" />
+      <AdminAuthModal />
+      <AdminDashboard />
+    </template>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { useEventListener } from '@vueuse/core';
 import { usePlayerStore } from './stores/player';
 import { useUserStore } from './stores/user';
 import { useUiStore } from './stores/ui';
 import { useAdminStore } from './stores/admin';
 import { useChatStore } from './stores/chat';
+import { useRoomStore } from './stores/room';
 
 // Components
 import MainLayout from './components/layout/MainLayout.vue';
 import CenterConsole from './components/CenterConsole.vue';
 import PlayerControl from './components/PlayerControl.vue';
 import AudioEngine from './components/AudioEngine.vue';
-import AuthOverlay from './components/AuthOverlay.vue';
+import RoomLanding from './components/RoomLanding.vue';
 import SearchModal from './components/SearchModal.vue';
 import NamePromptModal from './components/NamePromptModal.vue';
 import ChatOverlay from './components/ChatOverlay.vue';
@@ -76,6 +60,7 @@ const adminStore = useAdminStore();
 const hasStarted = ref(false);
 const showSearch = ref(false);
 const chatStore = useChatStore();
+const roomStore = useRoomStore();
 
 // 键盘可达性(antislop R-32)：Escape 自上而下关闭最上层浮层
 useEventListener(window, 'keydown', (e) => {
@@ -95,10 +80,21 @@ useEventListener(window, 'keydown', (e) => {
   showSearch.value = true;
 });
 
-const startGame = () => {
-  hasStarted.value = true;
-  player.connect();
-};
+// 进入/离开房间只以 roomStore.entered 为准：
+// landing 组件在 entered 变 true 的同一 tick 会被卸载，从子组件 emit 出来的事件可能丢失。
+watch(() => roomStore.entered, (entered) => {
+  if (entered) {
+    hasStarted.value = true;
+    player.connect();
+  } else {
+    hasStarted.value = false;
+    player.disconnect();
+    // 房间级状态必须一起清掉，不能让上一个房间的聊天/在线列表带到落地页
+    chatStore.messages = [];
+    chatStore.unreadCount = 0;
+    userStore.setOnlineUsers([]);
+  }
+});
 
 // 自动性能优化：切后台自动进入精简模式
 useEventListener(document, 'visibilitychange', () => {

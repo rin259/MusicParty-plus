@@ -1,18 +1,26 @@
 <!-- src/components/layout/MainLayout.vue -->
 <script setup>
 import { ref, onMounted } from 'vue';
-import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun } from 'lucide-vue-next';
+import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut } from 'lucide-vue-next';
 import UserList from '../UserList.vue';
 import QueueList from '../QueueList.vue';
 import CoverImage from '../CoverImage.vue';
 import { useUserStore } from '../../stores/user';
 import { useUiStore } from '../../stores/ui';
 import { usePlayerStore } from '../../stores/player';
+import { useRoomStore } from '../../stores/room';
 
 const emit = defineEmits(['search']);
 const userStore = useUserStore();
 const uiStore = useUiStore();
 const playerStore = usePlayerStore();
+const roomStore = useRoomStore();
+
+const switchRoom = () => {
+  mobileMenuOpen.value = false;
+  // App 监听 roomStore.entered，会自动断开连接并清空房间状态
+  roomStore.leave();
+};
 
 onMounted(() => {
   uiStore.fetchConfig();
@@ -48,6 +56,17 @@ const handleSearchClick = () => {
         <div class="w-2.5 h-2.5 md:w-3 md:h-3 bg-accent flex-shrink-0"></div>
         <div class="min-w-0 flex items-baseline gap-1">
           <h1 class="font-bold text-sm md:text-xl tracking-tighter text-medical-900 whitespace-nowrap m-0">MUSIC PARTY</h1>
+        </div>
+        <div class="hidden sm:flex min-w-0 items-center gap-2 ml-1">
+          <span class="font-mono text-[10px] text-medical-500 truncate max-w-[120px] md:max-w-[180px]" :title="roomStore.currentName">
+            {{ roomStore.currentName }}
+          </span>
+          <button
+              type="button"
+              @click="switchRoom"
+              class="font-mono text-[9px] tracking-[0.12em] px-1.5 py-1 border border-medical-200 bg-medical-50 text-medical-500 hover:border-accent hover:text-accent-text transition-colors"
+              title="切换房间"
+          >SWITCH</button>
         </div>
       </div>
 
@@ -120,6 +139,13 @@ const handleSearchClick = () => {
           <span class="font-mono text-xs font-bold text-medical-500">MENU</span>
           <button @click="mobileMenuOpen = false" class="flex items-center justify-center w-11 h-11 -mr-2 text-medical-500 hover:text-medical-900" aria-label="关闭菜单"><X class="w-5 h-5" /></button>
         </div>
+        <button
+            @click="switchRoom"
+            class="w-full min-h-11 flex items-center justify-between gap-2 p-3 border border-medical-200 bg-medical-50 text-medical-700"
+        >
+          <span class="flex items-center gap-2 text-sm font-bold"><LogOut class="w-4 h-4" /> 切换房间</span>
+          <span class="font-mono text-[10px] text-medical-500 truncate max-w-[7rem]">{{ roomStore.currentName }}</span>
+        </button>
         <button id="tutorial-rename-mobile" @click="toggleMobileUser" class="w-full min-h-11 flex items-center justify-between p-3 border border-medical-200 bg-medical-50 text-medical-700">
           <span class="flex items-center gap-2 text-sm font-bold"><Users class="w-4 h-4" /> 在线用户</span>
           <span class="font-mono text-xs text-accent-text">{{ userStore.onlineUsers.length }}</span>

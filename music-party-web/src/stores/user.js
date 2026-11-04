@@ -103,6 +103,15 @@ export const useUserStore = defineStore('user', () => {
         return false;
     };
 
+    /** 落地页设置名字时无需等 WebSocket 确认：先本地生效，连接后服务端会再校准。 */
+    const setLocalName = (name) => {
+        const trimmed = (name || '').trim();
+        if (!trimmed) return;
+        currentUser.value.name = trimmed;
+        isGuest.value = false;
+        localStorage.setItem(STORAGE_KEYS.USERNAME, trimmed);
+    };
+
     const setOnlineUsers = (users) => {
         onlineUsers.value = users;
     };
@@ -146,6 +155,7 @@ export const useUserStore = defineStore('user', () => {
         bindingProfiles,
         saveBindingProfile,
         initUser,
+        setLocalName,
         setOnlineUsers,
         updateBinding,
         saveName,

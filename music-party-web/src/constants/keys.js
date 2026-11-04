@@ -8,5 +8,7 @@ export const STORAGE_KEYS = {
     LITE_MODE: 'mp_lite_mode',
     ADMIN_PASSWORD: 'mp_admin_password',
     KEEP_ALIVE: 'mp_keep_alive',
-    THEME: 'mp_theme'
+    THEME: 'mp_theme',
+    ROOM_ID: 'mp_room_id',
+    ROOM_ACCESS: 'mp_room_access'
 };
