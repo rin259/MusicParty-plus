@@ -171,18 +171,18 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
 
         const fetched = [];
         let rawCount = 0;
-        let offset = 0;
+        let pageOffset = 0;   // 注意：不能用 offset——那会遮蔽外层的 offset ref
         let lastPageFull = false;
         try {
             for (let page = 0; page < 40; page++) {   // 保险丝：最多 2000 首
-                const raw = await musicApi.getPlaylistSongs(plat, pid, offset, limit.value);
-                console.info('[refresh]', pid, 'offset', offset, '->', Array.isArray(raw) ? raw.length : raw);
+                const raw = await musicApi.getPlaylistSongs(plat, pid, pageOffset, limit.value);
+                console.info('[refresh]', pid, 'offset', pageOffset, '->', Array.isArray(raw) ? raw.length : raw);
                 lastPageFull = raw.length >= limit.value;
                 rawCount += raw.length;
                 fetched.push(...raw.filter(s => s.id !== 'INVALID_SKIP'));
                 refreshState.value.done = fetched.length;
 
-                offset += limit.value;
+                pageOffset += limit.value;
                 if (raw.length === 0 || !lastPageFull) break;       // 服务端到底
                 if (fetched.length >= target) break;                // 已核对完用户手里的量
             }
