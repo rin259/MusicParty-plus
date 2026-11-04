@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -137,14 +138,14 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         return Mono.defer(() -> {
             Optional<String> token = oauthService.validAccessToken(handle);
             if (token.isEmpty()) return Mono.empty();
-            JsonNode response = authorizedGet(apiBase() + "/me/playlists?limit=100&linked_partitioning=1", token.get());
-            return Mono.just(response)
-                    .map(node -> {
-                        List<Playlist> out = parseOwnPlaylists(handle, node, getPlatformName());
-                        long privateCount = out.stream().filter(p -> p.name().endsWith(" · 私密")).count();
-                        log.info("SoundCloud /me/playlists for {}: {} playlists ({} private)", handle, out.size(), privateCount);
-                        return out;
-                    });
+            List<JsonNode> items = fetchAllCollectionItems(
+                    apiBase() + "/me/playlists?limit=200&linked_partitioning=1", token.get(), 10);
+            return Mono.just(items).map(nodes -> {
+                List<Playlist> out = parseOwnPlaylists(handle, nodes, getPlatformName());
+                long privateCount = out.stream().filter(p -> p.name().endsWith(" · 私密")).count();
+                log.info("SoundCloud /me/playlists for {}: {} playlists ({} private)", handle, out.size(), privateCount);
+                return out;
+            });
         });
     }
 
@@ -156,8 +157,8 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         }
         if (playlistId.startsWith(MY_TRACKS_PREFIX)) {
             String handle = playlistId.substring(MY_TRACKS_PREFIX.length());
-            return userScopedTracks(handle, "https://api.soundcloud.com/me/tracks?limit="
-                            + Math.clamp(limit, 1, 200) + "&offset=" + Math.max(offset, 0))
+            return userScopedTracks(handle, apiBase() + "/me/tracks?limit=200&linked_partitioning=1",
+                            offset, limit)
                     .map(this::toMusicList)
                     .onErrorResume(error -> Mono.error(new ApiRequestException("读取「我上传的曲目」失败，请重新绑定授权")));
         }
@@ -183,6 +184,59 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
                         .toList());
     }
 
+
+    /** 用户级集合的游标分页缓存：key = handle|首屏 URL */
+    private final Map<String, TrackPage> trackPages = new ConcurrentHashMap<>();
+
+    private static final class TrackPage {
+        final List<YtDlpResolver.TrackMetadata> items = new java.util.ArrayList<>();
+        String nextHref;
+        long at = System.currentTimeMillis();
+    }
+
+    private static final long TRACK_PAGE_TTL_MS = 5 * 60 * 1000L;
+
+    /**
+     * 顺序跟随 next_href 取到满足 offset+limit 为止（SoundCloud 的用户级集合用游标分页，
+     * 不认 offset，所以必须按游标累积后再切片；结果缓存 5 分钟避免每翻一页重抓）。
+     */
+    private List<YtDlpResolver.TrackMetadata> loadUserTracks(String handle, String firstUrl,
+                                                             String token, int offset, int limit) {
+        String key = handle + "|" + firstUrl;
+        TrackPage page = trackPages.computeIfAbsent(key, k -> new TrackPage());
+        synchronized (page) {
+            if (System.currentTimeMillis() - page.at > TRACK_PAGE_TTL_MS) {
+                page.items.clear();
+                page.nextHref = null;
+                page.at = System.currentTimeMillis();
+            }
+            int want = offset + limit;
+            String url = page.items.isEmpty() ? firstUrl : page.nextHref;
+            while (page.items.size() < want && url != null) {
+                JsonNode response = authorizedGet(url, token);
+                page.items.addAll(SoundCloudSearchClient.parseLikes(response));
+                String next = response.path("next_href").asText("");
+                page.nextHref = next.isBlank() ? null : next;
+                url = page.nextHref;
+            }
+            if (offset >= page.items.size()) return List.of();
+            return new java.util.ArrayList<>(
+                    page.items.subList(offset, Math.min(page.items.size(), offset + limit)));
+        }
+    }
+
+    /** 顺序跟随 next_href 取完（歌单列表这类一次要全量的场景，最多 maxPages 页） */
+    private List<JsonNode> fetchAllCollectionItems(String firstUrl, String token, int maxPages) {
+        List<JsonNode> items = new java.util.ArrayList<>();
+        String url = firstUrl;
+        for (int page = 0; page < maxPages && url != null; page++) {
+            JsonNode response = authorizedGet(url, token);
+            for (JsonNode item : response.path("collection")) items.add(item);
+            String next = response.path("next_href").asText("");
+            url = next.isBlank() ? null : next;
+        }
+        return items;
+    }
 
     /**
      * 带用户 token 的 GET。SoundCloud 的鉴权头写法在不同文档/版本里出现过
@@ -238,12 +292,14 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
     }
 
     /** 任何以 OAuth token 授权的用户级集合（/me/tracks 等），返回 collection 里的 track 列表 */
-    private Mono<List<YtDlpResolver.TrackMetadata>> userScopedTracks(String handle, String url) {
+    private Mono<List<YtDlpResolver.TrackMetadata>> userScopedTracks(String handle, String url,
+                                                                     int offset, int limit) {
         return Mono.defer(() -> {
             Optional<String> token = oauthService.validAccessToken(handle);
             if (token.isEmpty()) return Mono.error(new ApiRequestException("需要重新绑定 SoundCloud 以读取该列表"));
-            JsonNode response = authorizedGet(url, token.get());
-            return Mono.just(response).map(SoundCloudSearchClient::parseLikes);
+            int safeOffset = Math.max(0, offset);
+            int safeLimit = Math.clamp(limit, 1, 200);
+            return Mono.just(loadUserTracks(handle, url, token.get(), safeOffset, safeLimit));
         });
     }
 
@@ -259,17 +315,11 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
             if (token.isEmpty()) return Mono.empty();
             int safeLimit = Math.clamp(limit, 1, 200);
             int safeOffset = Math.max(offset, 0);
-            int want = Math.min(1000, safeOffset + safeLimit);
             String urn = "soundcloud:playlists:" + playlistId;
-            JsonNode response = authorizedGet(apiBase() + "/playlists/"
+            String firstUrl = apiBase() + "/playlists/"
                     + java.net.URLEncoder.encode(urn, java.nio.charset.StandardCharsets.UTF_8)
-                    + "/tracks?limit=" + want + "&linked_partitioning=1", token.get());
-            return Mono.just(response)
-                    .map(node -> {
-                        List<YtDlpResolver.TrackMetadata> all = SoundCloudSearchClient.parseLikes(node);
-                        if (safeOffset >= all.size()) return List.<YtDlpResolver.TrackMetadata>of();
-                        return all.subList(safeOffset, Math.min(all.size(), safeOffset + safeLimit));
-                    });
+                    + "/tracks?limit=200&linked_partitioning=1";
+            return Mono.just(loadUserTracks(handle, firstUrl, token.get(), safeOffset, safeLimit));
         });
     }
 
@@ -297,9 +347,8 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
             if (token.isEmpty()) return Mono.empty();
             int safeLimit = Math.clamp(limit, 1, 200);
             int safeOffset = Math.max(offset, 0);
-            JsonNode response = authorizedGet(apiBase() + "/me/likes/tracks"
-                    + "?limit=" + safeLimit + "&offset=" + safeOffset + "&linked_partitioning=1", token.get());
-            List<YtDlpResolver.TrackMetadata> tracks = SoundCloudSearchClient.parseLikes(response);
+            List<YtDlpResolver.TrackMetadata> tracks = loadUserTracks(handle,
+                    apiBase() + "/me/likes/tracks?limit=200&linked_partitioning=1", token.get(), safeOffset, safeLimit);
             log.info("SoundCloud /me/likes/tracks for {}: {} items (offset {})", handle, tracks.size(), safeOffset);
             return Mono.just(tracks);
         });
@@ -310,8 +359,14 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
      * 私密歌单在名称后加「 · 私密」，前端据此区分（Playlist DTO 没有隐私字段）。
      */
     static List<Playlist> parseOwnPlaylists(String handle, JsonNode response, String platform) {
+        List<JsonNode> nodes = new java.util.ArrayList<>();
+        for (JsonNode playlist : response.path("collection")) nodes.add(playlist);
+        return parseOwnPlaylists(handle, nodes, platform);
+    }
+
+    static List<Playlist> parseOwnPlaylists(String handle, List<JsonNode> playlistNodes, String platform) {
         List<Playlist> out = new java.util.ArrayList<>();
-        for (JsonNode playlist : response.path("collection")) {
+        for (JsonNode playlist : playlistNodes) {
             long id = playlist.path("id").asLong(0L);
             if (id == 0L) id = SoundCloudSearchClient.numericIdFromUrn(playlist.path("urn").asText(""));
             String title = playlist.path("title").asText("");
@@ -329,8 +384,24 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
      * 绑定诊断（管理员调用）：有 token 时逐个打真实接口并回报状态/计数，
      * 上线后一次性确认「哪个鉴权头可用、返回多少歌单、其中多少私密」。
      */
-    public Mono<Map<String, Object>> diagnose(String handle) {
+    public Mono<Map<String, Object>> diagnoseAll() {
         return Mono.fromCallable(() -> {
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            for (String handle : oauthService.tokenHandles()) {
+                out.put(handle, diagnoseBlocking(handle));
+            }
+            if (out.isEmpty()) out.put("_note", "没有任何有效的 SoundCloud token（未绑定或服务重启过）");
+            return out;
+        }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
+    }
+
+    public Mono<Map<String, Object>> diagnose(String handle) {
+        return Mono.fromCallable(() -> diagnoseBlocking(handle))
+                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
+    }
+
+    private Map<String, Object> diagnoseBlocking(String handle) {
+        {
             Map<String, Object> out = new java.util.LinkedHashMap<>();
             String normalized = normalizeHandle(handle);
             Optional<String> token = oauthService.validAccessToken(normalized);
@@ -342,8 +413,9 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
             out.put("playlists", probePlaylists(normalized, token.get()));
             out.put("likes", probeCount(apiBase() + "/me/likes/tracks?limit=50", token.get()));
             out.put("myTracks", probeCount(apiBase() + "/me/tracks?limit=50", token.get()));
+            out.put("likedPlaylists", probeCount(apiBase() + "/me/likes/playlists?limit=50", token.get()));
             return out;
-        }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
+        }
     }
 
     private Map<String, Object> probe(String url, String token) {

@@ -1,7 +1,13 @@
 package org.thornex.musicparty.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import jakarta.annotation.PostConstruct;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.thornex.musicparty.config.AppProperties;
@@ -58,6 +64,54 @@ public class SoundCloudOAuthService {
      * 只存内存、按 TTL 过期，服务重启即失效（不落盘，避免长期保管凭据）。
      */
     private final Map<String, UserToken> tokens = new ConcurrentHashMap<>();
+
+    /**
+     * token 落盘（仅本机、0600）。自托管实例上重启/部署很频繁，
+     * 不持久化的话每次都要用户重新授权一次，实际体验无法接受。
+     * 只保存句柄与 token，不保存任何密码；文件在 data/ 下，已被 git 忽略。
+     */
+    private static final java.nio.file.Path TOKEN_FILE = java.nio.file.Path.of("data/soundcloud-oauth.json");
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    @PostConstruct
+    void loadPersistedTokens() {
+        try {
+            if (!java.nio.file.Files.exists(TOKEN_FILE)) return;
+            JsonNode root = MAPPER.readTree(java.nio.file.Files.readString(TOKEN_FILE));
+            root.fields().forEachRemaining(entry -> {
+                JsonNode node = entry.getValue();
+                String access = node.path("accessToken").asText("");
+                if (access.isBlank()) return;
+                tokens.put(entry.getKey(), new UserToken(access,
+                        node.path("refreshToken").asText(""), node.path("expiresAt").asLong(0L)));
+            });
+            log.info("Restored {} SoundCloud token(s) from disk", tokens.size());
+        } catch (Exception error) {
+            log.warn("Could not restore SoundCloud tokens: {}", error.getMessage());
+        }
+    }
+
+    private synchronized void persistTokens() {
+        try {
+            ObjectNode root = MAPPER.createObjectNode();
+            tokens.forEach((handle, token) -> {
+                ObjectNode node = root.putObject(handle);
+                node.put("accessToken", token.accessToken());
+                node.put("refreshToken", token.refreshToken());
+                node.put("expiresAt", token.expiresAt());
+            });
+            java.nio.file.Files.createDirectories(TOKEN_FILE.getParent());
+            java.nio.file.Files.writeString(TOKEN_FILE, MAPPER.writeValueAsString(root));
+            try {
+                java.nio.file.Files.setPosixFilePermissions(TOKEN_FILE,
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            } catch (UnsupportedOperationException ignored) {
+                // 非 POSIX 文件系统（如 Windows）忽略
+            }
+        } catch (Exception error) {
+            log.warn("Could not persist SoundCloud tokens: {}", error.getMessage());
+        }
+    }
 
     public SoundCloudOAuthService(AppProperties appProperties, WebClient webClient) {
         this.appProperties = appProperties;
@@ -130,6 +184,7 @@ public class SoundCloudOAuthService {
                                     tokens.put(handle.toLowerCase(java.util.Locale.ROOT),
                                             new UserToken(accessToken, refreshToken,
                                                     System.currentTimeMillis() + expiresIn * 1000L));
+                                    persistTokens();
                                 }
                                 return profile;
                             });
@@ -164,6 +219,11 @@ public class SoundCloudOAuthService {
                 .timeout(Duration.ofSeconds(10));
     }
 
+    /** 已授权的 handle 列表（诊断用；不含 token 本身） */
+    public java.util.Set<String> tokenHandles() {
+        return java.util.Set.copyOf(tokens.keySet());
+    }
+
     /** 该 handle 是否有可用的用户 token（决定能否展示「喜欢的音乐」） */
     public boolean hasUserToken(String handle) {
         return handle != null && tokens.containsKey(handle.toLowerCase(java.util.Locale.ROOT));
@@ -180,6 +240,7 @@ public class SoundCloudOAuthService {
         }
         if (token.refreshToken() == null || token.refreshToken().isBlank()) {
             tokens.remove(key);
+            persistTokens();
             return java.util.Optional.empty();
         }
         try {
@@ -192,6 +253,7 @@ public class SoundCloudOAuthService {
             long expiresIn = refreshed.path("expires_in").asLong(3600L);
             String nextRefresh = refreshed.path("refresh_token").asText(token.refreshToken());
             tokens.put(key, new UserToken(access, nextRefresh, System.currentTimeMillis() + expiresIn * 1000L));
+            persistTokens();
             return java.util.Optional.of(access);
         } catch (RuntimeException error) {
             log.warn("SoundCloud token refresh failed: {}", error.getMessage());

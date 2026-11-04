@@ -266,9 +266,11 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         pendingRestoreScrollTop = 0;
     });
 
+    // 绑定是原地改对象属性（bindings.value[platform] = id），ref 本身不变，
+    // 不加 deep 的话 watch 永远不触发——绑定成功后列表不会刷新。
     watch([platformRef, bindings], () => {
         fetchPlaylists();
-    }, { immediate: true });
+    }, { immediate: true, deep: true });
 
     return {
         playlists,

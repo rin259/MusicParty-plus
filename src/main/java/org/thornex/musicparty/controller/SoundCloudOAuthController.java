@@ -55,13 +55,14 @@ public class SoundCloudOAuthController {
      */
     @GetMapping("/oauth/diagnose")
     public Mono<ResponseEntity<Map<String, Object>>> diagnose(
-            @RequestParam String handle,
+            @RequestParam(required = false) String handle,
             @RequestHeader(value = "X-Admin-Password", required = false) String password) {
         if (password == null || !password.equals(appProperties.getAdminPassword())) {
             return Mono.just(ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.<String, Object>of("message", "ACCESS DENIED")));
         }
-        return soundCloudApi.diagnose(handle).map(ResponseEntity::ok);
+        return (handle == null || handle.isBlank() ? soundCloudApi.diagnoseAll() : soundCloudApi.diagnose(handle))
+                .map(ResponseEntity::ok);
     }
 
     /** 前端探测：OAuth 是否已配置（决定「一键绑定」按钮是否显示） */
