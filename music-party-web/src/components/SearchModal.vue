@@ -375,7 +375,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
 import { useSearchLogic } from '../composables/useSearchLogic';
@@ -454,27 +454,97 @@ watch(() => platform.value === 'soundcloud', (onSoundcloud) => {
   if (onSoundcloud) checkScOauth();
 }, { immediate: true });
 
-const startSoundcloudOauth = () => {
-  const popup = window.open('/api/soundcloud/oauth/start', 'soundcloud-oauth', 'width=520,height=720');
+// 绑定结果统一入口：postMessage（同源快路径）和轮询（跨域/opener 被切断）都走这里
+let lastBoundHandle = null;
+const applySoundcloudPayload = (payload) => {
+  const profile = payload?.profile;
+  if (payload?.ok && profile?.handle) {
+    const already = userStore.bindings?.soundcloud === profile.handle;
+    player.bindAccount('soundcloud', profile.handle);
+    userStore.saveBindingProfile('soundcloud', { name: profile.name, avatarUrl: profile.avatarUrl });
+    userSearchResults.value = [];
+    userSearchAttempted.value = false;
+    if (!already && lastBoundHandle !== profile.handle) {
+      lastBoundHandle = profile.handle;
+      info('SoundCloud 已绑定：' + (profile.name || profile.handle));
+    }
+  } else {
+    toastError('SoundCloud 绑定失败：' + (payload?.message || '未知错误'));
+  }
+};
+
+// 回跳可能落在固定 redirect_uri 的域名（ajdgsu.online），而用户可能在别的域名
+// （music.rin.red）开站；此时 postMessage 会被 origin 校验丢弃。
+// 因此用 state 轮询服务端结果，彻底不依赖 window.opener。
+let scOauthPoll = null;
+let scOauthPopup = null;
+const stopScOauthPoll = () => {
+  if (scOauthPoll) {
+    clearInterval(scOauthPoll);
+    scOauthPoll = null;
+  }
+};
+onUnmounted(stopScOauthPoll);
+
+const startSoundcloudOauth = async () => {
+  stopScOauthPoll();
+  lastBoundHandle = null;
+
+  // 必须在用户点击的同一个调用栈里 window.open，否则 await 之后会被弹窗拦截
+  const popup = window.open('', 'soundcloud-oauth', 'width=520,height=720');
   if (!popup) {
     toastError('弹窗被拦截：请允许本站弹窗，或改用手动输入 handle');
+    return;
   }
+  scOauthPopup = popup;
+
+  let session;
+  try {
+    session = await musicApi.soundcloudOauthStart();
+  } catch {
+    try { popup.close(); } catch { /* ignore */ }
+    toastError('SoundCloud 授权未配置或暂时不可用');
+    return;
+  }
+  if (!session?.url || !session?.state) {
+    try { popup.close(); } catch { /* ignore */ }
+    toastError('SoundCloud 授权未配置');
+    return;
+  }
+  try {
+    popup.location.href = session.url;
+  } catch {
+    try { popup.close(); } catch { /* ignore */ }
+    toastError('无法打开发授权页，请稍后重试');
+    return;
+  }
+
+  let attempts = 0;
+  scOauthPoll = setInterval(async () => {
+    attempts += 1;
+    try {
+      const result = await musicApi.soundcloudOauthResult(session.state);
+      if (result?.done) {
+        stopScOauthPoll();
+        try { popup.close(); } catch { /* 用户可能已关闭 */ }
+        applySoundcloudPayload(result);
+        return;
+      }
+    } catch { /* 网络抖动：继续轮询 */ }
+    if (attempts >= 100) {   // ~2 分钟
+      stopScOauthPoll();
+      toastError('SoundCloud 授权超时，请重试');
+    }
+  }, 1200);
 };
 
 useEventListener(window, 'message', (event) => {
   if (event.origin !== window.location.origin) return;
   const data = event.data;
   if (!data || data.source !== 'soundcloud-oauth') return;
-  const profile = data.payload?.profile;
-  if (data.payload?.ok && profile?.handle) {
-    player.bindAccount('soundcloud', profile.handle);
-    userStore.saveBindingProfile('soundcloud', { name: profile.name, avatarUrl: profile.avatarUrl });
-    userSearchResults.value = [];
-    userSearchAttempted.value = false;
-    // bindings 变化会触发 usePlaylistLogic 里的 watch，不需要在这里手动刷新
-  } else {
-    toastError('SoundCloud 绑定失败：' + (data.payload?.message || '未知错误'));
-  }
+  stopScOauthPoll();
+  try { scOauthPopup?.close(); } catch { /* ignore */ }
+  applySoundcloudPayload(data.payload);
 });
 
 // 2. 歌单逻辑

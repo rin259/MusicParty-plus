@@ -75,6 +75,32 @@ public class SoundCloudOAuthController {
         return Map.of("configured", oauthService.configured());
     }
 
+    /**
+     * 前端使用的 JSON 版本：返回 {url, state}，前端打开弹窗后按 state 轮询结果。
+     * 这样不依赖 window.opener / postMessage 的跨域与 COOP 行为。
+     */
+    @GetMapping("/oauth/start/json")
+    public ResponseEntity<Map<String, String>> startJson() {
+        SoundCloudOAuthService.StartSession session = oauthService.startSession();
+        if (session == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        }
+        return ResponseEntity.ok(Map.of("url", session.url(), "state", session.state()));
+    }
+
+    /** 绑定结果轮询：done=false 表示还在授权中；done=true 时结果只返回一次。 */
+    @GetMapping("/oauth/result")
+    public Map<String, Object> result(@RequestParam(required = false) String state) {
+        SoundCloudOAuthService.OAuthResult result = oauthService.consumeResult(state);
+        if (result == null) return Map.of("done", false);
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("done", true);
+        out.put("ok", result.ok());
+        if (result.profile() != null) out.put("profile", result.profile());
+        if (result.message() != null) out.put("message", result.message());
+        return out;
+    }
+
     /** 生成授权跳转地址并 302。未配置 OAuth 时返回 501，前端会隐藏一键绑定入口。 */
     @GetMapping("/oauth/start")
     public Mono<ResponseEntity<Void>> start() {
@@ -92,13 +118,20 @@ public class SoundCloudOAuthController {
                                  @RequestParam(required = false) String error,
                                  @RequestParam(value = "error_description", required = false) String errorDescription) {
         if (notBlank(error)) {
-            return Mono.just(page(false, notBlank(errorDescription) ? errorDescription : "用户取消了授权"));
+            String message = notBlank(errorDescription) ? errorDescription : "用户取消了授权";
+            oauthService.rememberResult(state, false, null, message);
+            return Mono.just(page(false, message));
         }
         return oauthService.exchange(code, state)
-                .map(profile -> page(true, jsonString(profile)))
+                .map(profile -> {
+                    oauthService.rememberResult(state, true, profile, null);
+                    return page(true, jsonString(profile));
+                })
                 .onErrorResume(failure -> {
+                    String message = friendlyOAuthError(failure.getMessage());
                     log.warn("SoundCloud OAuth callback failed: {}", failure.getMessage());
-                    return Mono.just(page(false, failure.getMessage() == null ? "绑定失败" : failure.getMessage()));
+                    oauthService.rememberResult(state, false, null, message);
+                    return Mono.just(page(false, message));
                 });
     }
 
@@ -127,6 +160,14 @@ public class SoundCloudOAuthController {
                 + "} catch (e) { document.getElementById('msg').textContent = '绑定完成'; }"
                 + "setTimeout(function(){ try { window.close(); } catch (e) {} }, 400);"
                 + "</script></body></html>";
+    }
+
+    /** 把 WebClient 的技术错误翻译成用户能理解的一句话。 */
+    private static String friendlyOAuthError(String raw) {
+        if (raw == null || raw.isBlank()) return "绑定失败，请重试";
+        if (raw.contains("400 Bad Request")) return "授权已失效或已被使用，请重新发起绑定";
+        if (raw.contains("state")) return "授权链接已过期，请重新发起绑定";
+        return raw.length() > 160 ? raw.substring(0, 160) + "…" : raw;
     }
 
     private static String jsonString(Object value) {

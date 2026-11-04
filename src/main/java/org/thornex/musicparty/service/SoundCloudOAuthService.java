@@ -58,6 +58,10 @@ public class SoundCloudOAuthService {
     /** state → {verifier, createdAt}。单次使用，超时即弃。 */
     private final Map<String, PendingAuth> pending = new ConcurrentHashMap<>();
 
+    /** state → 已完成的结果（供前端轮询；单次消费，超时即弃）。 */
+    private final Map<String, OAuthResult> results = new ConcurrentHashMap<>();
+    private static final int MAX_RESULTS = 200;
+
     /**
      * handle → 用户 token。OAuth 的价值就在这里：带上它才能读「喜欢的音乐」
      * 这类需要用户身份的数据；公开 Sets 用 client_id 就够了。
@@ -134,8 +138,20 @@ public class SoundCloudOAuthService {
         return notBlank(cfg.getClientId()) && notBlank(cfg.getClientSecret()) && notBlank(cfg.getRedirectUri());
     }
 
-    /** 生成授权跳转地址。未配置 OAuth 时返回 null（前端据此隐藏一键绑定按钮）。 */
+    /** 生成授权跳转地址（旧接口：直接 302）。未配置 OAuth 时返回 null。 */
     public synchronized String start() {
+        StartSession session = startSession();
+        return session == null ? null : session.url();
+    }
+
+    /**
+     * 生成授权地址并同时返回 state。
+     *
+     * <p>前端用 state 轮询 {@link #consumeResult(String)}，这样即使
+     * window.opener 被浏览器/COOP 切断、或用户从别的域名（如 music.rin.red）
+     * 打开弹窗、或回跳落在固定 redirect_uri 的域名上，绑定结果也不会丢。
+     */
+    public synchronized StartSession startSession() {
         if (!configured()) return null;
         trimPending();
 
@@ -153,13 +169,31 @@ public class SoundCloudOAuthService {
 
         String state = newToken();
         pending.put(state, new PendingAuth(verifier, System.currentTimeMillis()));
-        return AUTHORIZE_URL
+        String url = AUTHORIZE_URL
                 + "?client_id=" + urlEncode(config().getClientId())
                 + "&redirect_uri=" + urlEncode(config().getRedirectUri())
                 + "&response_type=code"
                 + "&code_challenge=" + challenge
                 + "&code_challenge_method=S256"
                 + "&state=" + urlEncode(state);
+        return new StartSession(url, state);
+    }
+
+    /** 回调结果暂存：前端按 state 轮询取一次（单次使用，10 分钟过期）。 */
+    public synchronized void rememberResult(String state, boolean ok,
+                                            Map<String, Object> profile, String message) {
+        if (state == null || state.isBlank()) return;
+        results.put(state, new OAuthResult(ok, profile, message, System.currentTimeMillis()));
+        trimResults();
+    }
+
+    /** 取走并删除一次结果；没有完成时返回 null（前端继续轮询）。 */
+    public synchronized OAuthResult consumeResult(String state) {
+        if (state == null || state.isBlank()) return null;
+        OAuthResult result = results.remove(state);
+        if (result == null) return null;
+        if (System.currentTimeMillis() - result.at() > STATE_TTL_MS.toMillis()) return null;
+        return result;
     }
 
     /**
@@ -311,6 +345,12 @@ public class SoundCloudOAuthService {
         return value.split("[/?#]")[0];
     }
 
+    private void trimResults() {
+        long cutoff = System.currentTimeMillis() - STATE_TTL_MS.toMillis();
+        results.entrySet().removeIf(entry -> entry.getValue().at() < cutoff);
+        if (results.size() > MAX_RESULTS) results.clear();
+    }
+
     private void trimPending() {
         if (pending.size() <= MAX_PENDING) return;
         long cutoff = System.currentTimeMillis() - STATE_TTL_MS.toMillis();
@@ -335,6 +375,10 @@ public class SoundCloudOAuthService {
     }
 
     private record PendingAuth(String verifier, long createdAt) {}
+
+    public record StartSession(String url, String state) {}
+
+    public record OAuthResult(boolean ok, Map<String, Object> profile, String message, long at) {}
 
     // —— 供单测使用的纯函数 ——
 

@@ -28,6 +28,9 @@ export const musicApi = {
     // 搜索用户
     searchUser: (platform, keyword) => client.get(`/api/user/search/${platform}`, { params: { keyword } }),
     soundcloudOauthStatus: () => client.get('/api/soundcloud/oauth/status'),
+    // JSON 模式：返回 {url, state}，前端打开弹窗后按 state 轮询结果
+    soundcloudOauthStart: () => client.get('/api/soundcloud/oauth/start/json'),
+    soundcloudOauthResult: (state) => client.get('/api/soundcloud/oauth/result', { params: { state } }),
 
     // 搜索专辑（query 参数，含 "/" 的专辑名不会再 404）
     searchAlbums: (platform, keyword) => client.get('/api/search/albums', { params: { platform, q: keyword } }),
