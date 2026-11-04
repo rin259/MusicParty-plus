@@ -77,6 +77,8 @@ public class AppProperties {
         private String clientId = "";
         private String clientSecret = "";
         private String redirectUri = "";
+        /** API 基址；测试时指向本地假服务 */
+        private String apiBase = "https://api.soundcloud.com";
     }
 
     @Data

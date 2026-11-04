@@ -42,6 +42,7 @@ app:
       client-id: ${SOUNDCLOUD_CLIENT_ID:}
       client-secret: ${SOUNDCLOUD_CLIENT_SECRET:}
       redirect-uri: ${SOUNDCLOUD_REDIRECT_URI:}
+      api-base: ${SOUNDCLOUD_API_BASE:https://api.soundcloud.com}
     ytmusic:
       enabled: ${YTMUSIC_ENABLED:true}
       search-limit: ${YTMUSIC_SEARCH_LIMIT:30}

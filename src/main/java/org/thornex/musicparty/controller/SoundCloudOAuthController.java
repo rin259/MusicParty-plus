@@ -6,10 +6,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.service.SoundCloudOAuthService;
+import org.thornex.musicparty.service.api.SoundCloudMusicApiService;
 import reactor.core.publisher.Mono;
 
 import java.net.URI;
@@ -35,9 +39,28 @@ public class SoundCloudOAuthController {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final SoundCloudOAuthService oauthService;
+    private final SoundCloudMusicApiService soundCloudApi;
+    private final AppProperties appProperties;
 
-    public SoundCloudOAuthController(SoundCloudOAuthService oauthService) {
+    public SoundCloudOAuthController(SoundCloudOAuthService oauthService,
+                                     SoundCloudMusicApiService soundCloudApi,
+                                     AppProperties appProperties) {
         this.oauthService = oauthService;
+        this.soundCloudApi = soundCloudApi;
+        this.appProperties = appProperties;
+    }
+
+    /**
+     * 绑定诊断（管理员）：用已存的 token 逐个打真实接口，回报状态/计数。
+     * 用来一次性确认「鉴权头、歌单总数、私密数」等事实，而不是靠猜。
+     */
+    @GetMapping("/oauth/diagnose")
+    public Mono<Map<String, Object>> diagnose(@RequestParam String handle,
+                                              @RequestHeader(value = "X-Admin-Password", required = false) String password) {
+        if (password == null || !password.equals(appProperties.getAdminPassword())) {
+            return Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "ACCESS DENIED"));
+        }
+        return soundCloudApi.diagnose(handle);
     }
 
     /** 前端探测：OAuth 是否已配置（决定「一键绑定」按钮是否显示） */
