@@ -90,37 +90,63 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
                 .map(user -> List.of(new UserSearchResult(user.handle(), user.name(), user.avatarUrl(), getPlatformName())));
     }
 
+    /** 歌单列表缓存：列表内容很少变，而生成它要 1~4 秒 */
+    private final Map<String, CachedPlaylists> playlistListCache = new ConcurrentHashMap<>();
+    private static final long PLAYLIST_LIST_TTL_MS = 60_000L;
+
+    private record CachedPlaylists(List<Playlist> items, long at) {}
+
     @Override
     public Mono<List<Playlist>> getUserPlaylists(String userId) {
         String handle = normalizeHandle(userId);
+
+        CachedPlaylists cached = playlistListCache.get(handle);
+        if (cached != null && System.currentTimeMillis() - cached.at() < PLAYLIST_LIST_TTL_MS) {
+            return Mono.just(cached.items());
+        }
+
         // OAuth 绑定后最先出现的三个入口，是公开接口根本拿不到的：
         // 喜欢的音乐、我自己的歌单（含私密）、我上传的曲目。
         Playlist likes = new Playlist(LIKES_PREFIX + handle, "喜欢的音乐", "", 0, getPlatformName());
         Playlist myTracks = new Playlist(MY_TRACKS_PREFIX + handle, "我上传的曲目", "", 0, getPlatformName());
 
-        Mono<List<Playlist>> publicSets = resolver.getSoundCloudUserSets(handle)
-                .map(sets -> sets.stream()
-                        .map(playlist -> new Playlist(playlist.id(), playlist.name(), playlist.coverUrl(),
-                                playlist.trackCount(), getPlatformName()))
-                        .toList())
-                .onErrorResume(error -> Mono.just(List.of()));
+        return Mono.defer(() -> {
+            long startedAt = System.currentTimeMillis();
+            // 有 token 时 /me/playlists 已经是「公开 + 私密」的全集；
+            // 再跑一次 yt-dlp 抓公开 Sets 属于纯浪费（实测 2.5s，占总耗时的大头）。
+            boolean hasToken = oauthService.validAccessToken(handle).isPresent();
+            Mono<List<Playlist>> publicSets = hasToken
+                    ? Mono.just(List.of())
+                    : resolver.getSoundCloudUserSets(handle)
+                        .map(sets -> sets.stream()
+                                .map(playlist -> new Playlist(playlist.id(), playlist.name(), playlist.coverUrl(),
+                                        playlist.trackCount(), getPlatformName()))
+                                .toList())
+                        .onErrorResume(error -> Mono.just(List.of()));
 
-        Mono<List<Playlist>> ownPlaylists = ownPlaylistsWithToken(handle)
-                .onErrorResume(error -> Mono.empty())
-                .defaultIfEmpty(List.of());
+            Mono<List<Playlist>> ownPlaylists = ownPlaylistsWithToken(handle)
+                    .onErrorResume(error -> Mono.empty())
+                    .defaultIfEmpty(List.of());
 
-        return ownPlaylists.zipWith(publicSets, (own, sets) -> {
-            List<Playlist> merged = new java.util.ArrayList<>();
-            merged.add(likes);
-            merged.add(myTracks);
-            merged.addAll(own);
-            // 公开 Sets 与自己的歌单按底层 id 去重（自己那份更完整，含私密）
-            java.util.Set<String> seen = own.stream().map(SoundCloudMusicApiService::underlyingPlaylistId)
-                    .collect(java.util.stream.Collectors.toSet());
-            sets.stream()
-                    .filter(playlist -> !seen.contains(playlist.id()))
-                    .forEach(merged::add);
-            return merged;
+            return ownPlaylists.zipWith(publicSets, (own, sets) -> {
+                        List<Playlist> merged = new java.util.ArrayList<>();
+                        merged.add(likes);
+                        merged.add(myTracks);
+                        merged.addAll(own);
+                        // 公开 Sets 与自己的歌单按底层 id 去重（自己那份更完整，含私密）
+                        java.util.Set<String> seen = own.stream()
+                                .map(SoundCloudMusicApiService::underlyingPlaylistId)
+                                .collect(java.util.stream.Collectors.toSet());
+                        sets.stream()
+                                .filter(playlist -> !seen.contains(playlist.id()))
+                                .forEach(merged::add);
+                        return merged;
+                    })
+                    .doOnNext(list -> {
+                        playlistListCache.put(handle, new CachedPlaylists(List.copyOf(list), System.currentTimeMillis()));
+                        log.info("SoundCloud playlists for {}: {} items in {}ms (oauth={})",
+                                handle, list.size(), System.currentTimeMillis() - startedAt, hasToken);
+                    });
         });
     }
 

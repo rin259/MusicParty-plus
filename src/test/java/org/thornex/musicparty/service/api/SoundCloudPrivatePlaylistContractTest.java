@@ -21,9 +21,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -40,6 +44,8 @@ class SoundCloudPrivatePlaylistContractTest {
 
     private HttpServer server;
     private final List<String> authHeaders = new CopyOnWriteArrayList<>();
+    private final AtomicInteger mePlaylistsCalls = new AtomicInteger();
+    private YtDlpResolver resolver;
     private SoundCloudMusicApiService service;
 
     @BeforeEach
@@ -56,6 +62,7 @@ class SoundCloudPrivatePlaylistContractTest {
 
         server.createContext("/me/playlists", exchange -> {
             record(exchange);
+            mePlaylistsCalls.incrementAndGet();
             respond(exchange, """
                     {"collection":[
                       {"urn":"soundcloud:playlists:111","title":"My Private Set","sharing":"private","track_count":2},
@@ -98,7 +105,7 @@ class SoundCloudPrivatePlaylistContractTest {
         when(oauth.validAccessToken("djtest")).thenReturn(Optional.of("test-token"));
         when(oauth.hasUserToken("djtest")).thenReturn(true);
 
-        YtDlpResolver resolver = mock(YtDlpResolver.class);
+        resolver = mock(YtDlpResolver.class);
         when(resolver.getSoundCloudUserSets("djtest")).thenReturn(Mono.just(List.of()));
 
         service = new SoundCloudMusicApiService(
@@ -168,6 +175,45 @@ class SoundCloudPrivatePlaylistContractTest {
         assertThat(small).isNotNull();
         assertThat(small.items()).hasSize(1);
         assertThat(small.hasMore()).isTrue();
+    }
+
+    @Test
+    void doesNotRunYtDlpWhenAnOAuthTokenExists() {
+        // /me/playlists 已经是「公开 + 私密」的全集；再跑 yt-dlp 要 2.5 秒，纯浪费
+        service.getUserPlaylists("djtest").block();
+
+        verify(resolver, never()).getSoundCloudUserSets(anyString());
+    }
+
+    @Test
+    void cachesTheListSoSwitchingBackDoesNotRequery() {
+        service.getUserPlaylists("djtest").block();
+        int afterFirst = mePlaylistsCalls.get();
+        assertThat(afterFirst).isGreaterThan(0);
+
+        service.getUserPlaylists("djtest").block();
+        assertThat(mePlaylistsCalls.get()).as("第二次必须命中缓存").isEqualTo(afterFirst);
+    }
+
+    @Test
+    void fallsBackToPublicSetsWhenThereIsNoToken() {
+        SoundCloudOAuthService noToken = mock(SoundCloudOAuthService.class);
+        when(noToken.validAccessToken("djtest")).thenReturn(Optional.empty());
+        YtDlpResolver publicOnly = mock(YtDlpResolver.class);
+        when(publicOnly.getSoundCloudUserSets("djtest")).thenReturn(Mono.just(List.of(
+                new YtDlpResolver.PlaylistMetadata("333", "Public From YtDlp", "", 7))));
+
+        AppProperties props = new AppProperties();
+        props.getSoundcloudOAuth().setApiBase("http://127.0.0.1:" + server.getAddress().getPort());
+        SoundCloudMusicApiService noTokenService = new SoundCloudMusicApiService(
+                mock(LocalCacheService.class), publicOnly, props,
+                mock(SoundCloudSearchClient.class), noToken, WebClient.builder().build());
+
+        List<Playlist> list = noTokenService.getUserPlaylists("djtest").block();
+
+        assertThat(list).isNotNull();
+        assertThat(list).extracting(Playlist::name)
+                .contains("喜欢的音乐", "我上传的曲目", "Public From YtDlp");
     }
 
     @Test

@@ -440,6 +440,20 @@ public class BilibiliMusicApiService implements IMusicApiService {
                 });
     }
 
+    /**
+     * B 站接口按页码（pn）取数，所以「下一页偏移」必须对齐到页边界。
+     * 默认实现用 offset + 本页条数，一旦某页条数少于 limit（失效视频被过滤等），
+     * 偏移就不再是 limit 的整数倍，pn 会把同一页再取一次。
+     */
+    @Override
+    public Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit) {
+        int safeLimit = Math.clamp(limit, 1, 20);
+        int safeOffset = Math.max(0, offset);
+        int pageNumber = safeOffset / safeLimit + 1;
+        return getPlaylistMusics(playlistId, safeOffset, safeLimit)
+                .map(items -> new PagedPlaylist(items, pageNumber * safeLimit, items.size() >= safeLimit));
+    }
+
     @Override
     public Mono<List<UserSearchResult>> searchUsers(String keyword) {
         ensureConfigured();
