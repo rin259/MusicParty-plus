@@ -427,6 +427,39 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
     }
 
+    /** 探测某个歌单的两条读取路径（自己的歌单用） */
+    public Mono<Map<String, Object>> diagnosePlaylist(String handle, String playlistUrn) {
+        return Mono.fromCallable(() -> {
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            String normalized = normalizeHandle(handle);
+            Optional<String> token = oauthService.validAccessToken(normalized);
+            out.put("tokenStored", token.isPresent());
+            if (token.isEmpty()) return out;
+            String urn = playlistUrn.startsWith("soundcloud:playlists:")
+                    ? playlistUrn : "soundcloud:playlists:" + playlistUrn;
+            String encoded = java.net.URLEncoder.encode(urn, java.nio.charset.StandardCharsets.UTF_8);
+
+            out.put("playlist", probePlaylistObject("https://api.soundcloud.com/playlists/" + encoded, token.get()));
+            out.put("tracksEndpoint", probeCount("https://api.soundcloud.com/playlists/" + encoded + "/tracks?limit=50", token.get()));
+            return out;
+        }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
+    }
+
+    private Map<String, Object> probePlaylistObject(String url, String token) {
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        try {
+            JsonNode node = authorizedGet(url, token);
+            result.put("status", "ok");
+            result.put("track_count", node.path("track_count").asInt(-1));
+            result.put("tracksInPayload", SoundCloudSearchClient.collectionOf(node.path("tracks")).size());
+            result.put("sharing", node.path("sharing").asText(""));
+        } catch (RuntimeException error) {
+            result.put("status", "error");
+            result.put("message", error.getMessage());
+        }
+        return result;
+    }
+
     public Mono<Map<String, Object>> diagnose(String handle) {
         return Mono.fromCallable(() -> diagnoseBlocking(handle))
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());

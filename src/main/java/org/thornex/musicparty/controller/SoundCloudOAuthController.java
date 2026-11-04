@@ -56,10 +56,14 @@ public class SoundCloudOAuthController {
     @GetMapping("/oauth/diagnose")
     public Mono<ResponseEntity<Map<String, Object>>> diagnose(
             @RequestParam(required = false) String handle,
+            @RequestParam(required = false) String playlist,
             @RequestHeader(value = "X-Admin-Password", required = false) String password) {
         if (password == null || !password.equals(appProperties.getAdminPassword())) {
             return Mono.just(ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.<String, Object>of("message", "ACCESS DENIED")));
+        }
+        if (playlist != null && !playlist.isBlank()) {
+            return soundCloudApi.diagnosePlaylist(handle == null ? "" : handle, playlist).map(ResponseEntity::ok);
         }
         return (handle == null || handle.isBlank() ? soundCloudApi.diagnoseAll() : soundCloudApi.diagnose(handle))
                 .map(ResponseEntity::ok);

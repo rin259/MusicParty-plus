@@ -3,6 +3,7 @@ package org.thornex.musicparty.controller;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.Music;
@@ -23,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+@Slf4j
 @RestController
 @RequestMapping("/api")
 public class ApiController {
@@ -134,7 +136,13 @@ public class ApiController {
                                               @PathVariable String playlistId,
                                               @RequestParam(defaultValue = "0") int offset,
                                               @RequestParam(defaultValue = "20") int limit) {
-        return getService(platform).getPlaylistMusics(playlistId, offset, limit);
+        log.info("playlist songs request: platform={} id={} offset={} limit={}",
+                platform, playlistId, offset, limit);
+        return getService(platform).getPlaylistMusics(playlistId, offset, limit)
+                .doOnNext(musics -> log.info("playlist songs response: platform={} id={} offset={} -> {} items",
+                        platform, playlistId, offset, musics.size()))
+                .doOnError(error -> log.warn("playlist songs failed: platform={} id={} offset={} -> {}",
+                        platform, playlistId, offset, error.getMessage()));
     }
 
     @GetMapping("/user/search/{platform}/{keyword}")

@@ -153,8 +153,17 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     const refreshPlaylist = async () => {
         const pid = currentPlaylistId.value;
         const plat = platformRef.value;
-        if (!pid || listModeRef.value !== 'playlist') return;
-        if (refreshState.value.active || isLoadingMore.value || loadingRef.value) return;
+        if (!pid) {
+            error('先选一个歌单再刷新');
+            return;
+        }
+        if (refreshState.value.active) {
+            error('正在刷新中，请稍候');
+            return;
+        }
+        // 历史遗留的 loading 标志可能卡住（滚动加载被打断等），刷新时复位，避免「点了没反应」
+        isLoadingMore.value = false;
+        loadingRef.value = false;
 
         const target = songsRef.value.length;
         refreshState.value = { active: true, done: 0, target };
@@ -167,6 +176,7 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         try {
             for (let page = 0; page < 40; page++) {   // 保险丝：最多 2000 首
                 const raw = await musicApi.getPlaylistSongs(plat, pid, offset, limit.value);
+                console.info('[refresh]', pid, 'offset', offset, '->', Array.isArray(raw) ? raw.length : raw);
                 lastPageFull = raw.length >= limit.value;
                 rawCount += raw.length;
                 fetched.push(...raw.filter(s => s.id !== 'INVALID_SKIP'));
@@ -189,7 +199,9 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
             hasMore.value = lastPageFull;
             saveCurrentPlaylist();
         } catch (e) {
-            error('刷新歌单失败，已保留原数据');
+            console.warn('[refresh] failed', pid, offset, e);
+            const detail = e?.response?.data?.message || e?.message || '未知错误';
+            error('刷新歌单失败（' + detail + '），已保留原数据');
         } finally {
             isLoadingMore.value = false;
             refreshState.value = { active: false, done: refreshState.value.done, target: refreshState.value.target };
