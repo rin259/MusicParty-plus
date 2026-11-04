@@ -1,47 +1,27 @@
 <template>
-  <!--
-    外层容器
-    pointer-events-none: 确保透明区域不挡住下面内容的点击
-    z-[100]: 确保在大多数内容之上
-  -->
-  <div
-      :style="{ left: x + 'px', top: y + 'px' }"
-      class="fixed z-[55] flex flex-col items-center pointer-events-none"
-  >
-
-    <!--
-      聊天窗口
-      pointer-events-auto: HB恢复内部点击
-    -->
+  <Teleport to="body">
     <Transition
-        enter-active-class="transition-all duration-300 ease-out"
+        enter-active-class="transition-all duration-200 ease-out"
         enter-from-class="opacity-0 scale-95"
         enter-to-class="opacity-100 scale-100"
-        leave-active-class="transition-all duration-200 ease-in"
+        leave-active-class="transition-all duration-150 ease-in"
         leave-from-class="opacity-100 scale-100"
         leave-to-class="opacity-0 scale-95"
         @after-enter="() => scrollToBottom(true)"
     >
       <div
           v-if="chatStore.isOpen"
+          ref="panelRef"
           role="dialog"
+          :aria-modal="isMobile ? 'true' : 'false'"
           aria-label="聊天窗口"
-          class="pointer-events-auto relative bg-surface-1 border border-medical-200 shadow-2xl flex flex-col chamfer-br overflow-hidden"
-          :class="dynamicWindowClasses"
-          :style="mobileWindowStyle"
-          @mousedown.stop
-          @touchstart.stop
+          tabindex="-1"
+          class="fixed z-[72] flex flex-col overflow-hidden border border-medical-200 bg-surface-1 shadow-2xl chamfer-br outline-none"
+          :class="isMobile ? '' : 'w-[340px]'"
+          :style="panelStyle"
       >
-        <!--
-           1. Header (支持拖拽)
-           cursor-move: 提示可拖拽
-        -->
-        <div
-            ref="windowHeaderRef"
-            @pointerdown="startHeaderDrag"
-            class="h-10 bg-medical-50 border-b border-medical-200 flex items-center justify-between px-3 flex-shrink-0 select-none"
-            :class="{ 'cursor-move': !isMobile }"
-        >
+        <!-- Header（面板不再拖拽；拖拽只发生在 launcher 上） -->
+        <div class="h-10 bg-medical-50 border-b border-medical-200 flex items-center justify-between px-3 flex-shrink-0 select-none">
           <div class="font-mono text-xs font-bold text-medical-500 flex items-center gap-2">
             <MessageSquare class="w-3 h-3"/> CHAT
           </div>
@@ -194,30 +174,31 @@
         </div>
       </div>
     </Transition>
+  </Teleport>
 
-    <!-- Floating trigger doubles as the drag handle. -->
-    <button
-        id="tutorial-chat"
-        type="button"
-        v-if="!isMobile || !chatStore.isOpen"
-        ref="dragHandle"
-        @pointerdown="handlePointerDown"
-        @click="handleClick"
-        :aria-label="chatStore.unreadCount > 0 ? `打开聊天，${chatStore.unreadCount} 条未读` : '打开聊天'"
-        :aria-expanded="chatStore.isOpen"
-        class="pointer-events-auto w-11 h-11 border flex items-center justify-center transition-all cursor-move select-none rounded-sm relative overflow-hidden touch-none"
-        :class="chatStore.unreadCount > 0
-            ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(249,115,22,0.6)] scale-110'
-            : 'bg-surface-1 border-medical-200 text-medical-500 shadow-lg hover:text-medical-900 hover:border-medical-300'"
-    >
-      <span v-if="chatStore.unreadCount > 0" class="font-bold font-mono text-sm relative z-10 animate-pulse">
-        {{ chatStore.unreadCount > 99 ? '99+' : chatStore.unreadCount }}
-      </span>
-      <MessageSquare v-else class="w-5 h-5 relative z-10"/>
-    </button>
-
-  </div>
+  <!-- 唯一的拖拽元素：launcher。面板通过 Floating UI 跟随它，不参与布局。 -->
+  <button
+      id="tutorial-chat"
+      ref="launcherRef"
+      type="button"
+      v-show="!isMobile || !chatStore.isOpen"
+      @pointerdown="handlePointerDown"
+      @click="handleClick"
+      :aria-label="chatStore.unreadCount > 0 ? `打开聊天，${chatStore.unreadCount} 条未读` : '打开聊天'"
+      :aria-expanded="chatStore.isOpen"
+      :style="launcherStyle"
+      class="fixed left-0 top-0 z-[72] flex h-11 w-11 touch-none select-none items-center justify-center overflow-hidden rounded-sm border transition-all cursor-move"
+      :class="chatStore.unreadCount > 0
+          ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(249,115,22,0.6)] scale-110'
+          : 'bg-surface-1 border-medical-200 text-medical-500 shadow-lg hover:text-medical-900 hover:border-medical-300'"
+  >
+    <span v-if="chatStore.unreadCount > 0" class="font-bold font-mono text-sm relative z-10 animate-pulse">
+      {{ chatStore.unreadCount > 99 ? '99+' : chatStore.unreadCount }}
+    </span>
+    <MessageSquare v-else class="w-5 h-5 relative z-10"/>
+  </button>
 </template>
+
 
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
@@ -226,7 +207,8 @@ import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
 import { useUiStore } from '../stores/ui';
 import { useToast } from '../composables/useToast';
-import { useDraggable, useWindowSize, useEventListener, clamp } from '@vueuse/core';
+import { useDraggable, useEventListener, useWindowSize } from '@vueuse/core';
+import { autoUpdate, flip, offset, shift, size, useFloating } from '@floating-ui/vue';
 import { ChevronDown, Loader2, MessageSquare, Send, Terminal, X, Zap } from 'lucide-vue-next';
 import { useVisualViewport } from '../composables/useVisualViewport';
 import { buildChatRows } from '../logic/chatRows.js';
@@ -245,55 +227,55 @@ const isMobile = computed(() => windowWidth.value < 768);
 
 const inputContent = ref('');
 const msgListRef = ref(null);
-const dragHandle = ref(null);
-const windowHeaderRef = ref(null);
+const launcherRef = ref(null);
+const panelRef = ref(null);
 
 const activeTab = ref('CHAT'); // 'CHAT' | 'SYSTEM'
 
 const BUTTON_SIZE = 44;
 const MARGIN = 10;
 
-// === 1. 拖拽逻辑 (主控制器) ===
-const { x, y } = useDraggable(dragHandle, {
-  initialValue: { x: window.innerWidth - 60, y: window.innerHeight - 210 },
-  preventDefault: true,
-  onMove: (position) => {
-    position.x = clamp(position.x, MARGIN, window.innerWidth - BUTTON_SIZE - MARGIN);
-    position.y = clamp(position.y, MARGIN, window.innerHeight - BUTTON_SIZE - MARGIN);
-  }
-});
-
-// === 2. 标题栏拖拽同步逻辑 ===
-const startHeaderDrag = (e) => {
-  // 修改: 在移动端禁用此功能
-  if (isMobile.value) return;
-
-  const startMouseX = e.clientX;
-  const startMouseY = e.clientY;
-  const startX = x.value;
-  const startY = y.value;
-
-  const onMouseMove = (me) => {
-    let newX = startX + (me.clientX - startMouseX);
-    let newY = startY + (me.clientY - startMouseY);
-
-    newX = clamp(newX, MARGIN, window.innerWidth - BUTTON_SIZE - MARGIN);
-    newY = clamp(newY, MARGIN, window.innerHeight - BUTTON_SIZE - MARGIN);
-
-    x.value = newX;
-    y.value = newY;
+// === 1. 拖拽：只移动 launcher 一个元素，位置持久化 ===
+const POS_KEY = 'mp_chat_pos';
+const readPosition = () => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
+    if (parsed && Number.isFinite(parsed.x) && Number.isFinite(parsed.y)) {
+      return clampToViewport({ x: parsed.x, y: parsed.y });
+    }
+  } catch { /* 忽略坏数据 */ }
+  return {
+    x: Math.max(MARGIN, window.innerWidth - BUTTON_SIZE - 16),
+    y: Math.max(MARGIN, window.innerHeight - 210)
   };
-
-  const onMouseUp = () => {
-    window.removeEventListener('pointermove', onMouseMove);
-    window.removeEventListener('pointerup', onMouseUp);
-  };
-
-  window.addEventListener('pointermove', onMouseMove);
-  window.addEventListener('pointerup', onMouseUp);
+};
+const clampToViewport = (pos) => {
+  pos.x = Math.min(Math.max(MARGIN, pos.x), Math.max(MARGIN, window.innerWidth - BUTTON_SIZE - MARGIN));
+  pos.y = Math.min(Math.max(MARGIN, pos.y), Math.max(MARGIN, window.innerHeight - BUTTON_SIZE - MARGIN));
+  return pos;
 };
 
-// === 3. 点击与防误触 ===
+const { x, y, style: launcherStyle } = useDraggable(launcherRef, {
+  initialValue: readPosition(),
+  preventDefault: true,
+  onMove: (position) => clampToViewport(position)
+});
+
+let saveTimer = 0;
+const persistPosition = () => {
+  try { localStorage.setItem(POS_KEY, JSON.stringify({ x: Math.round(x.value), y: Math.round(y.value) })); } catch { /* ignore */ }
+};
+watch([x, y], () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(persistPosition, 300);
+});
+watch([windowWidth, windowHeight], () => {
+  const pos = clampToViewport({ x: x.value, y: y.value });
+  x.value = pos.x;
+  y.value = pos.y;
+});
+
+// === 2. 点击与防误触 ===
 let startDragPos = { x: 0, y: 0 };
 const handlePointerDown = (e) => {
   startDragPos = { x: e.clientX, y: e.clientY };
@@ -305,7 +287,7 @@ const handleClick = (e) => {
 
   if (userStore.isGuest) {
     userStore.setPostNameAction(() => {
-      if(!chatStore.isOpen) chatStore.toggleChat();
+      if (!chatStore.isOpen) chatStore.toggleChat();
     });
     userStore.showNameModal = true;
     return;
@@ -313,28 +295,38 @@ const handleClick = (e) => {
   chatStore.toggleChat();
 };
 
-// === 4. 窗口智能定位 ===
-const isRightSide = computed(() => x.value > windowWidth.value / 2);
-const isBottomSide = computed(() => y.value > windowHeight.value / 2);
+// === 3. 面板定位：Floating UI 锚定到 launcher ===
+const isRightSide = computed(() => x.value + BUTTON_SIZE / 2 > windowWidth.value / 2);
+const isBottomSide = computed(() => y.value + BUTTON_SIZE / 2 > windowHeight.value / 2);
+const placement = computed(() => `${isBottomSide.value ? 'top' : 'bottom'}-${isRightSide.value ? 'end' : 'start'}`);
 
-const windowPositionClasses = computed(() => {
-  const classes = [];
-  if (isRightSide.value) classes.push('right-12'); else classes.push('left-12');
-  if (isBottomSide.value) classes.push('bottom-0'); else classes.push('top-0');
-  return classes.join(' ');
+const { floatingStyles } = useFloating(launcherRef, panelRef, {
+  placement,
+  strategy: 'fixed',
+  middleware: [
+    offset(12),
+    flip({ padding: MARGIN }),
+    shift({ padding: MARGIN }),
+    size({
+      padding: MARGIN,
+      apply({ availableHeight, availableWidth, elements }) {
+        if (isMobile.value) {
+          elements.floating.style.maxWidth = '';
+          return;
+        }
+        const height = `${Math.min(480, Math.max(220, Math.floor(availableHeight)))}px`;
+        const maxWidth = `${Math.min(340, Math.max(220, Math.floor(availableWidth)))}px`;
+        if (elements.floating.style.height !== height) elements.floating.style.height = height;
+        if (elements.floating.style.maxWidth !== maxWidth) elements.floating.style.maxWidth = maxWidth;
+      }
+    })
+  ],
+  // 拖拽改变的是 transform，不会触发 resize/scroll；用 rAF 持续跟随
+  whileElementsMounted: (reference, floating, update) =>
+      autoUpdate(reference, floating, update, { animationFrame: true })
 });
 
-// 新增: 动态计算窗口的样式类
-const dynamicWindowClasses = computed(() => {
-  if (isMobile.value) {
-    // 移动端的位置/高度由 visualViewport 计算，见 mobileWindowStyle
-    return [];
-  }
-  // PC端: 保留原有浮窗样式
-  return ['absolute', 'w-[85vw]', 'max-w-[340px]', 'h-[50vh]', 'md:h-[480px]', windowPositionClasses.value];
-});
-
-// iOS/Android 键盘只缩视觉视口：用 vv.height/offsetTop 让聊天窗始终落在键盘上方
+// iOS/Android 键盘只缩视觉视口：移动端用 vv 定高，桌面用 Floating UI
 const mobileWindowStyle = computed(() => {
   if (!isMobile.value) return {};
   const available = Math.max(240, vv.visibleHeight.value || window.innerHeight);
@@ -350,13 +342,24 @@ const mobileWindowStyle = computed(() => {
   };
 });
 
+const panelStyle = computed(() => (isMobile.value ? mobileWindowStyle.value : floatingStyles.value));
 
-const resetPosition = () => {
-  x.value = clamp(x.value, MARGIN, windowWidth.value - BUTTON_SIZE - MARGIN);
-  y.value = clamp(y.value, MARGIN, windowHeight.value - BUTTON_SIZE - MARGIN);
-};
-useEventListener(window, 'resize', resetPosition);
-resetPosition(); // 初始化时执行一次
+// === 4. 焦点与外部点击 ===
+watch(() => chatStore.isOpen, async (open) => {
+  await nextTick();
+  if (open) {
+    panelRef.value?.focus({ preventScroll: true });
+  } else {
+    launcherRef.value?.focus({ preventScroll: true });
+  }
+});
+
+useEventListener(document, 'pointerdown', (event) => {
+  if (!chatStore.isOpen) return;
+  const target = event.target;
+  if (panelRef.value?.contains(target) || launcherRef.value?.contains(target)) return;
+  chatStore.toggleChat();
+}, true);
 
 // === 5. 消息处理 ===
 const isSelf = (msg) => msg.userId === userStore.userToken;
@@ -513,7 +516,11 @@ const send = () => {
   setTimeout(() => scrollToBottom(true), 60);
 };
 
-onUnmounted(() => clearTimeout(anchorTimeout));
+onUnmounted(() => {
+  clearTimeout(anchorTimeout);
+  clearTimeout(saveTimer);
+  persistPosition();
+});
 </script>
 
 <style scoped>
