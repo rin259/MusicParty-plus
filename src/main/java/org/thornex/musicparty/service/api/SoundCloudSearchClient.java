@@ -173,17 +173,13 @@ public class SoundCloudSearchClient {
                 track.path("duration").asLong(0L), artwork, TRACK_URL + id, permalink);
     }
 
-    /** playlistId → 已解析的完整曲目（5 分钟缓存） */
-    private final java.util.Map<String, List<YtDlpResolver.TrackMetadata>> playlistCache = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.Map<String, Long> playlistCacheAt = new java.util.concurrent.ConcurrentHashMap<>();
-
     /**
      * 按 id 批量取曲目元数据：GET /tracks?ids=1,2,3（一次最多 50 个）。
-     * 返回顺序与请求的 ids 一致（api-v2 不保证顺序）。
+     * 返回顺序与请求的 ids 一致（api-v2 不保证顺序），区域不可用的曲目会被丢弃。
      */
     public Mono<List<YtDlpResolver.TrackMetadata>> tracksByIds(List<String> ids) {
         return Mono.fromCallable(() -> {
-                    List<YtDlpResolver.TrackMetadata> out = new java.util.ArrayList<>();
+                    List<YtDlpResolver.TrackMetadata> out = new ArrayList<>();
                     for (int from = 0; from < ids.size(); from += 50) {
                         List<String> chunk = ids.subList(from, Math.min(ids.size(), from + 50));
                         out.addAll(fetchTracksByIds(chunk));
@@ -204,10 +200,9 @@ public class SoundCloudSearchClient {
             if (status != 401 && status != 403) throw error;
             node = fetchTracks(joined, resolveClientId(true));
         }
-        // 以请求顺序重排
         java.util.Map<String, YtDlpResolver.TrackMetadata> byId = new java.util.HashMap<>();
         for (YtDlpResolver.TrackMetadata track : parseTrackArray(node)) byId.put(track.id(), track);
-        List<YtDlpResolver.TrackMetadata> ordered = new java.util.ArrayList<>();
+        List<YtDlpResolver.TrackMetadata> ordered = new ArrayList<>();
         for (String id : ids) {
             YtDlpResolver.TrackMetadata track = byId.get(id);
             if (track != null) ordered.add(track);
@@ -222,70 +217,6 @@ public class SoundCloudSearchClient {
                         .host("api-v2.soundcloud.com")
                         .path("/tracks")
                         .queryParam("ids", ids)
-                        .queryParam("client_id", clientId)
-                        .build())
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .block(REQUEST_TIMEOUT);
-    }
-
-    /**
-     * 公开 Set 的曲目：api-v2 的 /playlists/{id} 会一次性返回全部 tracks（含标题/时长/封面），
-     * 比 yt-dlp 逐条抽取快一个数量级，也不会出现「超出末尾仍返回整份」的重复问题。
-     */
-    public Mono<List<YtDlpResolver.TrackMetadata>> playlistTracks(String playlistId, int offset, int limit) {
-        return Mono.fromCallable(() -> {
-                    List<YtDlpResolver.TrackMetadata> all = loadPlaylistTracks(playlistId);
-                    int from = Math.min(Math.max(0, offset), all.size());
-                    int to = Math.min(all.size(), from + Math.max(1, limit));
-                    return (List<YtDlpResolver.TrackMetadata>) new java.util.ArrayList<>(all.subList(from, to));
-                })
-                .subscribeOn(Schedulers.boundedElastic())
-                .timeout(OVERALL_TIMEOUT);
-    }
-
-    private List<YtDlpResolver.TrackMetadata> loadPlaylistTracks(String playlistId) {
-        Long at = playlistCacheAt.get(playlistId);
-        if (at != null && System.currentTimeMillis() - at < 5 * 60 * 1000L) {
-            List<YtDlpResolver.TrackMetadata> cached = playlistCache.get(playlistId);
-            if (cached != null) return cached;
-        }
-
-        JsonNode node;
-        try {
-            node = fetchPlaylist(playlistId, resolveClientId(false));
-        } catch (WebClientResponseException error) {
-            int status = error.getStatusCode().value();
-            if (status != 401 && status != 403) throw error;
-            node = fetchPlaylist(playlistId, resolveClientId(true));
-        }
-        int declared = node.path("track_count").asInt(-1);
-        List<YtDlpResolver.TrackMetadata> tracks = parseTrackArray(node.path("tracks"));
-
-        // 某些 client_id 会让 api-v2 只返回前 5 首（track_count 仍是真实总数）。
-        // 这不是「歌单只有 5 首」，而是被截断了——强制刷新 client_id 再试一次。
-        if (declared > tracks.size()) {
-            log.info("api-v2 playlist {} truncated ({}/{}), refreshing client_id",
-                    playlistId, tracks.size(), declared);
-            node = fetchPlaylist(playlistId, resolveClientId(true));
-            declared = node.path("track_count").asInt(-1);
-            tracks = parseTrackArray(node.path("tracks"));
-        }
-        log.info("api-v2 playlist {}: track_count={}, tracks={}", playlistId, declared, tracks.size());
-        if (declared > tracks.size()) {
-            throw new IllegalStateException("api-v2 只返回了 " + tracks.size() + "/" + declared + " 首");
-        }
-        playlistCache.put(playlistId, tracks);
-        playlistCacheAt.put(playlistId, System.currentTimeMillis());
-        return tracks;
-    }
-
-    private JsonNode fetchPlaylist(String playlistId, String clientId) {
-        return webClient.get()
-                .uri(uriBuilder -> uriBuilder
-                        .scheme("https")
-                        .host("api-v2.soundcloud.com")
-                        .path("/playlists/" + playlistId)
                         .queryParam("client_id", clientId)
                         .build())
                 .retrieve()

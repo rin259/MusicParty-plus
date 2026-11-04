@@ -24,8 +24,6 @@ export const musicApi = {
     getPlaylistSongsPage: (platform, playlistId, offset, limit) =>
         client.get(`/api/playlist/songs/${platform}/${encodeURIComponent(playlistId)}`,
             { params: { offset, limit }, raw: true }),
-    getPlaylistSongs: (platform, playlistId, offset, limit) =>
-        client.get(`/api/playlist/songs/${platform}/${playlistId}`, { params: { offset, limit } }),
 
     // 搜索用户
     searchUser: (platform, keyword) => client.get(`/api/user/search/${platform}`, { params: { keyword } }),

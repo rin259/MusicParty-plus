@@ -139,6 +139,9 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
 
         } catch (e) {
             console.error("Fetch songs failed", e);
+            // 失败时不再静默：给出可见反馈，并且不要一路滚到底还显示「还有更多」
+            const detail = e?.response?.data?.message || e?.message || '未知错误';
+            error('加载歌单失败（' + detail + '）');
             hasMore.value = false;
         }
     };
@@ -180,21 +183,24 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         isLoadingMore.value = true;   // 刷新期间挡住滚动分页，避免两路请求混流
 
         const fetched = [];
-        let rawCount = 0;
-        let pageOffset = 0;   // 注意：不能用 offset——那会遮蔽外层的 offset ref
-        let lastPageFull = false;
+        let nextHint = 0;         // 下一次请求的偏移（服务端优先）
+        let serverHasMore = true;
         try {
-            for (let page = 0; page < 40; page++) {   // 保险丝：最多 2000 首
-                const raw = await musicApi.getPlaylistSongs(plat, pid, pageOffset, limit.value);
-                console.info('[refresh]', pid, 'offset', pageOffset, '->', Array.isArray(raw) ? raw.length : raw);
-                lastPageFull = raw.length >= limit.value;
-                rawCount += raw.length;
+            for (let page = 0; page < 40 && serverHasMore && fetched.length < target; page++) {
+                const res = await musicApi.getPlaylistSongsPage(plat, pid, nextHint, limit.value);
+                const raw = res.data || [];
+                console.info('[refresh]', pid, 'offset', nextHint, '->', raw.length);
+
+                const nextHeader = Number(res.headers?.['x-playlist-next-offset']);
+                const moreHeader = res.headers?.['x-playlist-has-more'];
+                nextHint = Number.isFinite(nextHeader) ? nextHeader : nextHint + raw.length;
+                serverHasMore = moreHeader === 'true' ? true
+                    : moreHeader === 'false' ? false
+                        : raw.length >= limit.value;
+
                 fetched.push(...raw.filter(s => s.id !== 'INVALID_SKIP'));
                 refreshState.value.done = fetched.length;
-
-                pageOffset += limit.value;
-                if (raw.length === 0 || !lastPageFull) break;       // 服务端到底
-                if (fetched.length >= target) break;                // 已核对完用户手里的量
+                if (raw.length === 0) break;
             }
 
             // 服务端一页都没给时：原本就没有内容 -> 视为空歌单；原本有内容 -> 保留并提示
@@ -205,8 +211,8 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
                 return;
             }
             songsRef.value = fetched;
-            offset.value = rawCount;
-            hasMore.value = lastPageFull;
+            offset.value = nextHint;
+            hasMore.value = serverHasMore;
             saveCurrentPlaylist();
         } catch (e) {
             console.warn('[refresh] failed', pid, offset, e);
@@ -276,7 +282,8 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
 
         isLoadingMore.value = true;
         try {
-            while (hasMore.value) {
+            // 保险丝：极端情况下（服务端一直说还有）也不会无限循环
+            for (let guard = 0; guard < 100 && hasMore.value; guard++) {
                 await fetchSongsPage();
             }
         } finally {

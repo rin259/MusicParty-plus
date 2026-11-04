@@ -175,7 +175,7 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
                         int take = Math.min(safeLimit, tracks.size());
                         List<YtDlpResolver.TrackMetadata> page = tracks.subList(0, take);
                         // 找出这一页最后一个可用曲目在 id 列表里的位置，作为下一页的起点
-                        int nextOffset = total;
+                        int nextOffset = safeOffset + window.size();
                         if (take > 0) {
                             String lastId = page.get(take - 1).id();
                             for (int i = 0; i < window.size(); i++) {
@@ -185,6 +185,7 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
                                 }
                             }
                         }
+                        // 整段都不可用时 nextOffset 仍是窗口末尾（上面默认值），不会卡死在原地
                         boolean hasMore = nextOffset < total;
                         return new PagedPlaylist(toMusicList(page), nextOffset, hasMore);
                     });

@@ -27,7 +27,9 @@ public interface IMusicApiService {
 
     default Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit) {
         return getPlaylistMusics(playlistId, offset, limit)
-                .map(items -> new PagedPlaylist(items, offset + items.size(), false));
+                // 没有精确元数据的平台：按「本页是否满」推断，绝不能写死 false，
+                // 否则网易云/B站这类超过一页的歌单会立刻被判为到底。
+                .map(items -> new PagedPlaylist(items, offset + items.size(), items.size() >= limit));
     }
 
     /** 由曲目 ID 反查用户可读的源站页面地址；拼不出页面的平台返回空。 */
