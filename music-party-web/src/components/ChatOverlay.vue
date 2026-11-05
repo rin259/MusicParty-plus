@@ -181,7 +181,7 @@
       id="tutorial-chat"
       ref="launcherRef"
       type="button"
-      v-show="(!isMobile || !chatStore.isOpen) && !uiStore.mobileOverlayOpen"
+      v-show="!isMobile"
       @pointerdown="handlePointerDown"
       @click="handleClick"
       :aria-label="chatStore.unreadCount > 0 ? `打开聊天，${chatStore.unreadCount} 条未读` : '打开聊天'"
@@ -237,6 +237,11 @@ const MARGIN = 10;
 
 // === 1. 拖拽：只移动 launcher 一个元素，位置持久化 ===
 const POS_KEY = 'mp_chat_pos';
+// 移动端底部有固定播放器（约 142px + 安全区）：launcher 不能被拖/夹到播放器上，
+// 否则会盖住歌名和播放按钮（360×780、320×700 下尤其明显）。
+const bottomReserved = () => (isMobile.value ? 190 : 0);
+const maxY = () => Math.max(MARGIN, window.innerHeight - BUTTON_SIZE - MARGIN - bottomReserved());
+
 const readPosition = () => {
   try {
     const parsed = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
@@ -251,7 +256,7 @@ const readPosition = () => {
 };
 const clampToViewport = (pos) => {
   pos.x = Math.min(Math.max(MARGIN, pos.x), Math.max(MARGIN, window.innerWidth - BUTTON_SIZE - MARGIN));
-  pos.y = Math.min(Math.max(MARGIN, pos.y), Math.max(MARGIN, window.innerHeight - BUTTON_SIZE - MARGIN));
+  pos.y = Math.min(Math.max(MARGIN, pos.y), maxY());
   return pos;
 };
 
@@ -330,12 +335,16 @@ const { floatingStyles } = useFloating(launcherRef, panelRef, {
 const mobileWindowStyle = computed(() => {
   if (!isMobile.value) return {};
   const available = Math.max(240, vv.visibleHeight.value || window.innerHeight);
-  const height = Math.min(640, Math.max(260, Math.round(available * 0.92)));
-  const top = Math.round(vv.offsetTop.value + Math.max(6, (available - height) / 2));
+  // 键盘展开时 visualViewport 明显小于布局视口；此时让聊天占满可见区，
+  // 键盘收起时给底部播放器留出 150px，避免面板压住歌名和播放按钮。
+  const keyboardOpen = available < window.innerHeight - 80;
+  const playerReserve = keyboardOpen ? 8 : 150;
+  const headerReserve = 64;
+  const height = Math.min(640, Math.max(240, Math.round(available - headerReserve - playerReserve)));
   return {
     position: 'fixed',
     left: '50%',
-    top: `${top}px`,
+    top: `${Math.round(vv.offsetTop.value + headerReserve)}px`,
     width: 'min(92vw, 420px)',
     height: `${height}px`,
     transform: 'translateX(-50%)'

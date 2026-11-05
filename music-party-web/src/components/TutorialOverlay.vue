@@ -117,7 +117,9 @@ const steps = [
   },
   {
     targetId: 'tutorial-chat',
-    content: '点击浮动按钮打开聊天窗口，可以和其他人聊天或查看记录。按钮可以拖动。'
+    mobileTargetId: 'tutorial-chat-mobile',
+    content: '点击浮动按钮打开聊天窗口，可以和其他人聊天或查看记录。按钮可以拖动。',
+    mobileContent: '点击右上角的聊天按钮，可以和其他人聊天或查看记录。'
   },
   {
     targetId: 'tutorial-source',

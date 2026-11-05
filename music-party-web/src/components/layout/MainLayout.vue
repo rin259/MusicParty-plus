@@ -1,7 +1,7 @@
 <!-- src/components/layout/MainLayout.vue -->
 <script setup>
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
-import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2 } from 'lucide-vue-next';
+import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare } from 'lucide-vue-next';
 import UserList from '../UserList.vue';
 import QueueList from '../QueueList.vue';
 import CoverImage from '../CoverImage.vue';
@@ -150,14 +150,20 @@ const handleSearchClick = () => {
       </div>
 
       <div class="flex md:hidden items-center gap-2 flex-shrink-0">
+        <!-- 移动端聊天入口放在头部：不再用浮动 launcher，避免它压在歌词/曲目卡片和播放器上 -->
         <button
-            @click="uiStore.toggleTheme"
-            class="flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 text-medical-600 transition-colors rounded-sm"
-            :title="uiStore.theme === 'dark' ? '切换浅色模式' : '切换深色模式'"
-            :aria-label="uiStore.theme === 'dark' ? '切换浅色模式' : '切换深色模式'"
+            id="tutorial-chat-mobile"
+            @click="chatStore.toggleChat"
+            :aria-expanded="chatStore.isOpen"
+            class="relative flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 text-medical-600 transition-colors rounded-sm"
+            :class="chatStore.unreadCount > 0 ? 'border-accent text-accent-text' : ''"
+            aria-label="聊天"
         >
-          <Sun v-if="uiStore.theme === 'dark'" class="w-5 h-5" />
-          <Moon v-else class="w-5 h-5" />
+          <MessageSquare class="w-5 h-5" />
+          <span
+              v-if="chatStore.unreadCount > 0"
+              class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-mono text-[9px] font-bold leading-none text-accent-fg shadow-sm"
+          >{{ chatStore.unreadCount > 99 ? '99+' : chatStore.unreadCount }}</span>
         </button>
         <button id="tutorial-search-mobile" @click="handleSearchClick" class="flex items-center justify-center w-11 h-11 border border-accent bg-accent hover:bg-accent-hover font-bold text-sm text-accent-fg transition-all rounded-sm" aria-label="添加歌曲">
           <Search class="w-5 h-5" />
