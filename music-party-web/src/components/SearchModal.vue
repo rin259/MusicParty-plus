@@ -34,7 +34,7 @@
               :aria-selected="platform === p.id"
               @click="switchPlatform(p.id)"
               :disabled="!isPlatformEnabled(p.id)"
-              class="min-w-0 min-h-9 px-2 md:px-4 py-1.5 text-[11px] md:text-xs font-bold uppercase transition-all"
+              class="min-w-0 min-h-11 px-2 md:px-4 py-1.5 text-[11px] md:text-xs font-bold uppercase transition-all"
               :class="[
                 platform === p.id ? 'bg-ink text-ink-fg clip-tab' : 'bg-medical-200 text-medical-700 hover:bg-medical-300',
                 !isPlatformEnabled(p.id) ? 'opacity-40 cursor-not-allowed grayscale' : ''
@@ -74,7 +74,7 @@
           <button
               v-if="platform === 'netease'"
               @click="albumSearchMode = !albumSearchMode"
-              class="flex items-center justify-center min-w-10 min-h-10 px-2.5 py-2 text-xs font-bold transition-colors flex-shrink-0"
+              class="flex items-center justify-center min-w-11 min-h-11 px-2.5 py-2 text-xs font-bold transition-colors flex-shrink-0"
               :class="albumSearchMode ? 'bg-accent text-accent-fg' : 'bg-medical-200 text-medical-700 hover:bg-medical-300'"
               title="搜索专辑"
               aria-label="搜索专辑"
@@ -98,7 +98,7 @@
               SEARCHING {{ summary.done }}/{{ summary.sources }} · {{ Math.round(summary.elapsedMs) }}ms
             </template>
             <template v-else-if="summary.hits > 0">
-              HITS {{ summary.hits }} · MERGED {{ summary.merged }} · {{ summary.done }}/{{ summary.sources }} SRC · {{ Math.round(summary.elapsedMs) }}ms
+              HITS {{ summary.hits }} · MERGED {{ summary.merged }} · {{ summary.done }}/{{ summary.sources }} DONE · {{ Math.round(summary.elapsedMs) }}ms
             </template>
             <template v-else-if="lastQuery">
               NO MATCHES FOR “{{ lastQuery }}”
@@ -171,7 +171,7 @@
                     <div class="text-[10px] font-mono text-medical-500 truncate">@{{ bindings[platform] }}</div>
                   </div>
                 </div>
-                <button @click="player.bindAccount(platform, '')" class="text-[11px] font-bold text-danger hover:underline px-2 min-h-9 flex-shrink-0">UNLINK</button>
+                <button @click="player.bindAccount(platform, '')" class="text-[11px] font-bold text-danger hover:underline px-2 min-h-11 flex-shrink-0">UNLINK</button>
               </div>
               
               <!-- 刷新当前歌单：重新核对已加载曲目，但不清空缓存数据 -->
@@ -180,7 +180,7 @@
                     type="button"
                     @click="refreshPlaylist"
                     :disabled="refreshState.active"
-                    class="w-full min-h-9 flex items-center justify-center gap-2 border border-medical-200 bg-surface-1 font-mono text-[10px] tracking-[0.12em] text-medical-600 hover:border-accent hover:text-accent-text transition-colors disabled:opacity-60"
+                    class="w-full min-h-11 flex items-center justify-center gap-2 border border-medical-200 bg-surface-1 font-mono text-[10px] tracking-[0.12em] text-medical-600 hover:border-accent hover:text-accent-text transition-colors disabled:opacity-60"
                 >
                   <Loader2 v-if="refreshState.active" class="w-3.5 h-3.5 animate-spin text-accent-text" />
                   <RefreshCw v-else class="w-3.5 h-3.5" />

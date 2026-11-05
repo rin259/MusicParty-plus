@@ -23,12 +23,12 @@
         <!-- 房间列表 -->
         <section class="min-w-0">
           <div class="mb-3 flex items-center justify-between">
-            <h2 class="m-0 font-mono text-[10px] tracking-[0.18em] text-medical-500">MY ROOMS</h2>
+            <h2 class="m-0 font-mono text-[10px] tracking-[0.18em] text-medical-500">ROOM DIRECTORY</h2>
             <button
                 type="button"
                 @click="refresh"
                 :disabled="roomStore.loading"
-                class="flex min-h-9 items-center gap-1.5 border border-medical-200 bg-surface-1 px-2.5 font-mono text-[10px] text-medical-600 transition-colors hover:border-accent hover:text-accent-text disabled:opacity-50"
+                class="flex min-h-11 items-center gap-1.5 border border-medical-200 bg-surface-1 px-2.5 font-mono text-[10px] text-medical-600 transition-colors hover:border-accent hover:text-accent-text disabled:opacity-50"
             >
               <RefreshCw class="h-3.5 w-3.5" :class="{ 'animate-spin': roomStore.loading }" />
               REFRESH
@@ -61,7 +61,7 @@
               <div v-else class="border border-dashed border-medical-300 bg-medical-50 p-5 text-center">
                 <div class="font-mono text-[10px] tracking-[0.16em] text-medical-500">NO ROOMS YET</div>
                 <div class="mt-1.5 text-xs text-medical-600">
-                  {{ section.key === 'public' ? '还没有其他人创建的房间，点 REFRESH 再试。' : '在右侧创建一个房间，或输入房间码加入。' }}
+                  {{ section.key === 'public' ? '还没有其他人公开的房间。稍后刷新，或直接用房间码加入。' : '还没有自己的房间。在右侧创建一个，或用房间码加入。' }}
                 </div>
               </div>
             </section>
@@ -85,14 +85,14 @@
                   @keyup.enter="applyName"
                   maxlength="20"
                   placeholder="ENTER CODENAME"
-                  aria-label="你的名字" @focus="ensureVisible"
-                  class="min-h-10 min-w-0 flex-1 border border-medical-200 bg-medical-50 px-2.5 text-sm font-bold text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
+                  aria-label="你的名字" @focus="revealOnFocus"
+                  class="min-h-11 min-w-0 flex-1 border border-medical-200 bg-medical-50 px-2.5 text-sm font-bold text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
               />
               <button
                   type="button"
                   @click="applyName"
                   :disabled="!nameDraft.trim()"
-                  class="min-h-10 flex-shrink-0 bg-surface-strong px-3 text-[11px] font-bold text-white transition-colors hover:bg-accent hover:text-accent-fg disabled:opacity-50"
+                  class="min-h-11 flex-shrink-0 bg-surface-strong px-3 text-[11px] font-bold text-white transition-colors hover:bg-accent hover:text-accent-fg disabled:opacity-50"
               >SAVE</button>
             </div>
             <div v-if="nameError" class="mt-1.5 font-mono text-[10px] text-danger">{{ nameError }}</div>
@@ -105,21 +105,21 @@
                 v-model="createName"
                 maxlength="30"
                 placeholder="房间名（可留空）"
-                aria-label="房间名" @focus="ensureVisible"
-                class="mb-1.5 min-h-10 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
+                aria-label="房间名" @focus="revealOnFocus"
+                class="mb-1.5 min-h-11 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
             />
             <div class="mb-1.5 grid grid-cols-2 gap-1" role="group" aria-label="房间可见性">
               <button
                   type="button"
                   @click="createVisibility = 'public'"
-                  class="min-h-9 border px-2 font-mono text-[10px] font-bold tracking-[0.08em] transition-colors"
-                  :class="createVisibility === 'public' ? 'border-accent bg-accent text-accent-fg' : 'border-medical-200 bg-medical-50 text-medical-600 hover:border-medical-300'"
+                  class="min-h-11 border px-2 font-mono text-[10px] font-bold tracking-[0.08em] transition-colors"
+                  :class="createVisibility === 'public' ? 'border-accent bg-accent/10 text-accent-text' : 'border-medical-200 bg-medical-50 text-medical-600 hover:border-medical-300'"
               >PUBLIC · 房间列表可见</button>
               <button
                   type="button"
                   @click="createVisibility = 'unlisted'"
-                  class="min-h-9 border px-2 font-mono text-[10px] font-bold tracking-[0.08em] transition-colors"
-                  :class="createVisibility === 'unlisted' ? 'border-accent bg-accent text-accent-fg' : 'border-medical-200 bg-medical-50 text-medical-600 hover:border-medical-300'"
+                  class="min-h-11 border px-2 font-mono text-[10px] font-bold tracking-[0.08em] transition-colors"
+                  :class="createVisibility === 'unlisted' ? 'border-accent bg-accent/10 text-accent-text' : 'border-medical-200 bg-medical-50 text-medical-600 hover:border-medical-300'"
               >LINK ONLY · 仅房间码</button>
             </div>
             <input
@@ -127,14 +127,14 @@
                 type="password"
                 maxlength="64"
                 placeholder="可选：房间密码（至少 4 位）"
-                aria-label="房间密码（可选）" @focus="ensureVisible"
-                class="mb-2 min-h-10 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
+                aria-label="房间密码（可选）" @focus="revealOnFocus"
+                class="mb-2 min-h-11 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
             />
             <button
                 type="button"
                 @click="createRoom"
                 :disabled="busy || !canCreate"
-                class="flex min-h-10 w-full items-center justify-center gap-2 bg-accent px-3 text-xs font-bold text-accent-fg transition-colors hover:bg-accent-hover disabled:opacity-50"
+                class="flex min-h-11 w-full items-center justify-center gap-2 bg-accent px-3 text-xs font-bold text-accent-fg transition-colors hover:bg-accent-hover disabled:opacity-50"
             >
               <Plus class="h-4 w-4" />
               {{ busy ? 'CREATING...' : 'CREATE & ENTER' }}
@@ -152,21 +152,21 @@
                   v-model="joinCode"
                   @keyup.enter="joinByCode"
                   placeholder="房间码，或粘贴邀请链接"
-                  aria-label="房间码" @focus="ensureVisible"
-                  class="min-h-10 min-w-0 flex-1 border border-medical-200 bg-medical-50 px-2.5 font-mono text-sm lowercase text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
+                  aria-label="房间码" @focus="revealOnFocus"
+                  class="min-h-11 min-w-0 flex-1 border border-medical-200 bg-medical-50 px-2.5 font-mono text-sm lowercase text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
               />
               <button
                   type="button"
                   @click="joinByCode"
                   :disabled="busy || !joinCode.trim()"
-                  class="flex min-h-10 flex-shrink-0 items-center gap-1 bg-surface-strong px-3 text-[11px] font-bold text-white transition-colors hover:bg-accent hover:text-accent-fg disabled:opacity-50"
+                  class="flex min-h-11 flex-shrink-0 items-center gap-1 bg-surface-strong px-3 text-[11px] font-bold text-white transition-colors hover:bg-accent hover:text-accent-fg disabled:opacity-50"
               >ENTER <ArrowRight class="h-3.5 w-3.5" /></button>
             </div>
           </section>
         </aside>
       </div>
 
-      <footer class="mt-10 border-t border-medical-200 pt-3 font-mono text-[9px] leading-relaxed tracking-[0.12em] text-medical-500">
+      <footer class="mt-10 border-t border-medical-200 pt-3 font-mono text-[10px] leading-relaxed tracking-[0.12em] text-medical-500">
         DEVICE PROFILE {{ deviceShort }} · 清空浏览器存储会丢失房主身份 · 房间码即邀请凭证
       </footer>
     </div>
@@ -178,19 +178,19 @@
         <p class="mb-4 mt-1 font-mono text-[10px] tracking-[0.14em] text-medical-500">{{ editTarget.id }}</p>
 
         <label class="mb-1 block font-mono text-[10px] tracking-[0.14em] text-medical-500" for="edit-room-name">NAME</label>
-        <input id="edit-room-name" v-model="editName" maxlength="30" @focus="ensureVisible" class="mb-3 min-h-10 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none focus:border-accent" />
+        <input id="edit-room-name" v-model="editName" maxlength="30" @focus="revealOnFocus" class="mb-3 min-h-11 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none focus:border-accent" />
 
         <div class="mb-1 font-mono text-[10px] tracking-[0.14em] text-medical-500">VISIBILITY</div>
         <div class="mb-3 grid grid-cols-2 gap-1" role="group" aria-label="房间可见性">
-          <button type="button" @click="editVisibility = 'public'" class="min-h-9 border px-2 font-mono text-[10px] font-bold transition-colors" :class="editVisibility === 'public' ? 'border-accent bg-accent text-accent-fg' : 'border-medical-200 bg-medical-50 text-medical-600'">PUBLIC</button>
-          <button type="button" @click="editVisibility = 'unlisted'" class="min-h-9 border px-2 font-mono text-[10px] font-bold transition-colors" :class="editVisibility === 'unlisted' ? 'border-accent bg-accent text-accent-fg' : 'border-medical-200 bg-medical-50 text-medical-600'">LINK ONLY</button>
+          <button type="button" @click="editVisibility = 'public'" class="min-h-11 border px-2 font-mono text-[10px] font-bold transition-colors" :class="editVisibility === 'public' ? 'border-accent bg-accent/10 text-accent-text' : 'border-medical-200 bg-medical-50 text-medical-600'">PUBLIC</button>
+          <button type="button" @click="editVisibility = 'unlisted'" class="min-h-11 border px-2 font-mono text-[10px] font-bold transition-colors" :class="editVisibility === 'unlisted' ? 'border-accent bg-accent/10 text-accent-text' : 'border-medical-200 bg-medical-50 text-medical-600'">LINK ONLY</button>
         </div>
 
         <label class="mb-1 block font-mono text-[10px] tracking-[0.14em] text-medical-500" for="edit-room-password">
           PASSWORD（{{ editTarget.hasPassword ? '当前已设置' : '当前无密码' }}）
         </label>
-        <input id="edit-room-password" v-model="editPassword" type="password" maxlength="64" :disabled="editClearPassword" placeholder="留空则不修改" @focus="ensureVisible" class="mb-1.5 min-h-10 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none focus:border-accent disabled:opacity-50" />
-        <label class="mb-4 flex items-center gap-2 text-[11px] text-medical-600">
+        <input id="edit-room-password" v-model="editPassword" type="password" maxlength="64" :disabled="editClearPassword" placeholder="留空则不修改" @focus="revealOnFocus" class="mb-1.5 min-h-11 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none focus:border-accent disabled:opacity-50" />
+        <label class="mb-3 flex min-h-11 items-center gap-2 text-[11px] text-medical-600">
           <input v-model="editClearPassword" type="checkbox" class="h-4 w-4 accent-[rgb(var(--accent))]" />
           移除房间密码
         </label>
@@ -237,7 +237,7 @@
             type="password"
             maxlength="64"
             placeholder="INPUT ROOM PASSWORD"
-            aria-label="房间密码" @focus="ensureVisible"
+            aria-label="房间密码" @focus="revealOnFocus"
             @keyup.enter="confirmPassword"
             class="mb-2 min-h-11 w-full border border-medical-200 bg-medical-50 p-3 text-center font-mono text-lg tracking-widest text-medical-900 outline-none placeholder:text-medical-500 focus:border-accent"
             autofocus
@@ -262,6 +262,7 @@ import { useToast } from '../composables/useToast';
 import RoomCard from './RoomCard.vue';
 import { useUserStore } from '../stores/user';
 import { STORAGE_KEYS } from '../constants/keys';
+import { revealOnFocus, setPageScrollable } from '../utils/viewport';
 
 const emit = defineEmits(['enter']);
 const roomStore = useRoomStore();
@@ -299,20 +300,9 @@ const hasName = computed(() => !!profileName.value && !isGuestName(profileName.v
 const canCreate = computed(() => hasName.value);
 const deviceShort = computed(() => (roomStore.deviceId || '').slice(0, 8));
 
-// 移动端键盘弹出后把输入框滚到可视区中间，避免按钮被键盘盖住
-function ensureVisible(event) {
-  const el = event?.target;
-  if (!el) return;
-  setTimeout(() => {
-    try { el.scrollIntoView({ block: 'center' }); } catch { /* 老浏览器忽略 */ }
-  }, 260);
-}
-
 // 密码/删除确认弹层打开时锁住背后的 landing 滚动；关闭/进入房间后交回 App 控制
 watch([pendingRoom, deleteTarget, editTarget], ([pending, deletingRoom, editingRoom]) => {
-  const scrollable = !pending && !deletingRoom && !editingRoom && !roomStore.entered;
-  document.body.classList.toggle('mp-scrollable', scrollable);
-  document.documentElement.classList.toggle('mp-scrollable', scrollable);
+  setPageScrollable(!pending && !deletingRoom && !editingRoom && !roomStore.entered);
 });
 
 function askDelete(room) {

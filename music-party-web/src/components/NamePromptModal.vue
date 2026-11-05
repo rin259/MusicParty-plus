@@ -16,7 +16,7 @@
           @keyup.enter="confirm"
           placeholder="ENTER CODENAME"
           aria-label="你的昵称"
-          @focus="$event.target.scrollIntoView({ block: 'center' })"
+          @focus="revealOnFocus"
           class="w-full min-h-11 bg-medical-50 border border-medical-200 p-3 outline-none focus:border-accent font-bold mb-4 text-medical-900 placeholder:text-medical-500"
           autofocus
       />
@@ -40,6 +40,7 @@ import { ref, watch, computed } from 'vue';
 import { useUserStore } from '../stores/user';
 import { usePlayerStore } from '../stores/player';
 import { useFocusTrap } from '../composables/useFocusTrap';
+import { revealOnFocus } from '../utils/viewport';
 
 const userStore = useUserStore();
 const playerStore = usePlayerStore();

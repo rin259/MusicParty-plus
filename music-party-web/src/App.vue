@@ -13,6 +13,21 @@
     <template v-else>
       <AudioEngine />
 
+      <!-- 自动播放被浏览器拦截时，必须在真实点击手势里重新 play()；放这里以便精简模式也能看到 -->
+      <button
+          v-if="player.audioBlocked"
+          type="button"
+          @click="resumeAudio"
+          class="fixed left-1/2 z-[75] flex min-h-11 -translate-x-1/2 items-center gap-2 border border-accent bg-accent px-4 font-mono text-[11px] font-bold text-accent-fg shadow-2xl"
+          :class="uiStore.isLiteMode
+              ? 'bottom-[max(1.5rem,env(safe-area-inset-bottom))]'
+              : 'bottom-[calc(env(safe-area-inset-bottom)+9rem)] md:bottom-28'"
+          aria-label="点击开启声音"
+      >
+        <VolumeX class="h-4 w-4" />
+        点击开启声音
+      </button>
+
       <!-- 主界面 -->
       <MainLayout v-if="hasStarted" @search="handleSearchClick">
         <CenterConsole />
@@ -33,7 +48,8 @@
 </template>
 
 <script setup>
-import { onUnmounted, ref, watch } from 'vue';
+import { onUnmounted, ref, watch, nextTick } from 'vue';
+import { VolumeX } from 'lucide-vue-next';
 import { useEventListener } from '@vueuse/core';
 import { usePlayerStore } from './stores/player';
 import { useUserStore } from './stores/user';
@@ -41,6 +57,7 @@ import { useUiStore } from './stores/ui';
 import { useAdminStore } from './stores/admin';
 import { useChatStore } from './stores/chat';
 import { useRoomStore } from './stores/room';
+import { setPageScrollable } from './utils/viewport';
 
 // Components
 import MainLayout from './components/layout/MainLayout.vue';
@@ -68,8 +85,7 @@ const roomStore = useRoomStore();
 // landing 用文档级滚动（body 默认 overflow:hidden 会裁掉长页面）；
 // 进入房间后恢复锁定，避免主界面被页面滚动带着跑。
 const syncPageScroll = () => {
-  document.body.classList.toggle('mp-scrollable', !roomStore.entered);
-  document.documentElement.classList.toggle('mp-scrollable', !roomStore.entered);
+  setPageScrollable(!roomStore.entered);
 };
 watch(() => roomStore.entered, syncPageScroll, { immediate: true });
 onUnmounted(() => {
@@ -97,7 +113,11 @@ useEventListener(window, 'keydown', (e) => {
 
 // 进入/离开房间只以 roomStore.entered 为准：
 // landing 组件在 entered 变 true 的同一 tick 会被卸载，从子组件 emit 出来的事件可能丢失。
-watch(() => roomStore.entered, (entered) => {
+watch(() => roomStore.entered, async (entered) => {
+  // landing 是可滚动的长页，房间是固定的单屏：切换时把文档滚动归零，
+  // 否则从房间回到 landing 会停在上一次的滚动位置（看起来像页面自己跳了）。
+  await nextTick();
+  window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   if (entered) {
     hasStarted.value = true;
     player.connect();
@@ -117,6 +137,8 @@ useEventListener(document, 'visibilitychange', () => {
     uiStore.isLiteMode = true;
   }
 });
+
+const resumeAudio = () => window.dispatchEvent(new CustomEvent('music-party:resume-audio'));
 
 const handleSearchClick = () => {
   // 游客也可先逛：只在「加入队列」时才要求起名，并保留这次点歌意图。

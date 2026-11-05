@@ -9,13 +9,14 @@
       <span class="w-1 flex-shrink-0" :class="room.mainRoom ? 'bg-accent' : 'bg-medical-200'"></span>
       <span class="min-w-0 flex-1">
         <span class="flex items-center gap-2">
-          <span class="truncate text-sm font-bold text-medical-900">{{ room.name }}</span>
-          <span v-if="room.owner" class="flex-shrink-0 border border-accent/40 px-1 font-mono text-[9px] leading-4 text-accent-text">OWNER</span>
-          <span v-if="!room.listed" class="flex-shrink-0 border border-medical-300 bg-medical-100 px-1 font-mono text-[9px] leading-4 text-medical-500">LINK</span>
-          <Lock v-if="room.hasPassword" class="h-3.5 w-3.5 flex-shrink-0 text-medical-500" aria-label="需要密码" />
+          <span class="truncate text-sm font-bold text-medical-900" :title="room.name">{{ room.name }}</span>
+          <span v-if="room.mainRoom" class="flex-shrink-0 border border-medical-300 px-1 font-mono text-[9px] leading-4 text-medical-500">DEFAULT</span>
+          <span v-else-if="room.owner" class="flex-shrink-0 border border-accent/40 px-1 font-mono text-[9px] leading-4 text-accent-text">OWNER</span>
+          <span v-if="!room.listed" class="flex-shrink-0 border border-medical-300 bg-medical-100 px-1 font-mono text-[9px] leading-4 text-medical-500" title="仅通过房间码/邀请链接可见">LINK ONLY</span>
+          <Lock v-if="room.hasPassword" class="h-3.5 w-3.5 flex-shrink-0 text-medical-500" aria-label="需要密码" title="需要密码" />
         </span>
         <span class="mt-0.5 block truncate font-mono text-[10px] text-medical-500">
-          {{ room.id }} · {{ room.onlineCount }} ONLINE
+          CODE {{ room.id }} · {{ room.onlineCount }} ONLINE
         </span>
       </span>
       <ChevronRight class="h-4 w-4 flex-shrink-0 self-center text-medical-400 transition-colors group-hover:text-accent-text" />

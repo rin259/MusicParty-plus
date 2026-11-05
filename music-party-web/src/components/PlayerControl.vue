@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-24 md:h-24 bg-surface-1 border-t border-medical-200 flex items-center px-3 md:px-8 py-2 md:py-0 relative z-50 shadow-lg">
+  <div class="min-h-24 md:h-24 bg-surface-1 border-t border-medical-200 flex items-center px-3 md:px-8 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:py-0 md:pb-0 relative z-50 shadow-lg">
     <!-- 封面 -->
     <button
         id="tutorial-source"
@@ -102,14 +102,14 @@
       </div>
       
       <!-- 移动端简易控制 -->
-      <div class="flex md:hidden items-center justify-between gap-2 mt-1.5">
-        <div class="font-mono text-[11px] text-medical-500 tabular-nums whitespace-nowrap">
+      <div class="flex md:hidden items-center justify-between gap-1.5 mt-1.5 min-w-0">
+        <div class="min-w-0 truncate font-mono text-[11px] text-medical-500 tabular-nums whitespace-nowrap">
           <span v-if="player.isLoading" class="text-accent-text animate-pulse">SYNCING...</span>
           <span v-else-if="player.isBuffering" class="text-accent-text animate-pulse">BUFFERING...</span>
           <span v-else>{{ formatDuration(displayProgress) }} / {{ formatDuration(nowPlaying?.music.duration || 0) }}</span>
         </div>
-        <div class="flex gap-2 flex-shrink-0">
-        <button id="tutorial-download-mobile" @click="downloadCurrentMusic" class="flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 rounded-sm text-medical-500 active:bg-medical-200" aria-label="下载当前歌曲">
+        <div class="flex gap-1.5 flex-shrink-0">
+        <button id="tutorial-download-mobile" @click="downloadCurrentMusic" class="hidden min-[360px]:flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 rounded-sm text-medical-500 active:bg-medical-200" aria-label="下载当前歌曲">
           <Download class="w-4 h-4" />
         </button>
         <button

@@ -75,4 +75,6 @@ test('时长格式', () => {
     assert.equal(formatDuration(0), '0:00');
     assert.equal(formatDuration(295502), '4:56');
     assert.equal(formatDuration(61000), '1:01');
+    assert.equal(formatDuration(6 * 3600 * 1000), '6:00:00');
+    assert.equal(formatDuration(65 * 60 * 1000 + 7000), '1:05:07');
 });

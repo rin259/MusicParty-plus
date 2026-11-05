@@ -87,6 +87,7 @@
 
 body {
   @apply bg-medical-50 text-medical-800 font-sans antialiased overflow-hidden;
+  -webkit-text-size-adjust: 100%;
   transition: background-color 380ms cubic-bezier(.22, 1, .36, 1), color 380ms cubic-bezier(.22, 1, .36, 1);
 }
 
@@ -95,9 +96,16 @@ html, #app {
   transition: background-color 380ms cubic-bezier(.22, 1, .36, 1), color 380ms cubic-bezier(.22, 1, .36, 1);
 }
 
-/* 视口高度：先给旧浏览器 100vh 回退，再覆盖为 100dvh */
+html { scrollbar-gutter: stable; }
+
+/*
+ * 视口高度。
+ * - 应用壳用 dvh：键盘/地址栏变化时桌面端无影响，移动端仍占满可视高度。
+ * - landing 是可文档滚动的长页，用 svh（最小视口）做下限：Safari 地址栏
+ *   收起/展开时 svh 不变，页面不会跟着工具栏上下弹。
+ */
 .h-app { height: 100vh; height: 100dvh; }
-.min-h-app { min-height: 100vh; min-height: 100dvh; }
+.min-h-app { min-height: 100vh; min-height: 100svh; }
 
 /* landing 需要文档级滚动：body 默认 overflow:hidden 会把 min-h 页面直接裁掉 */
 body.mp-scrollable {
@@ -115,7 +123,7 @@ html.mp-scrollable { height: auto; }
 }
 
 /* 聊天列表自己做锚点补偿（兼容老 Safari），关掉浏览器原生锚定避免双倍修正 */
-.chat-scroll { overflow-anchor: none; }
+.chat-scroll { overflow-anchor: none; scrollbar-gutter: stable; }
 
 /* 去掉移动端 300ms 点击延迟（不改变布局） */
 button, [role="button"], a, input[type="range"] {
@@ -177,6 +185,20 @@ html.theme-transition *::after {
 }
 ::-webkit-scrollbar-thumb {
   @apply bg-medical-300 hover:bg-medical-400 rounded transition-colors;
+}
+
+/*
+ * 减少动效：装饰性的无限动画（旋转环、扫描线、脉冲、电平条、弹幕、故障切片）
+ * 在系统偏好 reduce 时全部停下来；状态变化仍然发生，只是不再播放过渡。
+ * 这是「偏好」而不是「关掉反馈」：焦点环、选中态、错误色都保留。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* 键盘可达性：Tab 导航焦点环（鼠标点击不触发） */

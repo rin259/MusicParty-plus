@@ -9,6 +9,8 @@ export const useUiStore = defineStore('ui', () => {
     const volume = ref(parseFloat(localStorage.getItem(STORAGE_KEYS.VOLUME) || '0.5'));
     const autoLiteMode = ref(localStorage.getItem('mp_auto_lite_mode') !== 'false'); // 默认 true
     const keepAliveEnabled = ref(localStorage.getItem(STORAGE_KEYS.KEEP_ALIVE) === 'true');
+    // 移动端抽屉/全屏面板打开时，隐藏浮动聊天按钮，避免它压在面板和播放器上
+    const mobileOverlayOpen = ref(false);
     const storedTheme = localStorage.getItem(STORAGE_KEYS.THEME);
     const theme = ref(storedTheme || (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
 
@@ -72,6 +74,7 @@ export const useUiStore = defineStore('ui', () => {
         autoLiteMode,
         keepAliveEnabled,
         toggleKeepAlive,
+        mobileOverlayOpen,
         theme,
         applyTheme,
         toggleTheme,

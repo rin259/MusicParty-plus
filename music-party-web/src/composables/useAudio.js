@@ -70,17 +70,22 @@ export function useAudio(audioRef, playerStore) {
         try {
             await audioRef.value.play();
             isErrorState.value = false;
+            playerStore.audioBlocked = false;
             updateMediaSession();
             requestWakeLock();
         } catch (e) {
             // NotAllowedError 是浏览器由于缺乏用户交互而拦截
             if (e.name === 'NotAllowedError') {
                 console.warn("Autoplay blocked. User interaction required.");
+                playerStore.audioBlocked = true;
             } else if (e.name !== 'AbortError') {
                 console.warn("Play failed:", e);
             }
         }
     };
+
+    // 用户点击「开启声音」时必须在点击手势里重新调用 play()
+    const resumeAudio = () => safePlay();
 
     // === 1. 监听资源加载 (canplay) ===
     // 这是修复你问题的关键：音频加载就绪后，主动判断是否需要播放
@@ -299,6 +304,7 @@ export function useAudio(audioRef, playerStore) {
         handleError,
         handleBufferingStart,
         handleBufferingEnd,
-        checkAutoPlay
+        checkAutoPlay,
+        resumeAudio
     };
 }

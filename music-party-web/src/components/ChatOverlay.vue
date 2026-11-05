@@ -181,7 +181,7 @@
       id="tutorial-chat"
       ref="launcherRef"
       type="button"
-      v-show="!isMobile || !chatStore.isOpen"
+      v-show="(!isMobile || !chatStore.isOpen) && !uiStore.mobileOverlayOpen"
       @pointerdown="handlePointerDown"
       @click="handleClick"
       :aria-label="chatStore.unreadCount > 0 ? `打开聊天，${chatStore.unreadCount} 条未读` : '打开聊天'"
@@ -513,7 +513,9 @@ const send = () => {
 
   playerStore.sendChatMessage(text);
   inputContent.value = '';
-  setTimeout(() => scrollToBottom(true), 60);
+  // 只让消息列表的 watcher 滚动一次；这里再 setTimeout 会在消息到达前后各滚一次
+  stickToBottom.value = true;
+  newBelow.value = 0;
 };
 
 onUnmounted(() => {

@@ -144,9 +144,10 @@
                  player.isPaused ? 'scale-95 grayscale' : 'scale-100',
                   'cursor-pointer'
              ]"
-            :aria-label="hasLiked ? '已点赞，再点一次再次点赞' : '为当前歌曲点赞'"
+            :aria-label="!player.nowPlaying ? '当前没有歌曲' : (hasLiked ? '已点赞，再点一次再次点赞' : '为当前歌曲点赞')"
             :aria-pressed="!!hasLiked"
-            @mouseenter="!isMobile && (isHovering = true)"
+            :disabled="!player.nowPlaying"
+            @mouseenter="!isMobile && player.nowPlaying && (isHovering = true)"
             @mouseleave="!isMobile && (isHovering = false)"
             @click="handleCoverClick"
         >
@@ -166,7 +167,7 @@
               leave-to-class="opacity-0 scale-95"
           >
             <div
-                v-if="isBursting || isHovering || mobileLikePending"
+                v-if="player.nowPlaying && (isBursting || isHovering || mobileLikePending)"
                 class="absolute inset-0 z-40 flex items-center justify-center select-none"
                 :class="[
                     // 已点赞状态下，只显示极淡的角落标记，不遮挡封面
@@ -230,7 +231,7 @@
           <div
               class="absolute top-0 left-0 z-50 px-3 py-1 font-mono text-xs font-bold chamfer-br transition-colors duration-300 bg-scrim/80 backdrop-blur-sm text-white"
           >
-            {{ player.isPaused ? 'PAUSED' : 'PLAYING' }}
+            {{ !player.nowPlaying ? 'IDLE' : (player.isPaused ? 'PAUSED' : 'PLAYING') }}
           </div>
         </button>
       </div>
@@ -330,6 +331,7 @@ const EFFECT_COOLDOWN = 1000;
 let lastEffectTime = 0;
 
 const handleCoverClick = () => {
+  if (!player.nowPlaying) return;
   if (isMobile.value) {
     if (!mobileLikePending.value) {
       // 第一次点击

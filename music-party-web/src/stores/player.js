@@ -35,6 +35,8 @@ export const usePlayerStore = defineStore('player', () => {
     const localProgress = ref(0);
     const isBuffering = ref(false);
     const isErrorState = ref(false);
+    // 浏览器拦截自动播放时置 true：UI 必须显示「点击开启声音」，不能假装在播
+    const audioBlocked = ref(false);
 
     // === 点歌可观测性 ===
     // key = platform:id。提交中 → 服务端回执（QUEUED/FAILED…）→ 队列快照确认。
@@ -184,6 +186,9 @@ export const usePlayerStore = defineStore('player', () => {
         remotePosition.value = 0;
         lastSyncTime.value = 0;
         localProgress.value = 0;
+        audioBlocked.value = false;
+        isBuffering.value = false;
+        isErrorState.value = false;
         enqueueStates.value = {};
         pendingEnqueues.value = {};
         importJobs.value = {};
@@ -341,7 +346,7 @@ export const usePlayerStore = defineStore('player', () => {
     return {
 nowPlaying, queue, isPaused, playMode, isShuffle, isRepeatOne, isListLoop, isFairShuffle, allowOfflineShuffle, config,
         isPauseLocked, isSkipLocked, isPlayModeLocked, connected, isLoading, lyricText,
-        localProgress, isBuffering, isErrorState, streamListenerCount, streamActive,
+        localProgress, isBuffering, isErrorState, audioBlocked, streamListenerCount, streamActive,
         isVoteSkipEnabled, voteSkipThreshold, voteSkipWaitTime, currentVotes, eligibleUsers,
         connect, disconnect, tryReconnect, resetRoomState, getCurrentProgress, syncState,
         playNext, togglePause, cyclePlayMode,

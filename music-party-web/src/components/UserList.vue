@@ -1,7 +1,7 @@
 <template>
   <div class="p-4">
     <div class="mb-4 flex items-center justify-between">
-      <h3 class="text-sm font-bold text-medical-500">在线成员</h3>
+      <h2 class="m-0 text-sm font-bold text-medical-500">在线成员</h2>
       <div class="flex items-center gap-2">
         <div class="text-xs font-mono font-bold bg-medical-100 text-accent-text px-1.5 py-0.5">{{ users.length }}</div>
         <button v-if="dismissible" @click="$emit('close')" class="flex items-center justify-center w-11 h-11 -mr-2 text-medical-500 hover:text-medical-900" aria-label="关闭在线成员">
