@@ -42,6 +42,7 @@ public class YtDlpResolver {
     private final boolean enabled;
     private final long timeoutSeconds;
     private final long downloadTimeoutSeconds;
+    private final int downloadConcurrency;
     private final ObjectMapper objectMapper;
     private static final String BUVID3 = java.util.UUID.randomUUID().toString().toUpperCase() + "infoc";
 
@@ -50,6 +51,7 @@ public class YtDlpResolver {
         this.enabled = appProperties.getYtDlp().isEnabled();
         this.timeoutSeconds = appProperties.getYtDlp().getTimeoutSeconds();
         this.downloadTimeoutSeconds = appProperties.getYtDlp().getDownloadTimeoutSeconds();
+        this.downloadConcurrency = Math.clamp(appProperties.getYtDlp().getDownloadConcurrency(), 1, 64);
         this.objectMapper = objectMapper;
     }
 
@@ -327,6 +329,9 @@ public class YtDlpResolver {
                 executable, "--no-playlist", "--no-warnings", "--no-progress", "--no-simulate",
                 "--format", "bestaudio", "--retries", "5", "--fragment-retries", "10",
                 "--file-access-retries", "3", "--socket-timeout", "30", "--continue",
+                // SoundCloud 的 bestaudio 是 HLS（96k aac）：不并发分片时单曲要 ~20s，
+                // 4 路并发实测 ~8s 且批量时不会触发 CDN 限流；非 HLS 源会忽略这个参数。
+                "--concurrent-fragments", String.valueOf(downloadConcurrency),
                 "--output", outputTemplate,
                 "--print", "after_move:__MUSIC_PARTY_FILE__:%(filepath)s",
                 sourceUrl

@@ -40,7 +40,13 @@ import java.util.concurrent.atomic.AtomicLong;
 public class LocalCacheService {
 
     private final WebClient webClient;
-    private static final long DOWNLOAD_COOLDOWN_SECONDS = 3;
+    /**
+     * 任务间隔冷却。原来固定 3s，100 首批量导入光等待就 5 分钟。
+     * yt-dlp 源（SoundCloud / YouTube Music）默认 1s（可配）；直链源（网易云 / B 站）
+     * 仍保留原来的 3s，避免改动它们既有的防风控节奏。
+     */
+    private final long downloadCooldownMs;
+    private static final long DIRECT_SOURCE_COOLDOWN_MS = 3_000L;
     // 单任务硬上限：下载队列串行（concatMap 并发 1），任何一个任务卡住都会堵死后续曲目，
     // 故此处兜底，任何阶段无进展都不会超过此值。
     private static final Duration TASK_TIMEOUT = Duration.ofMinutes(4);
@@ -72,6 +78,7 @@ public class LocalCacheService {
         this.eventPublisher = eventPublisher;
         this.appProperties = appProperties;
         this.ytDlpResolver = ytDlpResolver;
+        this.downloadCooldownMs = Math.max(0L, appProperties.getYtDlp().getDownloadCooldownMs());
     }
 
     @Data
@@ -125,8 +132,8 @@ public class LocalCacheService {
                                     log.error("Unexpected error in download queue processing", e);
                                     return Mono.empty(); // 吞掉异常，防止队列崩溃
                                 })
-                                // 🟢 关键：强制冷却时间，防止风控
-                                .then(Mono.delay(Duration.ofSeconds(DOWNLOAD_COOLDOWN_SECONDS)))
+                                // 冷却时间防止风控：yt-dlp 源用可配的较短冷却，直链源保持 3s
+                                .then(Mono.delay(Duration.ofMillis(cooldownFor(task.musicId()))))
                 )
                 .subscribe();
     }
@@ -183,6 +190,11 @@ public class LocalCacheService {
         } else {
             log.info("Download enqueued: {}", musicId);
         }
+    }
+
+    private long cooldownFor(String musicId) {
+        boolean ytDlpSource = musicId.startsWith("soundcloud_") || musicId.startsWith("ytmusic_");
+        return ytDlpSource ? downloadCooldownMs : DIRECT_SOURCE_COOLDOWN_MS;
     }
 
     private Mono<Void> processTask(DownloadTask task) {

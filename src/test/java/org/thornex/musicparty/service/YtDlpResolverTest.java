@@ -57,6 +57,23 @@ class YtDlpResolverTest {
                 .block(Duration.ofSeconds(4));
     }
 
+    @Test
+    void downloadsSoundCloudHlsWithConcurrentFragments() throws Exception {
+        Path audio = temporaryDirectory.resolve("stem.m4a");
+        Files.writeString(audio, "audio-bytes");
+        Path argsFile = temporaryDirectory.resolve("args.txt");
+        Path executable = writeExecutable("#!/bin/sh\n"
+                + "printf '%s\\n' \"$@\" > " + argsFile.toAbsolutePath() + "\n"
+                + "printf '%s\\n' '__MUSIC_PARTY_FILE__:" + audio.toAbsolutePath() + "'\n");
+
+        YtDlpResolver resolver = newResolver(executable, 5);
+        resolver.downloadAudio("https://api.soundcloud.com/tracks/1", temporaryDirectory, "stem")
+                .block(Duration.ofSeconds(10));
+
+        String args = Files.readString(argsFile);
+        assertThat(args).contains("--concurrent-fragments\n4");
+    }
+
     private YtDlpResolver newResolver(Path executable, long timeoutSeconds) {
         AppProperties properties = new AppProperties();
         properties.getYtDlp().setPath(executable.toString());

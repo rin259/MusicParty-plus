@@ -113,6 +113,82 @@ public class SoundCloudSearchClient {
                 .timeout(REQUEST_TIMEOUT);
     }
 
+    /**
+     * 单曲元数据（播放前补齐标题/时长/封面）。
+     * api-v2 约 0.8s；yt-dlp 的 --skip-download --dump-single-json 约 3.2s。
+     */
+    public Mono<YtDlpResolver.TrackMetadata> trackMetadata(String trackId) {
+        return Mono.fromCallable(() -> trackMetadataBlocking(trackId))
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(REQUEST_TIMEOUT);
+    }
+
+    /**
+     * 公开歌单的曲目 id 列表。
+     * api-v2 /playlists/{id} 约 0.8~1.5s；原来用 yt-dlp --flat-playlist 约 3s。
+     * 只取 id，元数据仍交给 /tracks?ids= 批量补全（会丢弃区域不可用曲目）。
+     */
+    public Mono<List<String>> playlistTrackIds(String playlistId) {
+        return Mono.fromCallable(() -> playlistTrackIdsBlocking(playlistId))
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(REQUEST_TIMEOUT);
+    }
+
+    private List<String> playlistTrackIdsBlocking(String playlistId) {
+        if (playlistId == null || !playlistId.matches("\\d+")) {
+            throw new IllegalArgumentException("SoundCloud playlist id 无效");
+        }
+        JsonNode node;
+        try {
+            node = fetchPlaylist(playlistId, resolveClientId(false));
+        } catch (WebClientResponseException error) {
+            int status = error.getStatusCode().value();
+            if (status != 401 && status != 403) throw error;
+            node = fetchPlaylist(playlistId, resolveClientId(true));
+        }
+        List<String> ids = new ArrayList<>();
+        for (JsonNode track : node.path("tracks")) {
+            long id = track.path("id").asLong(0L);
+            if (id == 0L) id = numericIdFromUrn(track.path("urn").asText(""));
+            if (id > 0L) ids.add(String.valueOf(id));
+        }
+        if (ids.isEmpty()) throw new IllegalStateException("SoundCloud 播放列表为空");
+        // 超大歌单若被上游截断，交给 yt-dlp 的 flat 列表兜底，避免导入时少歌
+        int declared = node.path("track_count").asInt(ids.size());
+        if (declared > ids.size()) throw new IllegalStateException("SoundCloud 播放列表返回不完整");
+        return ids;
+    }
+
+    private JsonNode fetchPlaylist(String playlistId, String clientId) {
+        return webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .scheme("https")
+                        .host("api-v2.soundcloud.com")
+                        .path("/playlists/" + playlistId)
+                        .queryParam("client_id", clientId)
+                        .build())
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(REQUEST_TIMEOUT);
+    }
+
+    private YtDlpResolver.TrackMetadata trackMetadataBlocking(String trackId) {
+        if (trackId == null || !trackId.matches("\\d+")) {
+            throw new IllegalArgumentException("SoundCloud track id 无效");
+        }
+        JsonNode node;
+        try {
+            node = fetchTrack(trackId, resolveClientId(false));
+        } catch (WebClientResponseException error) {
+            int status = error.getStatusCode().value();
+            if (status != 401 && status != 403) throw error;
+            node = fetchTrack(trackId, resolveClientId(true));
+        }
+        YtDlpResolver.TrackMetadata track = toMetadata(node);
+        if (track == null) throw new IllegalStateException("SoundCloud 未返回曲目信息");
+        return track;
+    }
+
     private String permalinkBlocking(String trackId) {
         if (trackId == null || !trackId.matches("\\d+")) return null;
         JsonNode node;

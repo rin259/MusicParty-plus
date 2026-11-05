@@ -36,6 +36,8 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
 
     private static final String LIKES_PREFIX = "likes:";
     private static final String MY_TRACKS_PREFIX = "mytracks:";
+    /** 单曲的稳定流地址；下载直接用它，不用再跑一次 yt-dlp 元数据解析。 */
+    private static final String TRACK_API_BASE = "https://api.soundcloud.com/tracks/";
     /** own:<handle>:<playlistId> —— 带 token 取的歌单（可能包含私密） */
     private static final String OWN_PLAYLIST_PREFIX = "own:";
 
@@ -55,13 +57,29 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         this.appProperties = properties;
     }
 
+    /** 搜索短缓存：api-v2 单次 1.3s 左右，同一关键词来回切源没必要重复打上游。 */
+    private final Map<String, CachedSearch> searchCache = new ConcurrentHashMap<>();
+    private static final long SEARCH_TTL_MS = 20_000L;
+    private static final int SEARCH_CACHE_MAX = 128;
+
+    private record CachedSearch(List<YtDlpResolver.TrackMetadata> items, long at) {}
+
     @Override
     protected Mono<List<YtDlpResolver.TrackMetadata>> searchPage(String keyword, int offset, int limit) {
+        String key = keyword.toLowerCase(Locale.ROOT) + "|" + offset + "|" + limit;
+        CachedSearch cached = searchCache.get(key);
+        if (cached != null && System.currentTimeMillis() - cached.at() < SEARCH_TTL_MS) {
+            return Mono.just(cached.items());
+        }
         return searchClient.search(keyword, offset, limit)
                 .onErrorResume(error -> {
                     log.warn("SoundCloud api-v2 search failed for '{}', falling back to yt-dlp: {}",
                             keyword, error.getMessage());
                     return super.searchPage(keyword, offset, limit);
+                })
+                .doOnNext(items -> {
+                    if (searchCache.size() > SEARCH_CACHE_MAX) searchCache.clear();
+                    searchCache.put(key, new CachedSearch(List.copyOf(items), System.currentTimeMillis()));
                 });
     }
 
@@ -69,7 +87,22 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         return searchClient.search(keyword, 0, limit)
                 .onErrorResume(error -> resolver.searchSoundCloud(keyword, limit));
     }
-    @Override protected Mono<YtDlpResolver.TrackMetadata> resolveMetadata(String musicId) { return resolver.resolveSoundCloudMetadata(musicId); }
+    @Override
+    protected Mono<YtDlpResolver.TrackMetadata> resolveMetadata(String musicId) {
+        // 老队列恢复后首次播放会走这里：api-v2 /tracks/{id} 约 0.8s，yt-dlp 约 3.2s。
+        return searchClient.trackMetadata(musicId)
+                .onErrorResume(error -> resolver.resolveSoundCloudMetadata(musicId))
+                .doOnNext(this::rememberMetadata);
+    }
+
+    @Override
+    public void prefetchMusic(String musicId) {
+        if (musicId == null || !musicId.matches("\\d+")) {
+            super.prefetchMusic(musicId);
+            return;
+        }
+        submitPrefetch(musicId, Mono.just(LocalCacheService.DownloadSource.ytDlp(TRACK_API_BASE + musicId)));
+    }
 
     @Override
     protected Mono<Void> validateBeforeDownload(YtDlpResolver.TrackMetadata metadata) {
@@ -88,6 +121,29 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         String handle = normalizeHandle(keyword);
         return resolver.resolveSoundCloudUser(handle)
                 .map(user -> List.of(new UserSearchResult(user.handle(), user.name(), user.avatarUrl(), getPlatformName())));
+    }
+
+    /** 公开歌单 id 列表：api-v2 快路径 + yt-dlp 兜底，5 分钟缓存。 */
+    private final Map<String, CachedIds> playlistIdsCache = new ConcurrentHashMap<>();
+    private static final long PLAYLIST_IDS_TTL_MS = 5 * 60_000L;
+
+    private record CachedIds(List<String> ids, long at) {}
+
+    private Mono<List<String>> playlistIds(String playlistId) {
+        CachedIds cached = playlistIdsCache.get(playlistId);
+        if (cached != null && System.currentTimeMillis() - cached.at() < PLAYLIST_IDS_TTL_MS) {
+            return Mono.just(cached.ids());
+        }
+        return searchClient.playlistTrackIds(playlistId)
+                .onErrorResume(error -> {
+                    log.warn("SoundCloud playlist {} via api-v2 failed, using yt-dlp: {}",
+                            playlistId, error.getMessage());
+                    return resolver.getSoundCloudPlaylistTrackIds(playlistId);
+                })
+                .doOnNext(ids -> {
+                    if (playlistIdsCache.size() > 128) playlistIdsCache.clear();
+                    playlistIdsCache.put(playlistId, new CachedIds(List.copyOf(ids), System.currentTimeMillis()));
+                });
     }
 
     /** 歌单列表缓存：列表内容很少变，而生成它要 1~4 秒 */
@@ -188,7 +244,7 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         }
         int safeOffset = Math.max(0, offset);
         int safeLimit = Math.clamp(limit, 1, 50);
-        return resolver.getSoundCloudPlaylistTrackIds(playlistId)
+        return playlistIds(playlistId)
                 .flatMap(ids -> {
                     int total = ids.size();
                     if (safeOffset >= total) {
@@ -249,7 +305,7 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         // 顺序：flat 取 id 列表（快）→ 按页批量取元数据（api-v2 /tracks?ids=）→ yt-dlp 兜底
         int safeOffset = Math.max(0, offset);
         int safeLimit = Math.clamp(limit, 1, 50);
-        return resolver.getSoundCloudPlaylistTrackIds(playlistId)
+        return playlistIds(playlistId)
                 .flatMap(ids -> {
                     if (safeOffset >= ids.size()) return Mono.just(List.<Music>of());
                     List<String> slice = ids.subList(safeOffset, Math.min(ids.size(), safeOffset + safeLimit));
@@ -426,6 +482,9 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
     }
 
     private List<Music> toMusicList(List<YtDlpResolver.TrackMetadata> tracks) {
+        // 歌单/喜欢/我上传的曲目统一从这里返回。把元数据留在 LRU 里，
+        // prefetch 和首次播放就不用为一首歌再跑一次 ~3s 的 yt-dlp。
+        tracks.forEach(this::rememberMetadata);
         return tracks.stream()
                 .map(track -> new Music(track.id(), track.title(), List.of(track.artist()),
                         track.durationMs(), getPlatformName(), track.thumbnail(), track.pageUrl()))

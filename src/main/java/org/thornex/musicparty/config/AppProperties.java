@@ -83,6 +83,14 @@ public class AppProperties {
         private String path = "yt-dlp";
         private long timeoutSeconds = 45;
         private long downloadTimeoutSeconds = 180;
+        /**
+         * HLS 分片并发数。SoundCloud 的 bestaudio 是 m3u8（96k aac），默认单分片串行下载。
+         * 实测：1 路 ~20s，4 路 ~8s，8 路 ~7s 但批量时约 1/5 的歌会被 CDN 限流卡 25~37s。
+         * 批量导入要的是稳定吞吐，默认 4 路（20 首连续下载 0 次超 15s）。
+         */
+        private int downloadConcurrency = 4;
+        /** 下载队列任务之间的冷却；过大会让批量导入整体变慢，过小可能触发上游限流。 */
+        private long downloadCooldownMs = 1000;
     }
 
     @Data

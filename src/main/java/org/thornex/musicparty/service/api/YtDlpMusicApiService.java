@@ -87,24 +87,44 @@ abstract class YtDlpMusicApiService implements IMusicApiService {
 
     @Override
     public void prefetchMusic(String musicId) {
+        submitPrefetch(musicId, getMetadata(musicId)
+                .map(metadata -> LocalCacheService.DownloadSource.ytDlp(metadata.sourceUrl())));
+    }
+
+    /**
+     * 已知稳定下载地址的子类可跳过 yt-dlp 元数据解析（SoundCloud 的 api/tracks/&lt;id&gt;
+     * 就是这种地址）。批量导入时每首歌原本都要多跑一次 ~3s 的 yt-dlp，串行叠加很可观。
+     */
+    protected void submitPrefetch(String musicId, Mono<LocalCacheService.DownloadSource> sourceProvider) {
         CacheStatus status = localCacheService.getStatus(cacheId(musicId));
         if (status == CacheStatus.COMPLETED || status == CacheStatus.PENDING || status == CacheStatus.DOWNLOADING) return;
+        localCacheService.submitDownload(cacheId(musicId), sourceProvider);
+    }
 
-        localCacheService.submitDownload(cacheId(musicId), getMetadata(musicId)
-                .map(metadata -> LocalCacheService.DownloadSource.ytDlp(metadata.sourceUrl())));
+    /** 让后续 prefetch/播放不再为同一首歌重复拉元数据。 */
+    protected void rememberMetadata(YtDlpResolver.TrackMetadata track) {
+        if (track == null || track.id() == null || track.id().isBlank()) return;
+        metadataById.put(track.id(), track);
     }
 
     @Override
     public Mono<PlayableMusic> getPlayableMusic(String musicId) {
         return getMetadata(musicId).flatMap(metadata -> {
             String localUrl = localCacheService.getLocalUrl(cacheId(musicId));
-            Mono<Void> validation = localUrl == null ? validateBeforeDownload(metadata) : Mono.empty();
-            return validation.then(Mono.fromSupplier(() -> {
-                if (localUrl == null) prefetchMusic(musicId);
-                return new PlayableMusic(metadata.id(), metadata.title(), List.of(metadata.artist()), metadata.durationMs(), platform,
-                        localUrl == null ? "PENDING_DOWNLOAD" : localUrl, metadata.thumbnail(), false);
-            }));
+            if (localUrl != null) {
+                return Mono.just(playableOf(metadata, localUrl));
+            }
+            // 先起下载、再等校验：SoundCloud 的 DRM 校验本身要跑一次 yt-dlp（~3s），
+            // 串行执行等于每首新歌都白等这 3s。校验失败时下载也会失败，不额外污染队列。
+            prefetchMusic(musicId);
+            return validateBeforeDownload(metadata)
+                    .then(Mono.fromSupplier(() -> playableOf(metadata, "PENDING_DOWNLOAD")));
         });
+    }
+
+    private PlayableMusic playableOf(YtDlpResolver.TrackMetadata metadata, String url) {
+        return new PlayableMusic(metadata.id(), metadata.title(), List.of(metadata.artist()), metadata.durationMs(), platform,
+                url, metadata.thumbnail(), false);
     }
 
     protected Mono<Void> validateBeforeDownload(YtDlpResolver.TrackMetadata metadata) { return Mono.empty(); }
