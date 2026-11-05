@@ -324,24 +324,6 @@ const handleSearchClick = () => {
            </div>
         </div>
 
-        <!-- 后台自动精简开关 -->
-        <button
-            type="button"
-            role="switch"
-            :aria-checked="uiStore.autoLiteMode"
-            @click="uiStore.autoLiteMode = !uiStore.autoLiteMode"
-            class="flex items-center gap-2 cursor-pointer group select-none min-h-11"
-        >
-           <div class="relative w-8 h-4 rounded-full transition-colors duration-300 flex-shrink-0"
-                :class="uiStore.autoLiteMode ? 'bg-accent' : 'bg-medical-300'">
-             <div class="absolute left-0.5 top-0.5 w-3 h-3 bg-surface-1 rounded-full transition-transform duration-300"
-                  :style="{ transform: uiStore.autoLiteMode ? 'translateX(16px)' : 'translateX(0)' }"></div>
-           </div>
-           <span class="text-[11px] font-mono text-medical-500 group-hover:text-medical-600 transition-colors">
-              后台播放时自动进入精简模式
-           </span>
-        </button>
-
         <!-- 主操作：精简模式下也必须能点歌——否则访客的第一任务是隐藏的 -->
         <button
             type="button"

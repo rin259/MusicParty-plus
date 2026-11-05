@@ -131,13 +131,6 @@ watch(() => roomStore.entered, async (entered) => {
   }
 });
 
-// 自动性能优化：切后台自动进入精简模式
-useEventListener(document, 'visibilitychange', () => {
-  if (document.visibilityState === 'hidden' && hasStarted.value && !player.isPaused && uiStore.autoLiteMode) {
-    uiStore.isLiteMode = true;
-  }
-});
-
 const resumeAudio = () => window.dispatchEvent(new CustomEvent('music-party:resume-audio'));
 
 const handleSearchClick = () => {

@@ -250,7 +250,7 @@ const nowPlaying = computed(() => player.nowPlaying);
 
 // --- D：元数据解码 ---
 // 换曲时标题由乱码逐字落定（等宽同位替换，外层已 truncate，故无回流）。
-// 首次挂载不抖；reduced-motion 时直接落定（见 TextDecode）。
+// 首次挂载不抖；换曲时由 TextDecode 逐字落定。
 const titleText = computed(() => (!player.connected
   ? '!CONNECTION LOST!'
   : (nowPlaying.value ? nowPlaying.value.music.name : 'WAITING FOR SIGNAL...')));

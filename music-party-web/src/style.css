@@ -187,20 +187,6 @@ html.theme-transition *::after {
   @apply bg-medical-300 hover:bg-medical-400 rounded transition-colors;
 }
 
-/*
- * 减少动效：装饰性的无限动画（旋转环、扫描线、脉冲、电平条、弹幕、故障切片）
- * 在系统偏好 reduce 时全部停下来；状态变化仍然发生，只是不再播放过渡。
- * 这是「偏好」而不是「关掉反馈」：焦点环、选中态、错误色都保留。
- */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
 /* 键盘可达性：Tab 导航焦点环（鼠标点击不触发） */
 :focus-visible {
   outline: 2px solid rgb(var(--accent));
@@ -235,7 +221,7 @@ html.theme-transition *::after {
   animation: scan 1s linear infinite;
 }
 
-/* 工业风 range：音量与精简模式共用同一套轨道/滑块 */
+/* 工业风 range：音量滑块 */
 input[type="range"].mp-range {
   -webkit-appearance: none;
   appearance: none;

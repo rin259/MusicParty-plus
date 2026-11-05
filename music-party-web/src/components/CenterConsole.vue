@@ -665,7 +665,7 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 10px;
 }
-/* A：遥测抖动——切片位移 + 轻 RGB 分离；170ms、离散步进；reduced-motion 关闭 */
+/* A：遥测抖动——切片位移 + 轻 RGB 分离；170ms、离散步进；只在故障/断连时触发 */
 /* 常态更新：只有切片位移，幅度由 --ga 给出（保真度越低越大） */
 .is-glitching { animation: telemetry-slice 170ms steps(1, end) 1 both; }
 @keyframes telemetry-slice {
