@@ -12,10 +12,14 @@ import org.thornex.musicparty.dto.PlayableMusic;
 import org.thornex.musicparty.event.PlayerStateEvent;
 import org.thornex.musicparty.event.StreamStatusEvent;
 import org.thornex.musicparty.service.LocalCacheService;
+import org.thornex.musicparty.enums.CacheStatus;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -44,6 +48,10 @@ public class LiveStreamService {
     // FFmpeg 进程管理
     private Process transcoderProcess;
     private ExecutorService streamExecutor;
+    // 当前 ffmpeg 的输入与启动位置：用来区分「同一首歌的普通状态广播」和「切歌/seek」
+    private String streamInputSource;
+    private long streamStartedPosition;
+    private long streamStartedAt;
     
     // 广播器：负责将转码后的数据分发给所有 HTTP 客户端
     private final StreamBroadcaster broadcaster = new StreamBroadcaster();
@@ -65,6 +73,10 @@ public class LiveStreamService {
     }
 
     private void handleClientRemoved(OutputStream os) {
+        // 广播线程写失败时把等待中的 StreamController 线程立刻叫醒，不用再等 60s 保底
+        synchronized (os) {
+            os.notifyAll();
+        }
         String ip = streamToIp.remove(os);
         if (ip != null) {
             ipConnectionCount.computeIfPresent(ip, (k, v) -> v > 1 ? v - 1 : null);
@@ -169,37 +181,27 @@ public class LiveStreamService {
     }
 
     private synchronized void startTranscodingIfNotRunning() {
-        // 如果当前这首歌正在转码，就不重启进程
-        // 这里简化处理：每次状态改变（切歌、Seek）都重启转码进程以同步进度
-        
-        String inputSource = null;
-        java.util.Map<String, String> httpHeaders = new java.util.HashMap<>();
+        if (currentMusic == null) return;
 
-        // 1. 尝试使用本地缓存 (优先)
-        LocalCacheService.CacheEntry entry = localCacheService.getCacheEntry(currentMusic.id());
-        if (entry != null && entry.getStatus() == org.thornex.musicparty.enums.CacheStatus.COMPLETED) {
-            Path filePath = Paths.get(LocalResourceConfig.CACHE_DIR, entry.getFileName());
-            if (Files.exists(filePath)) {
-                inputSource = filePath.toAbsolutePath().toString();
-                log.debug("Stream: Using local file for {}", currentMusic.name());
-            }
+        String inputSource = resolveInputSource();
+        if (inputSource == null) {
+            stopTranscoding();
+            return;
         }
 
-        // 2. 如果本地没有，使用网络 URL
-        if (inputSource == null) {
-            String url = currentMusic.url();
-            if (url == null || url.isEmpty() || "PENDING_DOWNLOAD".equals(url)) {
-                log.warn("Stream: Music source not ready for {}", currentMusic.name());
-                stopTranscoding();
-                return;
-            }
-            inputSource = url;
-            log.debug("Stream: Using network URL for {}", currentMusic.name());
+        java.util.Map<String, String> httpHeaders = new java.util.HashMap<>();
+        if (inputSource.startsWith("http") && "bilibili".equals(currentMusic.platform())) {
+            httpHeaders.put("Referer", "https://www.bilibili.com/");
+            httpHeaders.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+        }
 
-            // 针对特定平台添加必要 Header
-            if ("bilibili".equals(currentMusic.platform())) {
-                httpHeaders.put("Referer", "https://www.bilibili.com/");
-                httpHeaders.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+        // 同一个输入 + 没有明显 seek 时，别因为点赞/用户列表之类的状态广播重启 ffmpeg。
+        // 允许 2s 误差：状态包里的 currentPosition 与转码进程的实际进度不会完全同步。
+        if (inputSource.equals(streamInputSource) && transcoderProcess != null && transcoderProcess.isAlive()) {
+            long expected = streamStartedPosition + (System.currentTimeMillis() - streamStartedAt);
+            if (Math.abs(expected - currentPosition) < 2000) {
+                return;
             }
         }
 
@@ -210,6 +212,10 @@ public class LiveStreamService {
         try {
             java.util.List<String> command = new java.util.ArrayList<>();
             command.add(appProperties.getFfmpegPath());
+            command.add("-hide_banner");
+            command.add("-loglevel");
+            command.add("error");
+            command.add("-nostdin");
 
             // 如果是网络流，添加 Headers
             if (inputSource.startsWith("http") && !httpHeaders.isEmpty()) {
@@ -225,7 +231,7 @@ public class LiveStreamService {
             command.add("-re");
             command.add("-i");
             command.add(inputSource);
-            
+
             // 输出参数
             command.add("-vn");
             command.add("-acodec");
@@ -241,28 +247,117 @@ public class LiveStreamService {
             command.add("pipe:1");
 
             ProcessBuilder pb = new ProcessBuilder(command);
-            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            Process process = pb.start();
+            transcoderProcess = process;
+            streamInputSource = inputSource;
+            streamStartedPosition = currentPosition;
+            streamStartedAt = System.currentTimeMillis();
 
-            transcoderProcess = pb.start();
-            
-            // 异步读取 stdout 并写入 broadcaster
-            streamExecutor.submit(() -> {
-                try (InputStream is = transcoderProcess.getInputStream()) {
-                    byte[] buffer = new byte[4096];
-                    int bytesRead;
-                    while ((bytesRead = is.read(buffer)) != -1) {
-                        if (Thread.currentThread().isInterrupted()) break;
-                        broadcaster.broadcast(buffer, bytesRead);
-                    }
-                } catch (IOException e) {
-                    // 进程被杀时会抛出 Stream closed，忽略
-                } finally {
-                    log.debug("Stream: Transcoding finished/stopped.");
-                }
-            });
+            // 两块流都要有人读：stdout 是音频，stderr 是错误。
+            // 之前 stderr 直接 DISCARD，输入路径错时整条流会静默失败、HTTP 永远没有响应头。
+            streamExecutor.submit(() -> logFfmpegErrors(process));
+            streamExecutor.submit(() -> pumpAudio(process));
 
         } catch (IOException e) {
+            transcoderProcess = null;
             log.error("Stream: Failed to start ffmpeg", e);
+        }
+    }
+
+    /**
+     * 解析当前曲目的可读输入。
+     *
+     * <p>优先用本地缓存。缓存索引的 key 是 platform_id（B 站是裸 bvid），
+     * 不是 currentMusic.id()；旧代码用错 key 导致查不到缓存，退回
+     * currentMusic.url() 的 /media/...（站内相对地址），ffmpeg 直接失败。
+     */
+    private String resolveInputSource() {
+        if (currentMusic == null) return null;
+
+        String cacheId = cacheIdFor(currentMusic);
+        if (cacheId != null) {
+            LocalCacheService.CacheEntry entry = localCacheService.getCacheEntry(cacheId);
+            if (entry != null && entry.getStatus() == CacheStatus.COMPLETED
+                    && entry.getFileName() != null && !entry.getFileName().isBlank()) {
+                Path filePath = Paths.get(LocalResourceConfig.CACHE_DIR, entry.getFileName());
+                if (Files.exists(filePath)) {
+                    log.debug("Stream: Using local file for {} ({})", currentMusic.name(), cacheId);
+                    return filePath.toAbsolutePath().toString();
+                }
+            }
+        }
+
+        String url = currentMusic.url();
+        if (url == null || url.isBlank() || "PENDING_DOWNLOAD".equals(url)) {
+            log.warn("Stream: Music source not ready for {}", currentMusic.name());
+            return null;
+        }
+
+        // 兼容旧状态：/media/<file> 是站内 URL，不是文件系统路径
+        if (url.startsWith("/media/")) {
+            Path cached = Paths.get(LocalResourceConfig.CACHE_DIR, url.substring("/media/".length()));
+            if (Files.exists(cached)) {
+                log.debug("Stream: Resolved media URL to {}", cached);
+                return cached.toAbsolutePath().toString();
+            }
+            log.warn("Stream: media URL {} has no cached file", url);
+            return null;
+        }
+
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            log.debug("Stream: Using network URL for {}", currentMusic.name());
+            return url;
+        }
+
+        log.warn("Stream: Unsupported input source for {}: {}", currentMusic.name(), url);
+        return null;
+    }
+
+    /** 缓存 key：普通平台是 platform_id，B 站沿用裸 bvid。 */
+    static String cacheIdFor(PlayableMusic music) {
+        if (music == null || music.id() == null || music.id().isBlank()) return null;
+        String platform = music.platform() == null ? "" : music.platform();
+        return "bilibili".equalsIgnoreCase(platform) ? music.id() : platform + "_" + music.id();
+    }
+
+    private void logFfmpegErrors(Process process) {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.isBlank()) log.warn("Stream ffmpeg: {}", line);
+            }
+        } catch (IOException ignored) {
+            // 进程被停止时读流会关闭
+        }
+    }
+
+    private void pumpAudio(Process process) {
+        try (InputStream is = process.getInputStream()) {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = is.read(buffer)) != -1) {
+                if (Thread.currentThread().isInterrupted()) break;
+                broadcaster.broadcast(buffer, bytesRead);
+            }
+        } catch (IOException e) {
+            // 进程被杀时会抛出 Stream closed，忽略
+        } finally {
+            try {
+                int exit = process.waitFor();
+                // 主动 stopTranscoding() 会先把字段清空/替换；这种非零退出是预期的，
+                // 只有「当前进程自己退出」才值得报错。
+                boolean current = transcoderProcess == process;
+                if (current) transcoderProcess = null;
+                if (exit != 0 && current && !Thread.currentThread().isInterrupted()) {
+                    log.error("Stream: ffmpeg exited with code {} for {}",
+                            exit, currentMusic == null ? "?" : currentMusic.name());
+                } else {
+                    log.debug("Stream: Transcoding finished.");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -273,5 +368,8 @@ public class LiveStreamService {
             }
             transcoderProcess = null;
         }
+        streamInputSource = null;
+        streamStartedPosition = 0;
+        streamStartedAt = 0;
     }
 }

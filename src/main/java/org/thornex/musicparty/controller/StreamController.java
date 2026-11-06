@@ -42,11 +42,16 @@ public class StreamController {
         response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
         response.setHeader("Pragma", "no-cache");
         response.setHeader("Expires", "0");
+        // 明确告诉 nginx/中间层不要缓冲；否则长连接可能等不到第一个音频包
+        response.setHeader("X-Accel-Buffering", "no");
 
         String remoteAddr = getClientIp(request);
         OutputStream os = null;
         try {
             os = response.getOutputStream();
+            // 先把 200 + audio/mpeg 发给客户端：房间暂停/转码失败时，
+            // 旧实现因为一个字节都没写，客户端连响应头都收不到，只能干等超时。
+            response.flushBuffer();
             liveStreamService.addListener(os, remoteAddr);
 
             // 原实现 os.wait() 无限等待且全服务无任何 notify/broadcast 唤醒，
