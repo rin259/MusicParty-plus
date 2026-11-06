@@ -36,7 +36,8 @@ public class StreamController {
         }
 
         response.setContentType("audio/mpeg");
-        response.setHeader("Transfer-Encoding", "chunked");
+        // 不要手动写 Transfer-Encoding: chunked：Tomcat 会自己加，
+        // 手写会导致上游响应里出现两条同名 header，nginx 直接判 502。
         response.setHeader("Connection", "keep-alive");
         // 这是一个伪直播，不应该被缓存
         response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
