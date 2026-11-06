@@ -17,6 +17,7 @@ import org.thornex.musicparty.dto.UserSearchResult;
 import org.thornex.musicparty.enums.CacheStatus;
 import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.service.LocalCacheService;
+import org.thornex.musicparty.service.LocalCacheService.DownloadPriority;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -272,7 +273,7 @@ public class NeteaseMusicApiService implements IMusicApiService {
                 .map(music -> {
                     String localUrl = localCacheService.getLocalUrl(cacheId(musicId));
                     if (localUrl == null) {
-                        prefetchMusic(musicId);
+                        prefetchMusic(musicId, DownloadPriority.URGENT);
                     }
                     return new PlayableMusic(
                             music.id(), music.name(), music.artists(), music.duration(), music.platform(),
@@ -283,6 +284,11 @@ public class NeteaseMusicApiService implements IMusicApiService {
 
     @Override
     public void prefetchMusic(String musicId) {
+        prefetchMusic(musicId, DownloadPriority.NORMAL);
+    }
+
+    @Override
+    public void prefetchMusic(String musicId, DownloadPriority priority) {
         ensureConfigured();
         String cacheId = cacheId(musicId);
         CacheStatus status = localCacheService.getStatus(cacheId);
@@ -298,7 +304,7 @@ public class NeteaseMusicApiService implements IMusicApiService {
                                 "User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
                         ),
                         extensionFor(url)
-                )));
+                )), priority);
     }
 
     /**

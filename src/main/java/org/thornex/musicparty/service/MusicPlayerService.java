@@ -12,6 +12,7 @@ import org.thornex.musicparty.enums.TopResult;
 import org.thornex.musicparty.event.*;
 import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.service.api.IMusicApiService;
+import org.thornex.musicparty.service.LocalCacheService.DownloadPriority;
 import org.thornex.musicparty.service.stream.LiveStreamService;
 
 import java.time.Duration;
@@ -558,7 +559,7 @@ public class MusicPlayerService {
 
                             QueueItemStatus initialStatus = usesLocalCache(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
                             if (usesLocalCache(request.platform())) {
-                                service.prefetchMusic(music.id());
+                                service.prefetchMusic(music.id(), DownloadPriority.URGENT);
                             }
 
                             MusicQueueManager.AddResult added = queueManager.add(music,
@@ -1073,7 +1074,7 @@ public class MusicPlayerService {
                 continue;
             }
             try {
-                getApiService(item.music().platform()).prefetchMusic(item.music().id());
+                getApiService(item.music().platform()).prefetchMusic(item.music().id(), DownloadPriority.BACKGROUND);
             } catch (RuntimeException error) {
                 log.warn("Unable to prefetch restored {} track {}", item.music().platform(), item.music().id(), error);
             }
@@ -1144,7 +1145,7 @@ public class MusicPlayerService {
 
                 Music replacement = match.get();
                 if (!queueManager.replaceMusic(failedItem.queueId(), replacement)) return;
-                getApiService(replacement.platform()).prefetchMusic(replacement.id());
+                getApiService(replacement.platform()).prefetchMusic(replacement.id(), DownloadPriority.URGENT);
                 log.info("Failover {} -> {}:{} ({})", failed.name(), replacement.platform(),
                         replacement.id(), replacement.name());
                 broadcastQueueUpdate();

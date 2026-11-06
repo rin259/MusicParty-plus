@@ -15,9 +15,7 @@ import org.thornex.musicparty.config.LocalResourceConfig;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.enums.CacheStatus;
 import org.thornex.musicparty.event.DownloadStatusEvent;
-import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 import reactor.util.retry.Retry;
 
@@ -31,7 +29,9 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.Map;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -57,10 +57,30 @@ public class LocalCacheService {
     private final ApplicationEventPublisher eventPublisher;
     private final AppProperties appProperties;
     private final YtDlpResolver ytDlpResolver;
-    private final Sinks.Many<DownloadTask> downloadQueue = Sinks.many().unicast().onBackpressureBuffer();
-    private Disposable queueSubscription;
+    private final BlockingQueue<DownloadTask> downloadQueue = new PriorityBlockingQueue<>();
+    private final AtomicLong downloadSequence = new AtomicLong();
+    private volatile boolean running = true;
+    private Thread downloadWorker;
 
-    private record DownloadTask(String musicId, Mono<DownloadSource> sourceProvider) {}
+    /**
+     * 下载队列的优先级。批量导入 / 恢复队列的预取不能把用户刚点的歌堵在最后：
+     * 串行队列下，OBS/歌单预取 100 首会让单曲等上几十分钟。
+     */
+    public enum DownloadPriority {
+        URGENT(0), NORMAL(1), BACKGROUND(2);
+
+        final int rank;
+        DownloadPriority(int rank) { this.rank = rank; }
+    }
+
+    static record DownloadTask(String musicId, Mono<DownloadSource> sourceProvider,
+                               DownloadPriority priority, long sequence) implements Comparable<DownloadTask> {
+        @Override
+        public int compareTo(DownloadTask other) {
+            int byPriority = Integer.compare(priority.rank, other.priority.rank);
+            return byPriority != 0 ? byPriority : Long.compare(sequence, other.sequence);
+        }
+    }
 
     public record DownloadSource(String url, Map<String, String> headers, String extension, boolean useYtDlp) {
         public DownloadSource(String url, Map<String, String> headers, String extension) {
@@ -125,24 +145,41 @@ public class LocalCacheService {
         }
         log.info("LocalCacheService initialized. Current cache size: {} bytes", currentTotalSize.get());
 
-        this.queueSubscription = downloadQueue.asFlux()
-                .concatMap(task ->
-                        processTask(task)
-                                .onErrorResume(e -> {
-                                    log.error("Unexpected error in download queue processing", e);
-                                    return Mono.empty(); // 吞掉异常，防止队列崩溃
-                                })
-                                // 冷却时间防止风控：yt-dlp 源用可配的较短冷却，直链源保持 3s
-                                .then(Mono.delay(Duration.ofMillis(cooldownFor(task.musicId()))))
-                )
-                .subscribe();
+        this.downloadWorker = Thread.ofVirtual().name("download-worker").start(this::drainDownloadQueue);
     }
 
     @PreDestroy
     public void cleanup() {
-        if (queueSubscription != null && !queueSubscription.isDisposed()) {
-            queueSubscription.dispose();
+        running = false;
+        if (downloadWorker != null) downloadWorker.interrupt();
+    }
+
+    private void drainDownloadQueue() {
+        log.info("Download worker started (priority queue)");
+        while (running) {
+            DownloadTask task;
+            try {
+                task = downloadQueue.take();
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            try {
+                processTask(task).block();
+            } catch (Exception error) {
+                log.error("Unexpected error in download queue processing", error);
+            }
+            long cooldown = cooldownFor(task.musicId());
+            if (cooldown > 0) {
+                try {
+                    Thread.sleep(cooldown);
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
+        log.info("Download worker stopped");
     }
 
     /**
@@ -153,10 +190,19 @@ public class LocalCacheService {
      * @param extension 文件扩展名 (如 .m4a, .mp3)
      */
     public void submitDownload(String musicId, Mono<String> urlProvider, Map<String, String> headers, String extension) {
-        submitDownload(musicId, urlProvider.map(url -> new DownloadSource(url, headers, extension)));
+        submitDownload(musicId, urlProvider, headers, extension, DownloadPriority.NORMAL);
+    }
+
+    public void submitDownload(String musicId, Mono<String> urlProvider, Map<String, String> headers,
+                               String extension, DownloadPriority priority) {
+        submitDownload(musicId, urlProvider.map(url -> new DownloadSource(url, headers, extension)), priority);
     }
 
     public void submitDownload(String musicId, Mono<DownloadSource> sourceProvider) {
+        submitDownload(musicId, sourceProvider, DownloadPriority.NORMAL);
+    }
+
+    public void submitDownload(String musicId, Mono<DownloadSource> sourceProvider, DownloadPriority priority) {
         if (cacheIndex.containsKey(musicId) && cacheIndex.get(musicId).getStatus() == CacheStatus.COMPLETED) {
             log.info("Music {} already cached.", musicId);
             touch(musicId); // 更新访问时间
@@ -168,7 +214,7 @@ public class LocalCacheService {
             CacheStatus status = cacheIndex.get(musicId).getStatus();
             if (status == CacheStatus.DOWNLOADING || status == CacheStatus.PENDING) {
                 log.debug("Task {} is already pending or downloading, skip enqueue.", musicId);
-                return; // 直接返回，不要重复 emit
+                return; // 直接返回，不要重复入队
             }
         }
 
@@ -181,14 +227,14 @@ public class LocalCacheService {
 
         eventPublisher.publishEvent(new DownloadStatusEvent(this, musicId));
 
-        Sinks.EmitResult result = downloadQueue.tryEmitNext(new DownloadTask(musicId, sourceProvider));
-
-        if (result.isFailure()) {
+        DownloadPriority safePriority = priority == null ? DownloadPriority.NORMAL : priority;
+        DownloadTask task = new DownloadTask(musicId, sourceProvider, safePriority, downloadSequence.incrementAndGet());
+        if (!downloadQueue.offer(task)) {
             log.error("Failed to enqueue download task for {}", musicId);
             entry.setStatus(CacheStatus.FAILED);
             eventPublisher.publishEvent(new DownloadStatusEvent(this, musicId));
         } else {
-            log.info("Download enqueued: {}", musicId);
+            log.info("Download enqueued: {} ({})", musicId, safePriority);
         }
     }
 

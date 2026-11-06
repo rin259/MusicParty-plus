@@ -5,6 +5,7 @@ import org.thornex.musicparty.dto.PlayableMusic;
 import org.thornex.musicparty.dto.Playlist;
 import org.thornex.musicparty.dto.UserSearchResult;
 import org.thornex.musicparty.dto.AlbumSearchResult;
+import org.thornex.musicparty.service.LocalCacheService.DownloadPriority;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
@@ -17,7 +18,8 @@ public interface IMusicApiService {
     Mono<List<Music>> getPlaylistMusics(String playlistId, int offset, int limit);
     Mono<List<UserSearchResult>> searchUsers(String keyword);
     Mono<String> getLyric(String musicId);
-    default void prefetchMusic(String musicId) {};
+    default void prefetchMusic(String musicId) { prefetchMusic(musicId, DownloadPriority.NORMAL); }
+    default void prefetchMusic(String musicId, DownloadPriority priority) {};
     default Mono<List<AlbumSearchResult>> searchAlbums(String keyword) { return Mono.just(List.of()); }
     default Mono<List<Music>> getAlbumMusics(String albumId) { return Mono.just(List.of()); }
     default Mono<List<Music>> searchMusic(String keyword, int offset, int limit) { return searchMusic(keyword); }

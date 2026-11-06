@@ -6,6 +6,7 @@ import org.thornex.musicparty.dto.Playlist;
 import org.thornex.musicparty.dto.UserSearchResult;
 import org.thornex.musicparty.enums.CacheStatus;
 import org.thornex.musicparty.service.LocalCacheService;
+import org.thornex.musicparty.service.LocalCacheService.DownloadPriority;
 import org.thornex.musicparty.service.YtDlpResolver;
 import reactor.core.publisher.Mono;
 
@@ -87,18 +88,24 @@ abstract class YtDlpMusicApiService implements IMusicApiService {
 
     @Override
     public void prefetchMusic(String musicId) {
+        prefetchMusic(musicId, DownloadPriority.NORMAL);
+    }
+
+    @Override
+    public void prefetchMusic(String musicId, DownloadPriority priority) {
         submitPrefetch(musicId, getMetadata(musicId)
-                .map(metadata -> LocalCacheService.DownloadSource.ytDlp(metadata.sourceUrl())));
+                .map(metadata -> LocalCacheService.DownloadSource.ytDlp(metadata.sourceUrl())), priority);
     }
 
     /**
      * 已知稳定下载地址的子类可跳过 yt-dlp 元数据解析（SoundCloud 的 api/tracks/&lt;id&gt;
      * 就是这种地址）。批量导入时每首歌原本都要多跑一次 ~3s 的 yt-dlp，串行叠加很可观。
      */
-    protected void submitPrefetch(String musicId, Mono<LocalCacheService.DownloadSource> sourceProvider) {
+    protected void submitPrefetch(String musicId, Mono<LocalCacheService.DownloadSource> sourceProvider,
+                                  DownloadPriority priority) {
         CacheStatus status = localCacheService.getStatus(cacheId(musicId));
         if (status == CacheStatus.COMPLETED || status == CacheStatus.PENDING || status == CacheStatus.DOWNLOADING) return;
-        localCacheService.submitDownload(cacheId(musicId), sourceProvider);
+        localCacheService.submitDownload(cacheId(musicId), sourceProvider, priority);
     }
 
     /** 让后续 prefetch/播放不再为同一首歌重复拉元数据。 */
@@ -116,7 +123,7 @@ abstract class YtDlpMusicApiService implements IMusicApiService {
             }
             // 先起下载、再等校验：SoundCloud 的 DRM 校验本身要跑一次 yt-dlp（~3s），
             // 串行执行等于每首新歌都白等这 3s。校验失败时下载也会失败，不额外污染队列。
-            prefetchMusic(musicId);
+            prefetchMusic(musicId, DownloadPriority.URGENT);
             return validateBeforeDownload(metadata)
                     .then(Mono.fromSupplier(() -> playableOf(metadata, "PENDING_DOWNLOAD")));
         });

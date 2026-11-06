@@ -11,6 +11,7 @@ import org.thornex.musicparty.exception.ApiRequestException;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.thornex.musicparty.service.LocalCacheService;
+import org.thornex.musicparty.service.LocalCacheService.DownloadPriority;
 import org.thornex.musicparty.service.SoundCloudOAuthService;
 import org.thornex.musicparty.service.YtDlpResolver;
 import reactor.core.publisher.Mono;
@@ -96,12 +97,12 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
     }
 
     @Override
-    public void prefetchMusic(String musicId) {
+    public void prefetchMusic(String musicId, DownloadPriority priority) {
         if (musicId == null || !musicId.matches("\\d+")) {
-            super.prefetchMusic(musicId);
+            super.prefetchMusic(musicId, priority);
             return;
         }
-        submitPrefetch(musicId, Mono.just(LocalCacheService.DownloadSource.ytDlp(TRACK_API_BASE + musicId)));
+        submitPrefetch(musicId, Mono.just(LocalCacheService.DownloadSource.ytDlp(TRACK_API_BASE + musicId)), priority);
     }
 
     @Override

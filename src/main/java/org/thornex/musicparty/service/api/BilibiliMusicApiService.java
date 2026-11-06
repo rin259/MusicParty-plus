@@ -13,6 +13,7 @@ import org.thornex.musicparty.dto.UserSearchResult;
 import org.thornex.musicparty.enums.CacheStatus;
 import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.service.LocalCacheService;
+import org.thornex.musicparty.service.LocalCacheService.DownloadPriority;
 import org.thornex.musicparty.service.YtDlpResolver;
 import org.thornex.musicparty.util.BilibiliApiUtils;
 import reactor.core.publisher.Mono;
@@ -207,6 +208,11 @@ public class BilibiliMusicApiService implements IMusicApiService {
 
     @Override
     public void prefetchMusic(String bvid) {
+        prefetchMusic(bvid, DownloadPriority.NORMAL);
+    }
+
+    @Override
+    public void prefetchMusic(String bvid, DownloadPriority priority) {
         ensureConfigured();
         // 检查缓存状态，如果已经下载或正在下载，直接返回
         CacheStatus status = localCacheService.getStatus(bvid);
@@ -229,7 +235,7 @@ public class BilibiliMusicApiService implements IMusicApiService {
         headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
 
         // 提交异步下载任务 (.m4a 是 B站 dash 音频的常用格式)
-        localCacheService.submitDownload(bvid, urlProvider, headers, ".m4a");
+        localCacheService.submitDownload(bvid, urlProvider, headers, ".m4a", priority);
     }
 
     @Override
@@ -249,7 +255,7 @@ public class BilibiliMusicApiService implements IMusicApiService {
         } else {
             // 3. 如果本地没有（可能是下载失败，或者还没下载完就被强制切歌）
             // 触发一次预加载（如果任务不存在的话）
-            prefetchMusic(bvid);
+            prefetchMusic(bvid, DownloadPriority.URGENT);
 
             // 即使在下载中，也返回元数据，但 URL 设为特殊值
             // 这样 MusicPlayerService.enqueue 就能拿到名字、封面等信息成功入队
