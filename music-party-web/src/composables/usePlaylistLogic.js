@@ -253,8 +253,12 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         let nextHint = 0;         // 下一次请求的偏移（服务端优先）
         let serverHasMore = true;
         try {
-            for (let page = 0; page < 40 && serverHasMore && fetched.length < target; page++) {
+            // page === 0 保证空歌单/首次加载失败后也能真正发一次请求。
+            // 旧条件 fetched.length < target 在 target=0 时直接跳过循环，按钮点了等于没点。
+            for (let page = 0; page < 40 && serverHasMore && (page === 0 || fetched.length < target); page++) {
                 const res = await musicApi.getPlaylistSongsPage(plat, pid, nextHint, limit.value);
+                // 刷新期间切了平台/歌单：迟到的响应不能覆盖新界面的数据
+                if (platformRef.value !== plat || currentPlaylistId.value !== pid) return;
                 const raw = res.data || [];
                 console.info('[refresh]', pid, 'offset', nextHint, '->', raw.length);
 
@@ -283,8 +287,10 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
             saveCurrentPlaylist();
         } catch (e) {
             console.warn('[refresh] failed', pid, offset, e);
-            const detail = e?.response?.data?.message || e?.message || '未知错误';
-            error('刷新歌单失败（' + detail + '），已保留原数据');
+            if (platformRef.value === plat && currentPlaylistId.value === pid) {
+                const detail = e?.response?.data?.message || e?.message || '未知错误';
+                error('刷新歌单失败（' + detail + '），已保留原数据');
+            }
         } finally {
             isLoadingMore.value = false;
             refreshState.value = { active: false, done: refreshState.value.done, target: refreshState.value.target };
@@ -365,6 +371,13 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         // 换平台 = 离开当前歌单：必须按「旧平台」保存，否则会把旧歌单写进新平台的键；
         // 也不能把 viewportScrollTop 清零——那是刚存下的滚动位置，清零后再回来就跳到顶部。
         if (prev) saveCurrentPlaylist(prev);
+        // 关键：旧平台的歌单 ID 不能继续挂着。否则切到新平台后 REFRESH LIST
+        // 会拿「网易云的 ID」去请求 SoundCloud，返回 0 首，看起来像按钮坏了。
+        currentPlaylistId.value = null;
+        offset.value = 0;
+        hasMore.value = true;
+        isLoadingMore.value = false;
+        refreshState.value = { active: false, done: 0, target: 0 };
     });
 
     // 绑定是原地改对象属性（bindings.value[platform] = id），ref 本身不变，

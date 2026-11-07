@@ -184,7 +184,7 @@
                 >
                   <Loader2 v-if="refreshState.active" class="w-3.5 h-3.5 animate-spin text-accent-text" />
                   <RefreshCw v-else class="w-3.5 h-3.5" />
-                  <span>{{ refreshState.active ? `REFRESH ${refreshState.done}/${refreshState.target}` : 'REFRESH LIST' }}</span>
+                  <span>{{ refreshState.active ? (refreshState.target ? `REFRESH ${refreshState.done}/${refreshState.target}` : 'REFRESHING...') : 'REFRESH LIST' }}</span>
                 </button>
               </div>
 
