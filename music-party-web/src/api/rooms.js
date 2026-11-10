@@ -1,9 +1,10 @@
 import client from './client';
 import { STORAGE_KEYS } from '../constants/keys';
+import { headerValue } from '../logic/roomHeaders.js';
 
 const deviceHeaders = () => ({
     'X-Device-Id': localStorage.getItem(STORAGE_KEYS.TOKEN) || '',
-    'X-User-Name': localStorage.getItem(STORAGE_KEYS.USERNAME) || ''
+    'X-User-Name': headerValue(localStorage.getItem(STORAGE_KEYS.USERNAME))
 });
 
 export const roomsApi = {

@@ -84,11 +84,13 @@ public class RoomController {
 
     @PostMapping
     public ResponseEntity<?> create(@RequestHeader(value = "X-Device-Id", required = false) String deviceId,
-                                    @RequestHeader(value = "X-User-Name", required = false) String userName,
+                                    @RequestHeader(value = "X-User-Name", required = false) String encodedUserName,
                                     @RequestBody RoomCreateRequest request) {
         if (deviceId == null || deviceId.isBlank()) {
             throw new ApiRequestException("设备凭证缺失，请刷新页面后重试");
         }
+        // 前端对 header 做了 percent-encode（XHR 只接受 ISO-8859-1，中文直接塞会抛异常）
+        String userName = decodeHeader(encodedUserName);
         if (userName == null || userName.isBlank() || isGuestName(userName)) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("code", "NAME_REQUIRED", "message", "创建房间前请先给自己取一个名字"));
@@ -153,6 +155,19 @@ public class RoomController {
             return ResponseEntity.ok(Map.of("valid", true));
         }
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("valid", false));
+    }
+
+    /**
+     * 还原前端 percent-encode 过的 header 值。纯 ASCII 的名字解码后不变；
+     * 老客户端直接发原始值（含孤立的 % 等）时解码会失败，此时按原样使用。
+     */
+    private static String decodeHeader(String value) {
+        if (value == null || value.isEmpty()) return value;
+        try {
+            return java.net.URLDecoder.decode(value, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException ignored) {
+            return value;
+        }
     }
 
     private String normalizePassword(String raw) {
