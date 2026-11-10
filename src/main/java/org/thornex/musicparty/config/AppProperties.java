@@ -128,5 +128,10 @@ public class AppProperties {
         private String cookie;
         private String quality = "exhigh"; // 默认音质：极高 (exhigh)
         private boolean enabled = true;
+        /**
+         * 取流地址解析的总预算（含重试与降档）。上游整段不回包时，
+         * 解析不能占着串行下载队列超过这个时间。
+         */
+        private long resolveTimeoutSeconds = 30;
     }
 }

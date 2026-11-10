@@ -29,6 +29,8 @@ app:
       cookie: ${NETEASE_COOKIE:}
       quality: ${NETEASE_QUALITY:exhigh}
       enabled: ${NETEASE_ENABLED:true}
+      # 取流地址解析总预算：上游不回包时不能长时间占住串行下载队列
+      resolve-timeout-seconds: ${NETEASE_RESOLVE_TIMEOUT:30}
     bilibili:
       # Bilibili API base URL, it's public
       base-url: "https://api.bilibili.com"

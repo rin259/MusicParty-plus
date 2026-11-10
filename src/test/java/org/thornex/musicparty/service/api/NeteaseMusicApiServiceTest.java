@@ -35,6 +35,8 @@ class NeteaseMusicApiServiceTest {
     private final AtomicInteger requests = new AtomicInteger();
     private volatile int failFirstRequests = 0;
     private volatile String onlyLevelWithUrl = null;
+    /** 模拟「连接建立成功但一直不回包」的上游。 */
+    private volatile long hangMillis = 0;
 
     @BeforeEach
     void startStub() throws IOException {
@@ -50,6 +52,15 @@ class NeteaseMusicApiServiceTest {
 
     private void handle(HttpExchange exchange) throws IOException {
         int attempt = requests.incrementAndGet();
+        if (hangMillis > 0) {
+            try {
+                Thread.sleep(hangMillis);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.close();
+            return;
+        }
         String query = exchange.getRequestURI().getQuery();
         Matcher matcher = LEVEL.matcher(query == null ? "" : query);
         String level = matcher.find() ? matcher.group(1) : "";
@@ -74,11 +85,16 @@ class NeteaseMusicApiServiceTest {
     }
 
     private NeteaseMusicApiService service() {
+        return service(30);
+    }
+
+    private NeteaseMusicApiService service(long resolveTimeoutSeconds) {
         AppProperties properties = new AppProperties();
         AppProperties.NeteaseApiConfig netease = new AppProperties.NeteaseApiConfig();
         netease.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
         netease.setQuality("exhigh");
         netease.setCookie("MUSIC_U=test-cookie");
+        netease.setResolveTimeoutSeconds(resolveTimeoutSeconds);
         properties.setNetease(netease);
         return new NeteaseMusicApiService(WebClient.builder().build(), properties, mock(LocalCacheService.class));
     }
@@ -101,6 +117,23 @@ class NeteaseMusicApiServiceTest {
 
         assertThat(url).isEqualTo(URL);
         assertThat(requests.get()).as("exhigh 无地址 → 退到 higher").isGreaterThanOrEqualTo(2);
+    }
+
+    /**
+     * 2026-11-10 线上事故：网易云网关接了连接却整段不回包，Java 侧没有读超时，
+     * 单个任务把串行下载队列堵满 4 分钟（外层 TASK_TIMEOUT）。解析必须有总预算。
+     */
+    @Test
+    void givesUpQuicklyWhenGatewayNeverResponds() {
+        hangMillis = 2_500;
+        long startedAt = System.nanoTime();
+
+        assertThatThrownBy(() -> service(1).resolveMusicUrl("1").block())
+                .isInstanceOf(ApiRequestException.class)
+                .hasMessageContaining("超时");
+
+        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
+        assertThat(elapsedMs).as("1s 预算内失败，而不是等到 30s/4min").isLessThan(3_000L);
     }
 
     @Test

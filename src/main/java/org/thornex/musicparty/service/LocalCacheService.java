@@ -16,6 +16,7 @@ import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.enums.CacheStatus;
 import org.thornex.musicparty.event.DownloadStatusEvent;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
 import reactor.core.scheduler.Schedulers;
 import reactor.util.retry.Retry;
 
@@ -34,6 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 @Slf4j
@@ -50,6 +52,12 @@ public class LocalCacheService {
     // 单任务硬上限：下载队列串行（concatMap 并发 1），任何一个任务卡住都会堵死后续曲目，
     // 故此处兜底，任何阶段无进展都不会超过此值。
     private static final Duration TASK_TIMEOUT = Duration.ofMinutes(4);
+    /**
+     * 音频流的单次读间隔上限。CDN 节点挂掉时表现为「连着但不再给数据」，
+     * 原来给 3 分钟，等于让队列干等 3 分钟；30s 足以覆盖正常的慢速读，
+     * 超时后交给 retryWhen 重新取一个新鲜签名地址。
+     */
+    private static final Duration TRANSFER_IDLE_TIMEOUT = Duration.ofSeconds(30);
 
     // 内存中维护缓存文件的元数据
     private final Map<String, CacheEntry> cacheIndex = new ConcurrentHashMap<>();
@@ -255,12 +263,19 @@ public class LocalCacheService {
         eventPublisher.publishEvent(new DownloadStatusEvent(this, musicId));
         log.info("Processing download: {}", musicId);
 
+        // 卡住时要能一眼看出卡在「解析地址」还是「传输字节」，
+        // 否则日志里只有 Processing / failed 两行，无法定位。
+        long startedAt = System.nanoTime();
+        AtomicReference<String> phase = new AtomicReference<>("resolve-source");
+
         return Mono.defer(task::sourceProvider)
                 .flatMap(source -> {
                     entry.setOriginalUrl(source.url());
                     if (source.useYtDlp()) {
+                        phase.set("yt-dlp");
                         return downloadWithYtDlp(musicId, entry, source.url());
                     }
+                    phase.set("transfer");
 
                     String fileName = musicId + source.extension();
                     entry.setFileName(fileName);
@@ -272,7 +287,7 @@ public class LocalCacheService {
                             .headers(httpHeaders -> source.headers().forEach(httpHeaders::add))
                             .retrieve()
                             .bodyToFlux(DataBuffer.class)
-                            .timeout(Duration.ofMinutes(3))
+                            .timeout(TRANSFER_IDLE_TIMEOUT)
                             .as(data -> DataBufferUtils.write(data, tempPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING))
                             .then(Mono.fromRunnable(() -> completeDownload(musicId, entry, tempPath, destPath, fileName)))
                             .subscribeOn(Schedulers.boundedElastic())
@@ -295,13 +310,23 @@ public class LocalCacheService {
                 .timeout(TASK_TIMEOUT)
                 // 错误处理
                 .doOnError(error -> {
-                    log.error("Download Task failed for {}: {}", musicId, error.getMessage());
+                    log.error("Download Task failed for {} (phase={}, {}ms): {}", musicId,
+                            phase.get(), elapsedMillis(startedAt), error.getMessage());
                     entry.setStatus(CacheStatus.FAILED);
                     eventPublisher.publishEvent(new DownloadStatusEvent(this, musicId));
+                })
+                .doFinally(signal -> {
+                    if (signal == SignalType.ON_COMPLETE) {
+                        log.info("Download task {} done ({}ms)", musicId, elapsedMillis(startedAt));
+                    }
                 })
                 // 这里的 onErrorResume 保证即使这个任务失败，Flux 链也不会断，会继续执行 delay 和下一个任务
                 .onErrorResume(e -> Mono.empty())
                 .then(); // 转为 Mono<Void>
+    }
+
+    private static long elapsedMillis(long startedAtNanos) {
+        return (System.nanoTime() - startedAtNanos) / 1_000_000L;
     }
 
     private Mono<Void> downloadWithYtDlp(String musicId, CacheEntry entry, String sourceUrl) {
