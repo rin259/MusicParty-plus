@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-24 md:h-24 bg-surface-1 border-t border-medical-200 flex items-center px-3 md:px-8 py-2 md:py-0 relative z-50 shadow-lg">
+  <div class="min-h-24 md:h-24 bg-surface-1 border-t border-medical-200 flex items-center px-3 md:px-8 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:py-0 md:pb-0 relative z-50 shadow-lg">
     <!-- 封面 -->
     <button
         id="tutorial-source"
@@ -102,14 +102,14 @@
       </div>
       
       <!-- 移动端简易控制 -->
-      <div class="flex md:hidden items-center justify-between gap-2 mt-1.5">
-        <div class="font-mono text-[11px] text-medical-500 tabular-nums whitespace-nowrap">
+      <div class="flex md:hidden items-center justify-between gap-1.5 mt-1.5 min-w-0">
+        <div class="min-w-0 truncate font-mono text-[11px] text-medical-500 tabular-nums whitespace-nowrap">
           <span v-if="player.isLoading" class="text-accent-text animate-pulse">SYNCING...</span>
           <span v-else-if="player.isBuffering" class="text-accent-text animate-pulse">BUFFERING...</span>
           <span v-else>{{ formatDuration(displayProgress) }} / {{ formatDuration(nowPlaying?.music.duration || 0) }}</span>
         </div>
-        <div class="flex gap-2 flex-shrink-0">
-        <button id="tutorial-download-mobile" @click="downloadCurrentMusic" class="flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 rounded-sm text-medical-500 active:bg-medical-200" aria-label="下载当前歌曲">
+        <div class="flex gap-1.5 flex-shrink-0">
+        <button id="tutorial-download-mobile" @click="downloadCurrentMusic" class="hidden min-[360px]:flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 rounded-sm text-medical-500 active:bg-medical-200" aria-label="下载当前歌曲">
           <Download class="w-4 h-4" />
         </button>
         <button
@@ -250,7 +250,7 @@ const nowPlaying = computed(() => player.nowPlaying);
 
 // --- D：元数据解码 ---
 // 换曲时标题由乱码逐字落定（等宽同位替换，外层已 truncate，故无回流）。
-// 首次挂载不抖；reduced-motion 时直接落定（见 TextDecode）。
+// 首次挂载不抖；换曲时由 TextDecode 逐字落定。
 const titleText = computed(() => (!player.connected
   ? '!CONNECTION LOST!'
   : (nowPlaying.value ? nowPlaying.value.music.name : 'WAITING FOR SIGNAL...')));
@@ -387,16 +387,22 @@ const downloadCurrentMusic = async () => {
 };
 
 // 跳转源页面
+// SoundCloud 的数字 ID 没有页面路径：`soundcloud.com/tracks/<id>` 会 301 到排行榜，
+// 所以优先用后台解析时带回的 `url`（真实 permalink），拼不出页面的平台退回搜索页。
 const openSourcePage = () => {
   if (!nowPlaying.value) return;
-  const { platform, id } = nowPlaying.value.music;
-  const urls = {
-    netease: `https://music.163.com/#/song?id=${id}`,
-    bilibili: `https://www.bilibili.com/video/${id}`,
-    soundcloud: `https://soundcloud.com/tracks/${id}`,
-    ytmusic: `https://music.youtube.com/watch?v=${id}`
+  const { platform, id, name, artists, url } = nowPlaying.value.music;
+  const direct = typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;
+  const templates = {
+    netease: `https://music.163.com/#/song?id=${encodeURIComponent(id)}`,
+    bilibili: `https://www.bilibili.com/video/${encodeURIComponent(id)}`,
+    ytmusic: `https://music.youtube.com/watch?v=${encodeURIComponent(id)}`
   };
-  const url = urls[platform];
-  if (url) window.open(url, '_blank');
+  // 老队列没有 url：走服务端 302 反查真实 permalink，而不是跳到搜索页
+  const fallback = templates[platform]
+      || (platform === 'soundcloud' && id
+          ? `/api/track/url?platform=soundcloud&id=${encodeURIComponent(id)}`
+          : null);
+  window.open(direct || fallback, '_blank', 'noopener');
 };
 </script>

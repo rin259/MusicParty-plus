@@ -3,8 +3,9 @@ import { useUserStore } from '../stores/user';
 import { useChatStore } from '../stores/chat';
 import { useToast } from '../composables/useToast';
 import { useAdminStore } from '../stores/admin';
+import { useRoomStore } from '../stores/room';
 import { adminApi } from '../api/admin';
-import { WS_DEST } from '../constants/api';
+import { WS_DEST, roomTopics } from '../constants/api';
 import { socketService } from './socket';
 
 /**
@@ -13,6 +14,8 @@ import { socketService } from './socket';
  */
 function handleGameEvent(event) {
     const userStore = useUserStore();
+    const playerStore = usePlayerStore();
+    const roomStore = useRoomStore();
     const chatStore = useChatStore();
     const adminStore = useAdminStore();
     const { show, error, like } = useToast(); // This now uses the Pinia store wrapper
@@ -23,6 +26,16 @@ function handleGameEvent(event) {
         window.dispatchEvent(new CustomEvent('player:like', { detail: { userId: event.userId } }));
         // 点赞 toast 堆叠：连续点赞合并为一条，右上角 ×N 计数，淡出节奏不变
         like(event.message || `${userName} 点赞了`);
+        return;
+    }
+
+    if (event.action === 'ROOM_CLOSED') {
+        // 房主关闭房间：断开连接并回到落地页，避免停留在一个已不存在的房间
+        error(event.message || '房间已被房主关闭');
+        socketService.disconnect();
+        playerStore.connected = false;
+        playerStore.resetRoomState();
+        roomStore.reject('房间已被房主关闭');
         return;
     }
 
@@ -92,27 +105,28 @@ function handleGameEvent(event) {
  * 创建并返回 Socket 订阅配置
  * @returns {Object} 订阅路径 -> 回调函数 的映射
  */
-export const createSocketSubscriptions = () => {
+export const createSocketSubscriptions = (roomId = 'main') => {
     const playerStore = usePlayerStore();
     const userStore = useUserStore();
     const chatStore = useChatStore();
+    const topics = roomTopics(roomId);
 
     return {
-        // 1. 状态同步
-        [WS_DEST.TOPIC_STATE]: (state) => playerStore.syncState(state),
+        // 1. 状态同步（房间频道）
+        [topics.TOPIC_STATE]: (state) => playerStore.syncState(state),
         [WS_DEST.USER_STATE]: (state) => playerStore.syncState(state),
 
         // 2. 用户列表
-        [WS_DEST.TOPIC_USERS]: (users) => userStore.setOnlineUsers(users),
+        [topics.TOPIC_USERS]: (users) => userStore.setOnlineUsers(users),
 
         // 3. 队列更新
-        [WS_DEST.TOPIC_QUEUE]: (data) => { playerStore.queue = data; },
-        [WS_DEST.TOPIC_SEEK]: (positionMs) => {
+        [topics.TOPIC_QUEUE]: (data) => { playerStore.queue = data; },
+        [topics.TOPIC_SEEK]: (positionMs) => {
             window.dispatchEvent(new CustomEvent('music-party:seek', { detail: Number(positionMs) }));
         },
 
         // 4. 事件通知 (Toast)
-        [WS_DEST.TOPIC_EVENTS]: handleGameEvent,
+        [topics.TOPIC_EVENTS]: handleGameEvent,
         [WS_DEST.USER_EVENTS]: handleGameEvent,
 
         // 4b. 点歌回执 / 导入进度（只发给自己）
@@ -128,7 +142,7 @@ export const createSocketSubscriptions = () => {
         },
 
         // 5. 聊天相关
-        [WS_DEST.TOPIC_CHAT]: (msg) => chatStore.addMessage(msg),
+        [topics.TOPIC_CHAT]: (msg) => chatStore.addMessage(msg),
         [WS_DEST.USER_PRIVATE_CHAT]: (msg) => chatStore.addMessage(msg),
 
         // 初始历史记录
@@ -146,6 +160,7 @@ export const createSocketSubscriptions = () => {
 export const createSocketCallbacks = () => {
     const playerStore = usePlayerStore();
     const userStore = useUserStore();
+    const roomStore = useRoomStore();
 
     return {
         // 连接成功
@@ -170,14 +185,25 @@ export const createSocketCallbacks = () => {
         onStompError: (frame) => {
             console.error('STOMP Error:', frame);
 
-            // 无论是密码错误，还是其他未知的协议级错误，都强制刷新以重置状态
-            const isAuthError = frame.body && frame.body.includes('INVALID_ROOM_PASSWORD');
-
-            if (isAuthError) {
-                userStore.resetAuthentication();
+            // 房间相关错误：不要 reload（会把用户丢回落地页并丢掉刚输入的密码），
+            // 直接断开并交回落地页显示原因。
+            const body = frame.body || '';
+            if (body.includes('INVALID_ROOM_PASSWORD')) {
+                socketService.disconnect();
+                playerStore.connected = false;
+                playerStore.resetRoomState();
+                roomStore.reject('房间密码错误，或密码已变更');
+                return;
+            }
+            if (body.includes('ROOM_NOT_FOUND')) {
+                socketService.disconnect();
+                playerStore.connected = false;
+                playerStore.resetRoomState();
+                roomStore.reject('房间不存在或已关闭');
+                return;
             }
 
-            // 强制刷新页面 (STOMP ERROR 帧通常意味着连接已不可用)
+            // 其他协议级错误：强制刷新以重置状态
             window.location.reload();
         }
     };

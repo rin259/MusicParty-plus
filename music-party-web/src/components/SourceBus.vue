@@ -12,7 +12,7 @@
     <!-- 手机上默认折叠：这里只是监测信息，不该抢走搜索结果的位置 -->
     <button
         type="button"
-        class="md:hidden w-full flex items-center justify-between px-2 py-1.5 border border-medical-200 bg-medical-50 font-mono text-[9px] tracking-[0.12em] text-medical-500 tabular-nums"
+        class="md:hidden w-full min-h-11 flex items-center justify-between px-2 py-1.5 border border-medical-200 bg-medical-50 font-mono text-[9px] tracking-[0.12em] text-medical-500 tabular-nums"
         :aria-expanded="mobileExpanded"
         @click="mobileExpanded = !mobileExpanded"
     >

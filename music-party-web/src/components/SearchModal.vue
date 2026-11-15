@@ -34,7 +34,7 @@
               :aria-selected="platform === p.id"
               @click="switchPlatform(p.id)"
               :disabled="!isPlatformEnabled(p.id)"
-              class="min-w-0 min-h-9 px-2 md:px-4 py-1.5 text-[11px] md:text-xs font-bold uppercase transition-all"
+              class="min-w-0 min-h-11 px-2 md:px-4 py-1.5 text-[11px] md:text-xs font-bold uppercase transition-all"
               :class="[
                 platform === p.id ? 'bg-ink text-ink-fg clip-tab' : 'bg-medical-200 text-medical-700 hover:bg-medical-300',
                 !isPlatformEnabled(p.id) ? 'opacity-40 cursor-not-allowed grayscale' : ''
@@ -74,7 +74,7 @@
           <button
               v-if="platform === 'netease'"
               @click="albumSearchMode = !albumSearchMode"
-              class="flex items-center justify-center min-w-10 min-h-10 px-2.5 py-2 text-xs font-bold transition-colors flex-shrink-0"
+              class="flex items-center justify-center min-w-11 min-h-11 px-2.5 py-2 text-xs font-bold transition-colors flex-shrink-0"
               :class="albumSearchMode ? 'bg-accent text-accent-fg' : 'bg-medical-200 text-medical-700 hover:bg-medical-300'"
               title="搜索专辑"
               aria-label="搜索专辑"
@@ -98,7 +98,7 @@
               SEARCHING {{ summary.done }}/{{ summary.sources }} · {{ Math.round(summary.elapsedMs) }}ms
             </template>
             <template v-else-if="summary.hits > 0">
-              HITS {{ summary.hits }} · MERGED {{ summary.merged }} · {{ summary.done }}/{{ summary.sources }} SRC · {{ Math.round(summary.elapsedMs) }}ms
+              HITS {{ summary.hits }} · MERGED {{ summary.merged }} · {{ summary.done }}/{{ summary.sources }} DONE · {{ Math.round(summary.elapsedMs) }}ms
             </template>
             <template v-else-if="lastQuery">
               NO MATCHES FOR “{{ lastQuery }}”
@@ -127,9 +127,28 @@
             <!-- 未绑定 -->
             <div v-if="!bindings[platform]" class="p-4 border border-dashed border-medical-300 bg-medical-50">
               <div class="text-xs text-medical-500 mb-2 text-center font-sans">{{ platform === 'soundcloud' ? '绑定公开主页以获取公开 Sets' : '绑定用户以获取用户歌单' }}</div>
+              <!-- 一键绑定：完整 OAuth 授权，身份由服务端确认 -->
+              <button
+                  v-if="platform === 'soundcloud' && scOauthConfigured"
+                  type="button"
+                  @click="startSoundcloudOauth"
+                  class="w-full min-h-11 bg-accent hover:bg-accent-hover text-accent-fg font-bold text-sm flex items-center justify-center gap-2 transition-colors mb-2"
+              >
+                <Search class="w-4 h-4" />
+                使用 SoundCloud 账号一键绑定
+              </button>
+              <div v-if="platform === 'soundcloud' && scOauthConfigured" class="mb-2 flex items-center gap-2 text-[10px] font-mono text-medical-500">
+                <span class="flex-1 border-t border-medical-200"></span><span>或手动输入</span><span class="flex-1 border-t border-medical-200"></span>
+              </div>
               <div class="flex gap-1">
-                <input v-model="searchUserKeyword" @keyup.enter="searchUser" :placeholder="platform === 'soundcloud' ? '输入 @handle 或主页 URL' : '搜索用户名'" aria-label="搜索用户" class="flex-1 min-w-0 min-h-11 bg-surface-1 border border-medical-200 p-2 text-sm outline-none focus:border-accent font-sans text-medical-900 placeholder:text-medical-500" />
-                <button @click="searchUser" class="flex items-center justify-center w-11 h-11 bg-accent hover:bg-accent-hover transition-colors flex-shrink-0" aria-label="搜索用户"><Search class="w-4 h-4 text-accent-fg"/></button>
+                <input v-model="searchUserKeyword" @keyup.enter="searchUser" :placeholder="platform === 'soundcloud' ? '粘贴主页/短链，或 @handle' : '搜索用户名'" aria-label="搜索用户" class="flex-1 min-w-0 min-h-11 bg-surface-1 border border-medical-200 p-2 text-sm outline-none focus:border-accent font-sans text-medical-900 placeholder:text-medical-500" />
+                <button @click="searchUser" :disabled="isSearchingUser || !searchUserKeyword.trim()" class="flex items-center justify-center w-11 h-11 bg-accent hover:bg-accent-hover transition-colors flex-shrink-0 disabled:opacity-50" aria-label="搜索用户"><Search class="w-4 h-4 text-accent-fg"/></button>
+              </div>
+              <div v-if="platform === 'soundcloud'" class="mt-1.5 text-[10px] leading-relaxed text-medical-500 font-sans">
+                支持 <span class="font-mono">soundcloud.com/用户名</span>、带 /sets/ 的歌单链接、<span class="font-mono">on.soundcloud.com</span> 短链，或直接输入 @handle。
+              </div>
+              <div v-if="userSearchAttempted && !isSearchingUser && userSearchResults.length === 0" class="mt-2 text-xs text-danger font-sans">
+                没找到这个用户。主页未公开、链接复制错了，或该账号已注销都可能造成这个结果。
               </div>
               <!-- 搜索结果列表 -->
               <div v-if="userSearchResults.length > 0" class="mt-2 max-h-40 overflow-y-auto space-y-1 border-t border-medical-200 pt-2">
@@ -144,20 +163,40 @@
 
             <!-- 已绑定：歌单列表 -->
             <template v-else>
-              <div class="flex justify-between items-center px-2 py-1 bg-medical-50 border-b border-medical-200">
-                <span class="text-[10px] font-mono text-medical-500">ID: {{ bindings[platform] }}</span>
-                <button @click="player.bindAccount(platform, '')" class="text-[11px] font-bold text-danger hover:underline px-2 min-h-9">UNLINK</button>
+              <div class="flex justify-between items-center px-2 py-1.5 bg-medical-50 border-b border-medical-200 gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <img v-if="bindingProfiles[platform]?.avatarUrl" :src="bindingProfiles[platform].avatarUrl" alt="" class="w-5 h-5 rounded-full bg-medical-200 flex-shrink-0"/>
+                  <div class="min-w-0">
+                    <div v-if="bindingProfiles[platform]?.name" class="text-xs font-bold text-medical-900 truncate">{{ bindingProfiles[platform].name }}</div>
+                    <div class="text-[10px] font-mono text-medical-500 truncate">@{{ bindings[platform] }}</div>
+                  </div>
+                </div>
+                <button @click="player.bindAccount(platform, '')" class="text-[11px] font-bold text-danger hover:underline px-2 min-h-11 flex-shrink-0">UNLINK</button>
               </div>
               
-              <div v-if="isPlaylistsLoading" class="flex justify-center py-8">
+              <!-- 刷新当前歌单：重新核对已加载曲目，但不清空缓存数据 -->
+              <div v-if="currentPlaylistId && !isPlaylistsLoading" class="px-2 pb-2">
+                <button
+                    type="button"
+                    @click="refreshPlaylist"
+                    :disabled="refreshState.active"
+                    class="w-full min-h-11 flex items-center justify-center gap-2 border border-medical-200 bg-surface-1 font-mono text-[10px] tracking-[0.12em] text-medical-600 hover:border-accent hover:text-accent-text transition-colors disabled:opacity-60"
+                >
+                  <Loader2 v-if="refreshState.active" class="w-3.5 h-3.5 animate-spin text-accent-text" />
+                  <RefreshCw v-else class="w-3.5 h-3.5" />
+                  <span>{{ refreshState.active ? (refreshState.target ? `REFRESH ${refreshState.done}/${refreshState.target}` : 'REFRESHING...') : 'REFRESH LIST' }}</span>
+                </button>
+              </div>
+
+              <div v-if="isPlaylistsLoading && !playlists.length" class="flex justify-center py-8">
                 <Loader2 class="w-6 h-6 animate-spin text-accent-text" />
               </div>
-              
-              <button v-else v-for="pl in playlists" :key="pl.id" @click="handleSelectPlaylist(pl.id)" class="w-full min-h-14 flex items-center gap-3 p-2 hover:bg-medical-100 cursor-pointer group transition-colors text-left">
+
+              <button v-for="pl in playlists" :key="pl.id" @click="handleSelectPlaylist(pl.id)" class="w-full min-h-14 flex items-center gap-3 p-2 hover:bg-medical-100 cursor-pointer group transition-colors text-left">
                 <div class="w-10 h-10 bg-medical-200 flex-shrink-0 overflow-hidden"><CoverImage :src="pl.coverImgUrl" class="w-full h-full" /></div>
                 <div class="overflow-hidden">
                   <div class="text-sm font-bold truncate group-hover:text-accent-text text-medical-900">{{ pl.name }}</div>
-                  <div class="text-xs font-mono text-medical-500">{{ pl.platform === 'soundcloud' ? 'PUBLIC SET' : `${pl.trackCount} TRACKS` }}</div>
+                  <div class="text-xs font-mono text-medical-500">{{ pl.platform === 'soundcloud' ? soundcloudPlaylistLabel(pl) : `${pl.trackCount} TRACKS` }}</div>
                 </div>
                 <ChevronRight class="w-4 h-4 text-medical-500 md:hidden ml-auto" />
               </button>
@@ -336,18 +375,19 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
 import { useSearchLogic } from '../composables/useSearchLogic';
 import { usePlaylistLogic } from '../composables/usePlaylistLogic';
-import { X, Search, ListPlus, Loader2, ArrowLeft, ChevronRight, ExternalLink, Disc } from 'lucide-vue-next';
+import { X, Search, ListPlus, Loader2, ArrowLeft, ChevronRight, ExternalLink, Disc, RefreshCw } from 'lucide-vue-next';
 import CoverImage from './CoverImage.vue';
 import SourceBus from './SourceBus.vue';
 import AddButton from './search/AddButton.vue';
 import ImportMeter from './search/ImportMeter.vue';
 import { musicApi } from '../api/music';
 import { useFocusTrap } from '../composables/useFocusTrap';
+import { useEventListener } from '@vueuse/core';
 import { useToast } from '../composables/useToast';
 import { formatDuration, looksLikeLink, PLATFORM_LABEL, songKey as mergeKey } from '../logic/searchMerge.js';
 
@@ -361,6 +401,7 @@ useFocusTrap(computed(() => props.isOpen), dialogRef, {
 });
 const player = usePlayerStore();
 const userStore = useUserStore();
+const bindingProfiles = computed(() => userStore.bindingProfiles || {});
 const { info, error: toastError } = useToast();
 
 const platforms = [
@@ -396,11 +437,123 @@ const slowSources = computed(() => Object.entries(sources.value)
   .filter(([, s]) => s.state === 'loading' ? s.slow : (s.slow || ((s.latencyMs || 0) > 2500 && s.state === 'ok')))
   .map(([p]) => SLOW_LABEL[p] || p));
 
+// SoundCloud OAuth 一键绑定：弹窗走完整授权，回跳页面用 postMessage 把身份交回本窗
+const scOauthConfigured = ref(false);
+const scOauthChecked = ref(false);
+const checkScOauth = async () => {
+  if (scOauthChecked.value) return;
+  try {
+    const data = await musicApi.soundcloudOauthStatus();
+    scOauthConfigured.value = !!data?.configured;
+  } catch {
+    scOauthConfigured.value = false;
+  }
+  scOauthChecked.value = true;
+};
+watch(() => platform.value === 'soundcloud', (onSoundcloud) => {
+  if (onSoundcloud) checkScOauth();
+}, { immediate: true });
+
+// 绑定结果统一入口：postMessage（同源快路径）和轮询（跨域/opener 被切断）都走这里
+let lastBoundHandle = null;
+const applySoundcloudPayload = (payload) => {
+  const profile = payload?.profile;
+  if (payload?.ok && profile?.handle) {
+    const already = userStore.bindings?.soundcloud === profile.handle;
+    player.bindAccount('soundcloud', profile.handle);
+    userStore.saveBindingProfile('soundcloud', { name: profile.name, avatarUrl: profile.avatarUrl });
+    userSearchResults.value = [];
+    userSearchAttempted.value = false;
+    if (!already && lastBoundHandle !== profile.handle) {
+      lastBoundHandle = profile.handle;
+      info('SoundCloud 已绑定：' + (profile.name || profile.handle));
+    }
+  } else {
+    toastError('SoundCloud 绑定失败：' + (payload?.message || '未知错误'));
+  }
+};
+
+// 回跳可能落在固定 redirect_uri 的域名（ajdgsu.online），而用户可能在别的域名
+// （music.rin.red）开站；此时 postMessage 会被 origin 校验丢弃。
+// 因此用 state 轮询服务端结果，彻底不依赖 window.opener。
+let scOauthPoll = null;
+let scOauthPopup = null;
+const stopScOauthPoll = () => {
+  if (scOauthPoll) {
+    clearInterval(scOauthPoll);
+    scOauthPoll = null;
+  }
+};
+onUnmounted(stopScOauthPoll);
+
+const startSoundcloudOauth = async () => {
+  stopScOauthPoll();
+  lastBoundHandle = null;
+
+  // 必须在用户点击的同一个调用栈里 window.open，否则 await 之后会被弹窗拦截
+  const popup = window.open('', 'soundcloud-oauth', 'width=520,height=720');
+  if (!popup) {
+    toastError('弹窗被拦截：请允许本站弹窗，或改用手动输入 handle');
+    return;
+  }
+  scOauthPopup = popup;
+
+  let session;
+  try {
+    session = await musicApi.soundcloudOauthStart();
+  } catch {
+    try { popup.close(); } catch { /* ignore */ }
+    toastError('SoundCloud 授权未配置或暂时不可用');
+    return;
+  }
+  if (!session?.url || !session?.state) {
+    try { popup.close(); } catch { /* ignore */ }
+    toastError('SoundCloud 授权未配置');
+    return;
+  }
+  try {
+    popup.location.href = session.url;
+  } catch {
+    try { popup.close(); } catch { /* ignore */ }
+    toastError('无法打开发授权页，请稍后重试');
+    return;
+  }
+
+  let attempts = 0;
+  scOauthPoll = setInterval(async () => {
+    attempts += 1;
+    try {
+      const result = await musicApi.soundcloudOauthResult(session.state);
+      if (result?.done) {
+        stopScOauthPoll();
+        try { popup.close(); } catch { /* 用户可能已关闭 */ }
+        applySoundcloudPayload(result);
+        return;
+      }
+    } catch { /* 网络抖动：继续轮询 */ }
+    if (attempts >= 100) {   // ~2 分钟
+      stopScOauthPoll();
+      toastError('SoundCloud 授权超时，请重试');
+    }
+  }, 1200);
+};
+
+useEventListener(window, 'message', (event) => {
+  if (event.origin !== window.location.origin) return;
+  const data = event.data;
+  if (!data || data.source !== 'soundcloud-oauth') return;
+  stopScOauthPoll();
+  try { scOauthPopup?.close(); } catch { /* ignore */ }
+  applySoundcloudPayload(data.payload);
+});
+
 // 2. 歌单逻辑
 const {
   playlists, currentPlaylistId, searchUserKeyword, userSearchResults,
   isSearchingUser, isPlaylistsLoading, hasMore, isLoadingMore, bindings,
-  searchUser, bindUser, loadPlaylist, handleScroll, loadRemainingSongs
+  searchUser, bindUser, prefetchPlaylists, loadPlaylist, handleScroll, loadRemainingSongs,
+  userSearchAttempted, saveCurrentPlaylist, refreshPlaylist, refreshState,
+  setPlaylistScrollTop, takeRestoreScrollTop
 } = usePlaylistLogic(platform, songs, listMode, loading);
 
 // 3. 专辑搜索
@@ -581,7 +734,11 @@ const useRecent = (term) => {
   keyword.value = term;
   handleSearchAction();
 };
-onMounted(loadRecent);
+onMounted(() => {
+  loadRecent();
+  // 页面加载就预热歌单列表：SoundCloud 冷启动 ~1.5s，等用户点开面板时通常已经就绪
+  prefetchPlaylists();
+});
 
 const handleSearchAction = async () => {
   rememberQuery(keyword.value);
@@ -614,7 +771,14 @@ const handleSelectPlaylist = async (pid) => {
   playlistKeyword.value = '';
   await loadPlaylist(pid);
   mobileView.value = 'songs';
-  restoreScrollPosition();
+  // 命中缓存时，列表内容已经就位，按缓存里的滚动位置还原才有意义
+  const cachedTop = takeRestoreScrollTop();
+  await nextTick();
+  if (contentScrollRef.value && cachedTop > 0) {
+    contentScrollRef.value.scrollTop = cachedTop;
+  } else {
+    restoreScrollPosition();
+  }
 };
 
 const handleImportPlaylist = () => {
@@ -622,11 +786,32 @@ const handleImportPlaylist = () => {
   player.enqueuePlaylist(platform.value, currentPlaylistId.value);
 };
 
+// 歌单类型标签：OAuth 才拿得到的三个入口要能一眼区分
+const soundcloudPlaylistLabel = (pl) => {
+  const id = pl.id || '';
+  if (id.startsWith('likes:')) return 'LIKES · 喜欢的音乐';
+  if (id.startsWith('mytracks:')) return 'MY TRACKS · 我上传的';
+  if (id.startsWith('own:')) {
+    // 「own:」只表示这条是通过授权读的（公开+私密都能读），不等于私密；
+    // 私密与否看服务端在名称后缀上的标记
+    const isPrivate = (pl.name || '').endsWith('· 私密');
+    const count = (pl.trackCount || 0) > 0 ? `${pl.trackCount} TRACKS` : 'EMPTY';
+    return `MY SET · ${count}${isPrivate ? ' · 私密' : ''}`;
+  }
+  return 'PUBLIC SET';
+};
+
 const getSourceUrl = (song) => {
+  // 后台若带回真实页面地址（SoundCloud 的 permalink 只能这样拿到），优先用它
+  if (typeof song.url === 'string' && /^https?:\/\//.test(song.url)) return song.url;
   const sourcePlatform = song.platform || platform.value;
   if (sourcePlatform === 'netease') return `https://music.163.com/song?id=${encodeURIComponent(song.id)}`;
   if (sourcePlatform === 'bilibili' && song.id) return `https://www.bilibili.com/video/${encodeURIComponent(song.id)}`;
   if (sourcePlatform === 'ytmusic' && song.id) return `https://music.youtube.com/watch?v=${encodeURIComponent(song.id)}`;
+  if (sourcePlatform === 'soundcloud' && song.id) {
+    // 数字 ID 拼不出页面：由服务端反查 permalink 后 302 过去
+    return `/api/track/url?platform=soundcloud&id=${encodeURIComponent(song.id)}`;
+  }
   return null;
 };
 
@@ -640,10 +825,29 @@ function loadScrollPositions() {
 
 const scrollKey = () => `${platform.value}:${listMode.value}:${currentPlaylistId.value || 'results'}`;
 
+let scrollPersistTimer = null;
+const persistScrollPositions = () => {
+  try {
+    localStorage.setItem(SCROLL_STORAGE_KEY, JSON.stringify(savedScrollPositions.value));
+  } catch { /* 配额满 / 隐私模式：位置只是体验优化 */ }
+};
+// 滚动事件很密，每次同步写 localStorage 会掉帧：内存立即可读，落盘节流 300ms
 const saveScrollPosition = () => {
   if (!contentScrollRef.value) return;
   savedScrollPositions.value[scrollKey()] = contentScrollRef.value.scrollTop;
-  localStorage.setItem(SCROLL_STORAGE_KEY, JSON.stringify(savedScrollPositions.value));
+  if (scrollPersistTimer) return;
+  scrollPersistTimer = setTimeout(() => {
+    scrollPersistTimer = null;
+    persistScrollPositions();
+  }, 300);
+};
+const flushScrollPosition = () => {
+  saveScrollPosition();
+  if (scrollPersistTimer) {
+    clearTimeout(scrollPersistTimer);
+    scrollPersistTimer = null;
+  }
+  persistScrollPositions();
 };
 
 const restoreScrollPosition = async () => {
@@ -656,6 +860,9 @@ const restoreScrollPosition = async () => {
 const onContentScroll = (event) => {
   handleScroll(event);
   saveScrollPosition();
+  if (listMode.value === 'playlist') {
+    setPlaylistScrollTop(event.target.scrollTop);
+  }
   const el = event.target;
   if (listMode.value === 'search' && !albumSearchMode.value && hasMoreSearch.value && !loading.value) {
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
@@ -665,13 +872,15 @@ const onContentScroll = (event) => {
 };
 
 const closeModal = () => {
-  saveScrollPosition();
+  flushScrollPosition();
+  saveCurrentPlaylist();
   emit('close');
 };
 
 const switchPlatform = (nextPlatform) => {
   if (!isPlatformEnabled(nextPlatform) && nextPlatform !== 'all') return;
-  saveScrollPosition();
+  flushScrollPosition();
+  saveCurrentPlaylist();
   platform.value = nextPlatform;
 };
 
@@ -707,6 +916,8 @@ watch(() => props.isOpen, async (val) => {
     mobileView.value = supportsPlaylists.value ? 'playlists' : 'songs';
     await restoreScrollPosition();
     probeHealth();
+    // 预取歌单列表：SoundCloud 冷启动约 1.5s，用户点开再切过去就不用等
+    prefetchPlaylists();
   } else {
     saveScrollPosition();
   }

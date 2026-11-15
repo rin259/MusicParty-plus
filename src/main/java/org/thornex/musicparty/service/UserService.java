@@ -1,11 +1,7 @@
 package org.thornex.musicparty.service;
 
 import lombok.extern.slf4j.Slf4j;
-import jakarta.annotation.PreDestroy;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.thornex.musicparty.dto.User;
 import org.thornex.musicparty.dto.UserSummary;
@@ -17,9 +13,10 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
-@Service
 @Slf4j
 public class UserService {
+
+    private final String roomId;
 
     // 主存储：Token -> User
     private final Map<String, User> usersByToken = new ConcurrentHashMap<>();
@@ -38,14 +35,22 @@ public class UserService {
     // Mobile browsers may suspend WebSocket timers briefly when backgrounded.
     private static final long LEAVE_DELAY_SEC = 45;
 
-    @Autowired
     public UserService(ApplicationEventPublisher eventPublisher) {
-        this(eventPublisher, LEAVE_DELAY_SEC);
+        this(eventPublisher, LEAVE_DELAY_SEC, "main");
     }
 
     UserService(ApplicationEventPublisher eventPublisher, long leaveDelaySeconds) {
+        this(eventPublisher, leaveDelaySeconds, "main");
+    }
+
+    public UserService(ApplicationEventPublisher eventPublisher, long leaveDelaySeconds, String roomId) {
         this.eventPublisher = eventPublisher;
         this.leaveDelaySeconds = leaveDelaySeconds;
+        this.roomId = roomId == null || roomId.isBlank() ? "main" : roomId;
+    }
+
+    public String getRoomId() {
+        return roomId;
     }
 
     /**
@@ -220,7 +225,6 @@ public class UserService {
                 .toList();
     }
 
-    @PreDestroy
     public void shutdown() {
         scheduler.shutdownNow();
     }
@@ -235,7 +239,6 @@ public class UserService {
                 .collect(Collectors.toSet());
     }
 
-    @Scheduled(fixedRate = 3600000)
     public void cleanupExpiredUsers() {
         long now = System.currentTimeMillis();
         int initialSize = usersByToken.size();

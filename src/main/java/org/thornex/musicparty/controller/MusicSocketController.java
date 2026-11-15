@@ -1,6 +1,7 @@
 package org.thornex.musicparty.controller;
 
 import org.springframework.messaging.MessageHeaders;
+import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
@@ -11,188 +12,221 @@ import org.springframework.messaging.simp.annotation.SubscribeMapping;
 import org.springframework.stereotype.Controller;
 import org.thornex.musicparty.dto.*;
 import org.thornex.musicparty.enums.MessageType;
+import org.thornex.musicparty.exception.ApiRequestException;
+import org.thornex.musicparty.room.RoomRegistry;
+import org.thornex.musicparty.room.RoomRuntime;
+import org.thornex.musicparty.room.RoomSessions;
 import org.thornex.musicparty.service.ChatService;
-import org.thornex.musicparty.service.MusicPlayerService;
 import org.thornex.musicparty.service.UserService;
 
 import java.util.List;
 
+/**
+ * 所有 WebSocket 指令都按「session 所属房间」执行；房间号来自 CONNECT 帧，
+ * 不从消息体读取（防止跨房操作）。
+ */
 @Controller
 public class MusicSocketController {
 
-    private final MusicPlayerService musicPlayerService;
-    private final UserService userService;
+    private final RoomRegistry roomRegistry;
+    private final RoomSessions roomSessions;
     private final SimpMessagingTemplate messagingTemplate;
-    private final ChatService chatService;
 
-    public MusicSocketController(MusicPlayerService musicPlayerService, UserService userService, SimpMessagingTemplate messagingTemplate, ChatService chatService) {
-        this.musicPlayerService = musicPlayerService;
-        this.userService = userService;
+    public MusicSocketController(RoomRegistry roomRegistry, RoomSessions roomSessions,
+                                 SimpMessagingTemplate messagingTemplate) {
+        this.roomRegistry = roomRegistry;
+        this.roomSessions = roomSessions;
         this.messagingTemplate = messagingTemplate;
-        this.chatService = chatService;
+    }
+
+    private RoomRuntime runtime(String sessionId) {
+        String roomId = roomSessions.roomOf(sessionId);
+        try {
+            return roomRegistry.getOrCreateRuntime(roomId);
+        } catch (ApiRequestException error) {
+            return null;
+        }
     }
 
     @MessageMapping("/player/resync")
     public void requestResync(@Header("simpSessionId") String sessionId) {
-        musicPlayerService.broadcastFullPlayerState();
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime != null) runtime.player().broadcastFullPlayerState();
     }
 
     @MessageMapping("/enqueue")
     public void enqueue(EnqueueRequest request, @Header("simpSessionId") String sessionId) {
-        if (isGuest(sessionId)) return;
-        musicPlayerService.enqueue(request, sessionId);
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
+        runtime.player().enqueue(request, sessionId);
     }
 
     @MessageMapping("/enqueue/playlist")
     public void enqueuePlaylist(EnqueuePlaylistRequest request, @Header("simpSessionId") String sessionId) {
-        if (isGuest(sessionId)) return;
-        musicPlayerService.enqueuePlaylist(request, sessionId);
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
+        runtime.player().enqueuePlaylist(request, sessionId);
     }
 
     @MessageMapping("/enqueue/album")
     public void enqueueAlbum(EnqueuePlaylistRequest request, @Header("simpSessionId") String sessionId) {
-        if (isGuest(sessionId)) return;
-        musicPlayerService.enqueueAlbum(request, sessionId);
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
+        runtime.player().enqueueAlbum(request, sessionId);
     }
 
     @MessageMapping("/control/next")
     public void nextSong(@Header("simpSessionId") String sessionId) {
-        if (isGuest(sessionId)) return;
-        musicPlayerService.skipToNext(sessionId);
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
+        runtime.player().skipToNext(sessionId);
     }
 
     @MessageMapping("/control/toggle-shuffle")
     public void cyclePlayMode(@Header("simpSessionId") String sessionId) {
-        if (isGuest(sessionId)) return;
-        musicPlayerService.cyclePlayMode(sessionId);
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
+        runtime.player().cyclePlayMode(sessionId);
     }
 
     @MessageMapping("/control/toggle-pause")
     public void togglePause(@Header("simpSessionId") String sessionId) {
-        if (isGuest(sessionId)) return;
-        musicPlayerService.togglePause(sessionId);
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
+        runtime.player().togglePause(sessionId);
     }
 
     @MessageMapping("/control/seek")
     public void seek(@Payload SeekRequest request, @Header("simpSessionId") String sessionId) {
-        if (isGuest(sessionId)) return;
-        musicPlayerService.seekTo(request.positionMs(), sessionId);
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
+        runtime.player().seekTo(request.positionMs(), sessionId);
     }
 
     @MessageMapping("/queue/top")
     public void topSong(@Payload QueueActionRequest request, @Header("simpSessionId") String sessionId) {
-        if (isGuest(sessionId)) return;
-        musicPlayerService.topSong(request.queueId(), sessionId);
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
+        runtime.player().topSong(request.queueId(), sessionId);
     }
 
     @MessageMapping("/queue/remove")
     public void removeSong(@Payload QueueActionRequest request, @Header("simpSessionId") String sessionId) {
-        if (isGuest(sessionId)) return;
-        musicPlayerService.removeSongFromQueue(request.queueId(), sessionId);
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
+        runtime.player().removeSongFromQueue(request.queueId(), sessionId);
     }
 
-    // 点赞接口
     @MessageMapping("/control/like")
     public void likeSong(@Header("simpSessionId") String sessionId) {
-        if (isGuest(sessionId)) return;
-        musicPlayerService.likeSong(sessionId);
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
+        runtime.player().likeSong(sessionId);
     }
 
     @MessageMapping("/user/rename")
     public void rename(RenameRequest request, @Header("simpSessionId") String sessionId) {
-        if (userService.renameUser(sessionId, request.newName())) {
-            musicPlayerService.broadcastOnlineUsers();
-            // PUSH updated user info to the user
-            userService.getUser(sessionId).ifPresent(user -> {
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null) return;
+        UserService users = runtime.users();
+        if (users.renameUser(sessionId, request.newName())) {
+            runtime.player().broadcastOnlineUsers();
+            users.getUser(sessionId).ifPresent(user -> {
                 UserSummary summary = new UserSummary(user.getToken(), user.getSessionId(), user.getName(), user.isGuest());
                 messagingTemplate.convertAndSendToUser(sessionId, "/queue/me", summary, createSessionHeaders(sessionId));
             });
         } else {
-            // RENAME_FAILED
-            userService.getUser(sessionId).ifPresent(user -> {
-                PlayerEvent errorEvent = new PlayerEvent("ERROR", "RENAME_FAILED", user.getToken(), "该名称已被占用或包含非法字符，请更换。", null);
-                messagingTemplate.convertAndSendToUser(sessionId, "/queue/events", errorEvent, createSessionHeaders(sessionId));
+            users.getUser(sessionId).ifPresent(user -> {
+                PlayerEvent errorEvent = new PlayerEvent("ERROR", "RENAME_FAILED", user.getToken(),
+                        "该名称已被占用或包含非法字符，请更换。", null);
+                messagingTemplate.convertAndSendToUser(sessionId, "/queue/events", errorEvent,
+                        createSessionHeaders(sessionId));
             });
         }
     }
 
     @MessageMapping("/user/bind")
     public void bindAccount(BindRequest request, @Header("simpSessionId") String sessionId) {
-        userService.bindAccount(sessionId, request.platform(), request.accountId());
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime != null) runtime.users().bindAccount(sessionId, request.platform(), request.accountId());
     }
 
-    @SubscribeMapping("/topic/player/state")
-    public PlayerState getInitialPlayerState() {
-        return musicPlayerService.getCurrentPlayerState();
+    @SubscribeMapping("/topic/r/{roomId}/player/state")
+    public PlayerState getInitialPlayerState(@DestinationVariable String roomId,
+                                             @Header("simpSessionId") String sessionId) {
+        RoomRuntime runtime = runtimeForSubscription(roomId, sessionId);
+        return runtime == null ? null : runtime.player().getCurrentPlayerState();
     }
 
-    @SubscribeMapping("/topic/users/online")
-    public List<UserSummary> getInitialOnlineUsers() {
-        return userService.getOnlineUserSummaries();
+    @SubscribeMapping("/topic/r/{roomId}/users/online")
+    public List<UserSummary> getInitialOnlineUsers(@DestinationVariable String roomId,
+                                                   @Header("simpSessionId") String sessionId) {
+        RoomRuntime runtime = runtimeForSubscription(roomId, sessionId);
+        return runtime == null ? List.of() : runtime.users().getOnlineUserSummaries();
     }
 
     @SubscribeMapping("/user/me")
     public UserSummary getMyUserInfo(@Header("simpSessionId") String sessionId) {
-        return userService.getUser(sessionId)
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null) return new UserSummary(sessionId, sessionId, "Unknown", true);
+        return runtime.users().getUser(sessionId)
                 .map(u -> new UserSummary(u.getToken(), u.getSessionId(), u.getName(), u.isGuest()))
                 .orElse(new UserSummary(sessionId, sessionId, "Unknown", true));
     }
 
-    private boolean isGuest(String sessionId) {
-        return userService.getUser(sessionId).map(User::isGuest).orElse(true);
+    private RoomRuntime runtimeForSubscription(String requestedRoomId, String sessionId) {
+        // 只允许订阅自己所属房间的快照
+        if (requestedRoomId == null || !requestedRoomId.equals(roomSessions.roomOf(sessionId))) {
+            return null;
+        }
+        return runtime(sessionId);
     }
 
-    // 聊天消息处理
+    private boolean isGuest(RoomRuntime runtime, String sessionId) {
+        return runtime.users().getUser(sessionId).map(User::isGuest).orElse(true);
+    }
+
     @MessageMapping("/chat")
     public void handleChat(ChatRequest request, @Header("simpSessionId") String sessionId) {
-        // 1. Strict guest check: Guests cannot chat or send commands
-        if (isGuest(sessionId)) return;
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null || isGuest(runtime, sessionId)) return;
 
-        // 2. Check content validity
         if (request.content() == null || request.content().trim().isEmpty()) return;
+        ChatService chatService = runtime.chat();
         if (!chatService.isMessageLengthValid(request.content())) return;
 
-        // 3. Try process as command
-        if (chatService.processIncomingMessage(sessionId, request.content().trim())) {
-            return;
-        }
+        if (chatService.processIncomingMessage(sessionId, request.content().trim())) return;
 
-        userService.getUser(sessionId).ifPresent(user -> {
-            // 4. Rate Limit Check
+        runtime.users().getUser(sessionId).ifPresent(user -> {
             if (!chatService.canUserSendMessage(user.getToken())) return;
 
             ChatMessage message = new ChatMessage(
                     java.util.UUID.randomUUID().toString(),
                     user.getToken(),
-                    user.getName(), 
+                    user.getName(),
                     request.content().trim(),
                     System.currentTimeMillis(),
                     MessageType.CHAT
             );
 
-            // 保存到历史
             chatService.addMessage(message);
-
-            messagingTemplate.convertAndSend("/topic/chat", message);
+            messagingTemplate.convertAndSend("/topic/r/" + runtime.roomId() + "/chat", message);
         });
     }
 
-    // 订阅时获取历史记录
     @SubscribeMapping("/chat/history")
-    public List<ChatMessage> getChatHistory() {
-        return chatService.getHistory(0, 50);
+    public List<ChatMessage> getChatHistory(@Header("simpSessionId") String sessionId) {
+        RoomRuntime runtime = runtime(sessionId);
+        return runtime == null ? List.of() : runtime.chat().getHistory(0, 50);
     }
 
-    // 处理分页获取历史记录的请求
     @MessageMapping("/chat/history/fetch")
     public void fetchChatHistory(@Payload ChatHistoryFetchRequest request, @Header("simpSessionId") String sessionId) {
-        List<ChatMessage> history = chatService.getHistory(request.offset(), request.limit());
-        messagingTemplate.convertAndSendToUser(
-                sessionId,
-                "/queue/chat/history",
-                history,
-                createSessionHeaders(sessionId)
-        );
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null) return;
+        List<ChatMessage> history = runtime.chat().getHistory(request.offset(), request.limit());
+        messagingTemplate.convertAndSendToUser(sessionId, "/queue/chat/history", history,
+                createSessionHeaders(sessionId));
     }
 
     private MessageHeaders createSessionHeaders(String sessionId) {

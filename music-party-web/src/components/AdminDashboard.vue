@@ -175,11 +175,7 @@
                     </div>
                   </div>
                   <!-- Toggles -->
-                  <div class="grid grid-cols-2 gap-3">
-                    <div class="p-3 bg-medical-50 border border-medical-100 flex flex-col items-center gap-2 rounded-sm">
-                      <span class="text-[11px] font-bold text-medical-500 uppercase font-mono">直播推流</span>
-                      <ToggleSwitch :checked="playerStore.streamActive" label="直播推流" size="md" @toggle="toggleStream" />
-                    </div>
+                  <div class="grid grid-cols-1 gap-3">
                     <div class="p-3 bg-medical-50 border border-medical-100 flex flex-col gap-2 rounded-sm">
                       <span class="text-[11px] font-bold text-medical-500 uppercase font-mono text-center">数据清理</span>
                       <div class="flex flex-col gap-1 w-full">

@@ -1,6 +1,110 @@
 // ... existing code ...
 <template>
-  <div class="relative w-full h-full flex items-center justify-center overflow-hidden">
+  <div class="relative w-full h-full overflow-hidden">
+
+    <!-- 移动端：独立纵向流式布局。桌面那套绝对定位的歌词/遥测/封面在窄屏会互相压叠，
+         这里不再复用，改为封面 → 标题 → 歌词/曲目信息 的自然顺序，内容可滚动。 -->
+    <div v-if="isMobile" class="relative h-full overflow-y-auto mp-scroll">
+      <div aria-hidden="true" class="pointer-events-none absolute inset-0 opacity-40">
+        <div class="absolute inset-0 bg-[linear-gradient(rgb(var(--medical-900)/0.04)_1px,transparent_1px),linear-gradient(90deg,rgb(var(--medical-900)/0.04)_1px,transparent_1px)] bg-[size:32px_32px]"></div>
+      </div>
+
+      <div class="relative z-10 flex min-h-full flex-col">
+      <div class="mx-auto my-auto flex w-full max-w-md flex-col gap-3 px-4 pb-6 pt-4">
+        <!-- 曲目元信息：状态在封面角标里，这里只留来源/时长/队列，避免重复 -->
+        <div class="truncate text-center font-mono text-[9px] tracking-[0.16em] text-medical-500">
+          {{ metaLine || 'SYSTEM IDLE' }}
+        </div>
+
+        <!-- 封面 + 点赞 -->
+        <div class="mx-auto w-full max-w-[min(60vw,14rem)]">
+          <button
+              id="tutorial-like"
+              type="button"
+              :disabled="!player.nowPlaying"
+              :aria-label="!player.nowPlaying ? '当前没有歌曲' : (hasLiked ? '已点赞，再点一次再次点赞' : '为当前歌曲点赞')"
+              :aria-pressed="!!hasLiked"
+              class="relative block aspect-square w-full overflow-hidden border border-surface-1 bg-medical-50 shadow-2xl chamfer-br"
+              @click="handleCoverClick"
+          >
+            <CoverImage v-if="currentCover" :src="currentCover" class="h-full w-full" />
+            <div v-else class="absolute inset-0 flex flex-col items-center justify-center text-medical-500">
+              <div class="mb-2 h-12 w-12 rotate-45 border-2 border-medical-300"></div>
+              <span class="font-mono text-[10px] tracking-widest">NO MEDIA</span>
+            </div>
+            <div class="pointer-events-none absolute inset-0 z-10 bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAADCAYAAABS3WWCAAAAE0lEQVQYV2NkYGD4zwABjFAQAwBATgMJy2B8NAAAAABJRU5ErkJggg==')] opacity-20"></div>
+            <div class="absolute left-0 top-0 z-20 bg-scrim/80 px-2 py-0.5 font-mono text-[10px] font-bold text-white">
+              {{ !player.nowPlaying ? 'IDLE' : player.isPaused ? 'PAUSED' : 'PLAYING' }}
+            </div>
+            <div v-if="player.nowPlaying" class="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between gap-2 bg-scrim/75 px-2.5 py-1.5 backdrop-blur-sm">
+              <span class="font-mono text-[9px] tracking-[0.1em] text-white/85">{{ hasLiked ? '已点赞 · 再点一次' : '点按封面点赞' }}</span>
+              <span class="flex items-center gap-1 font-mono text-[10px] font-bold" :class="hasLiked ? 'text-accent' : 'text-white'">
+                <Zap class="h-3 w-3" :class="hasLiked ? 'fill-accent text-accent' : ''" />
+                <span v-if="likeCount">{{ likeCount }}</span>
+              </span>
+            </div>
+            <div v-if="isBursting" class="pointer-events-none absolute inset-0 z-30 border-2 border-accent bg-accent/20 animate-ping"></div>
+          </button>
+
+          <div class="mt-2 flex items-center justify-between gap-2 font-mono text-[10px] text-medical-500">
+            <span v-if="player.nowPlaying?.enqueuedById" class="min-w-0 truncate">
+              REQ_BY <span class="text-medical-800">{{ userStore.resolveName(player.nowPlaying.enqueuedById, player.nowPlaying.enqueuedByName) }}</span>
+            </span>
+            <span v-else class="min-w-0 truncate">WAITING FOR SIGNAL</span>
+            <button
+                type="button"
+                :disabled="!player.nowPlaying"
+                class="flex min-h-11 flex-shrink-0 items-center gap-1 border border-medical-200 bg-medical-50 px-3 font-mono text-[10px] font-bold text-medical-600 active:bg-medical-100 disabled:opacity-40"
+                :aria-label="hasLiked ? '已点赞，再点一次再次点赞' : '为当前歌曲点赞'"
+                @click="confirmLike"
+            >
+              <Zap class="h-3 w-3" :class="hasLiked ? 'fill-accent text-accent' : ''" />
+              点赞
+            </button>
+          </div>
+        </div>
+
+        <!-- 曲目 -->
+        <div class="text-center">
+          <h2 class="m-0 line-clamp-2 text-xl font-bold leading-tight tracking-tight text-medical-900">
+            {{ player.nowPlaying?.music.name || '系统待机' }}
+          </h2>
+          <p class="mt-1 truncate text-xs text-medical-500">
+            {{ player.nowPlaying?.music.artists?.join(' / ') || '选择一首歌，或者等下一首' }}
+          </p>
+        </div>
+
+        <!-- 歌词：固定两行高度，当前句原地替换，不再整块上下移动 -->
+        <div v-if="parsedLyrics.length" class="mx-auto w-full max-w-[19rem] border border-medical-200 bg-surface-1/85 p-3">
+          <div class="mb-2 flex items-center justify-between font-mono text-[9px] tracking-[0.16em] text-medical-500">
+            <span>LYRICS</span><span>SYNC</span>
+          </div>
+          <div class="flex min-h-[3.5rem] flex-col justify-center gap-1 text-center">
+            <p class="line-clamp-2 min-h-[2.5rem] text-sm font-bold leading-5 text-medical-900">{{ mobileCurrentLine || '…' }}</p>
+            <p class="line-clamp-1 min-h-[1rem] text-[11px] leading-4 text-medical-500">{{ mobileNextLine }}</p>
+          </div>
+        </div>
+
+        <!-- 无歌词：两列曲目信息，不再做成横跨整屏的键值行 -->
+        <div v-else-if="mobileFacts.length" class="mx-auto w-full max-w-[19rem] border border-medical-200 bg-surface-1/85 p-3">
+          <div class="mb-2 flex items-center justify-between font-mono text-[9px] tracking-[0.16em] text-medical-500">
+            <span>TRACK_DATA</span><span>NO LYRIC</span>
+          </div>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-2">
+            <div v-for="fact in mobileFacts" :key="fact.k" class="min-w-0 border-l border-medical-200 pl-2">
+              <div class="font-mono text-[9px] tracking-[0.12em] text-medical-500">{{ fact.k }}</div>
+              <div class="truncate text-[11px] font-bold text-medical-800">{{ fact.v }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="text-center font-mono text-[10px] tracking-[0.16em] text-medical-500">IDLE · 等待下一首</div>
+      </div>
+      </div>
+    </div>
+
+    <!-- 桌面端：保留原有的舞台式绝对定位布局 -->
+    <div v-else class="relative flex h-full w-full items-center justify-center overflow-hidden">
 
     <!-- LAYER 0: 静态背景层 (最底层) -->
     <div class="absolute inset-0 z-0 pointer-events-none">
@@ -144,9 +248,10 @@
                  player.isPaused ? 'scale-95 grayscale' : 'scale-100',
                   'cursor-pointer'
              ]"
-            :aria-label="hasLiked ? '已点赞，再点一次再次点赞' : '为当前歌曲点赞'"
+            :aria-label="!player.nowPlaying ? '当前没有歌曲' : (hasLiked ? '已点赞，再点一次再次点赞' : '为当前歌曲点赞')"
             :aria-pressed="!!hasLiked"
-            @mouseenter="!isMobile && (isHovering = true)"
+            :disabled="!player.nowPlaying"
+            @mouseenter="!isMobile && player.nowPlaying && (isHovering = true)"
             @mouseleave="!isMobile && (isHovering = false)"
             @click="handleCoverClick"
         >
@@ -166,12 +271,12 @@
               leave-to-class="opacity-0 scale-95"
           >
             <div
-                v-if="isBursting || isHovering || mobileLikePending"
+                v-if="player.nowPlaying && (isBursting || isHovering)"
                 class="absolute inset-0 z-40 flex items-center justify-center select-none"
                 :class="[
                     // 已点赞状态下，只显示极淡的角落标记，不遮挡封面
                     // 交互或爆发时，增加暗色扫描背景
-                    (isBursting || isHovering || mobileLikePending) ? 'bg-scrim/65' : ''
+                    (isBursting || isHovering) ? 'bg-scrim/65' : ''
                 ]"
             >
               <!-- 1. 动态网格背景 (仅在交互时显示) -->
@@ -200,7 +305,7 @@
                   ]"
                 >
                   <Activity
-                      v-if="(isHovering || mobileLikePending) && !isBursting"
+                      v-if="isHovering && !isBursting"
                       class="w-10 h-10 animate-pulse"
                   />
 
@@ -230,10 +335,11 @@
           <div
               class="absolute top-0 left-0 z-50 px-3 py-1 font-mono text-xs font-bold chamfer-br transition-colors duration-300 bg-scrim/80 backdrop-blur-sm text-white"
           >
-            {{ player.isPaused ? 'PAUSED' : 'PLAYING' }}
+            {{ !player.nowPlaying ? 'IDLE' : (player.isPaused ? 'PAUSED' : 'PLAYING') }}
           </div>
         </button>
       </div>
+    </div>
     </div>
   </div>
 </template>
@@ -251,6 +357,7 @@ import { fidelity } from '../logic/Fidelity.js';
 import { AudioTelemetry } from '../logic/AudioTelemetry.js';
 import { PointLights } from '../logic/PointLights.js';
 import { useUiStore } from '../stores/ui';
+import CoverImage from './CoverImage.vue';
 import { formatDuration, PLATFORM_LABEL } from '../logic/searchMerge.js';
 import { Activity, Zap } from 'lucide-vue-next';
 
@@ -299,13 +406,35 @@ const trackFacts = computed(() => {
 
 // === 交互逻辑 ===
 const isHovering = ref(false);       // PC Hover
-const mobileLikePending = ref(false);// 移动端第一次点击
-const mobileTimer = ref(null);       // 移动端定时器
 const isBursting = ref(false);       // 爆发状态（本地+广播）
 
 
 const hasLiked = computed(() => {
   return player.nowPlaying?.likedUserIds?.includes(userStore.userToken);
+});
+
+const likeCount = computed(() => player.nowPlaying?.likedUserIds?.length || 0);
+
+const metaLine = computed(() => {
+  const np = player.nowPlaying;
+  if (!np?.music) return '';
+  const platform = PLATFORM_LABEL[np.music.platform] || np.music.platform || '';
+  const length = np.music.duration > 0 ? formatDuration(np.music.duration) : '';
+  return [platform, length, `${player.queue.length} TRACKS`].filter(Boolean).join(' · ');
+});
+
+const mobileFacts = computed(() => trackFacts.value.filter((fact) => fact.k !== 'REQUEST'));
+
+const mobileCurrentLine = computed(() => {
+  if (!parsedLyrics.value.length) return '';
+  const idx = currentLineIndex.value;
+  return (idx < 0 ? parsedLyrics.value[0] : parsedLyrics.value[idx])?.text || '';
+});
+
+const mobileNextLine = computed(() => {
+  if (!parsedLyrics.value.length) return '';
+  const idx = Math.max(0, currentLineIndex.value);
+  return parsedLyrics.value[idx + 1]?.text || '';
 });
 
 const danmakuMessages = ref([]);
@@ -330,23 +459,10 @@ const EFFECT_COOLDOWN = 1000;
 let lastEffectTime = 0;
 
 const handleCoverClick = () => {
-  if (isMobile.value) {
-    if (!mobileLikePending.value) {
-      // 第一次点击
-      mobileLikePending.value = true;
-      mobileTimer.value = setTimeout(() => {
-        mobileLikePending.value = false;
-      }, 2000);
-    } else {
-      // 第二次点击 (确认)
-      clearTimeout(mobileTimer.value);
-      mobileLikePending.value = false;
-      confirmLike();
-    }
-  } else {
-    // PC 直接点击
-    confirmLike();
-  }
+  if (!player.nowPlaying) return;
+  // 移动端封面本身就是点赞按钮（下方还有可见的「点赞」），单击即赞；
+  // 旧的「第一次点选中、第二次确认」在触屏上没有提示，等于不可发现。
+  confirmLike();
 };
 
 const confirmLike = () => {
@@ -549,7 +665,7 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 10px;
 }
-/* A：遥测抖动——切片位移 + 轻 RGB 分离；170ms、离散步进；reduced-motion 关闭 */
+/* A：遥测抖动——切片位移 + 轻 RGB 分离；170ms、离散步进；只在故障/断连时触发 */
 /* 常态更新：只有切片位移，幅度由 --ga 给出（保真度越低越大） */
 .is-glitching { animation: telemetry-slice 170ms steps(1, end) 1 both; }
 @keyframes telemetry-slice {

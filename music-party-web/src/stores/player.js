@@ -3,6 +3,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed, watch } from 'vue';
 import { useUserStore } from './user';
+import { useRoomStore } from './room';
 import { socketService } from '../services/socket';
 import { createSocketSubscriptions, createSocketCallbacks } from '../services/socketHandler'; // 引入新文件
 import { musicApi } from '../api/music';
@@ -34,6 +35,8 @@ export const usePlayerStore = defineStore('player', () => {
     const localProgress = ref(0);
     const isBuffering = ref(false);
     const isErrorState = ref(false);
+    // 浏览器拦截自动播放时置 true：UI 必须显示「点击开启声音」，不能假装在播
+    const audioBlocked = ref(false);
 
     // === 点歌可观测性 ===
     // key = platform:id。提交中 → 服务端回执（QUEUED/FAILED…）→ 队列快照确认。
@@ -69,6 +72,7 @@ export const usePlayerStore = defineStore('player', () => {
     });
 
     const userStore = useUserStore();
+    const roomStore = useRoomStore();
     const LOCAL_COOLDOWN = 500; // 稍微调低一点冷却时间提升手感
 
     // === 2. Logic ===
@@ -141,14 +145,17 @@ export const usePlayerStore = defineStore('player', () => {
     };
 
     const connect = () => {
+        const roomId = roomStore.roomId || 'main';
         const authHeaders = {
             'user-name': localStorage.getItem(STORAGE_KEYS.USERNAME) || '游客',
             'user-token': userStore.userToken,
-            'room-password': localStorage.getItem(STORAGE_KEYS.ROOM_PASSWORD) || ''
+            'device-id': userStore.userToken,
+            'room-id': roomId,
+            'room-password': roomStore.passwordFor(roomId) || ''
         };
 
-        // 使用抽离出的订阅配置
-        const subscriptions = createSocketSubscriptions();
+        // 订阅按房间生成，所有状态都只在本房间频道里
+        const subscriptions = createSocketSubscriptions(roomId);
 
         // 补充 UserMe 的特殊处理 (因为它需要用到 renameUser，如果放在 socketHandler 会导致循环依赖)
         subscriptions[WS_DEST.USER_ME] = (me) => {
@@ -167,6 +174,34 @@ export const usePlayerStore = defineStore('player', () => {
 
     const tryReconnect = (force = false) => {
         return socketService.forceReconnect(force);
+    };
+
+    /** 切房前清空房间内状态，避免上一个房间的队列/聊天残留。 */
+    const resetRoomState = () => {
+        nowPlaying.value = null;
+        queue.value = [];
+        isPaused.value = false;
+        playMode.value = 'SEQUENTIAL';
+        isLoading.value = false;
+        remotePosition.value = 0;
+        lastSyncTime.value = 0;
+        localProgress.value = 0;
+        audioBlocked.value = false;
+        isBuffering.value = false;
+        isErrorState.value = false;
+        enqueueStates.value = {};
+        pendingEnqueues.value = {};
+        importJobs.value = {};
+        ackTimers.forEach((timer) => clearTimeout(timer));
+        ackTimers.clear();
+        currentVotes.value = 0;
+        eligibleUsers.value = 0;
+    };
+
+    const disconnect = () => {
+        socketService.disconnect();
+        connected.value = false;
+        resetRoomState();
     };
 
     // --- 指令发送 ---
@@ -311,9 +346,9 @@ export const usePlayerStore = defineStore('player', () => {
     return {
 nowPlaying, queue, isPaused, playMode, isShuffle, isRepeatOne, isListLoop, isFairShuffle, allowOfflineShuffle, config,
         isPauseLocked, isSkipLocked, isPlayModeLocked, connected, isLoading, lyricText,
-        localProgress, isBuffering, isErrorState, streamListenerCount, streamActive,
+        localProgress, isBuffering, isErrorState, audioBlocked, streamListenerCount, streamActive,
         isVoteSkipEnabled, voteSkipThreshold, voteSkipWaitTime, currentVotes, eligibleUsers,
-        connect, tryReconnect, getCurrentProgress, syncState,
+        connect, disconnect, tryReconnect, resetRoomState, getCurrentProgress, syncState,
         playNext, togglePause, cyclePlayMode,
         enqueue, enqueuePlaylist, enqueueAlbum, topSong, removeSong,
         enqueueStates, pendingEnqueues, importJobs, applyEnqueueResult, applyImportProgress,

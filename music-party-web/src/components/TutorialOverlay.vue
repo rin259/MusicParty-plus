@@ -32,6 +32,7 @@
         aria-label="新手引导"
         tabindex="-1"
         class="absolute bg-surface-1 border border-medical-200 p-4 shadow-xl transition-all duration-300 chamfer-br flex flex-col gap-3 focus:outline-none"
+        :class="positioned ? 'opacity-100' : 'opacity-0'"
         :style="tooltipStyle"
     >
       <div class="flex items-center justify-between border-b border-medical-100 pb-2">
@@ -116,7 +117,9 @@ const steps = [
   },
   {
     targetId: 'tutorial-chat',
-    content: '点击浮动按钮打开聊天窗口，可以和其他人聊天或查看记录。按钮可以拖动。'
+    mobileTargetId: 'tutorial-chat-mobile',
+    content: '点击浮动按钮打开聊天窗口，可以和其他人聊天或查看记录。按钮可以拖动。',
+    mobileContent: '点击右上角的聊天按钮，可以和其他人聊天或查看记录。'
   },
   {
     targetId: 'tutorial-source',
@@ -135,6 +138,8 @@ const currentDisplayContent = computed(() => {
 
 const tooltipRef = ref(null);
 const tooltipStyle = ref({});
+// 首次定位完成前不要从 (0,0) 滑进来：那一段 300ms 的 transition 就是一次跳动
+const positioned = ref(false);
 const arrowClass = ref('');
 
 // 既已宣告 aria-modal，就必须把键盘锁在浮层内——否则 Tab 会跑到底层控件，
@@ -254,6 +259,10 @@ const updatePosition = async () => {
   
   // 将箭头位置注入 style
   tooltipStyle.value['--arrow-left'] = `${clampedArrowLeft}px`;
+
+  // 等样式真正落到节点上再显示，避免初始帧从左上角滑到目标位置
+  await nextTick();
+  positioned.value = true;
 };
 
 useEventListener(window, 'keydown', (e) => {

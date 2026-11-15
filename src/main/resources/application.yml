@@ -29,6 +29,8 @@ app:
       cookie: ${NETEASE_COOKIE:}
       quality: ${NETEASE_QUALITY:exhigh}
       enabled: ${NETEASE_ENABLED:true}
+      # 取流地址解析总预算：上游不回包时不能长时间占住串行下载队列
+      resolve-timeout-seconds: ${NETEASE_RESOLVE_TIMEOUT:30}
     bilibili:
       # Bilibili API base URL, it's public
       base-url: "https://api.bilibili.com"
@@ -38,6 +40,11 @@ app:
       enabled: ${SOUNDCLOUD_ENABLED:true}
       search-limit: ${SOUNDCLOUD_SEARCH_LIMIT:30}
       fetch-limit: ${SOUNDCLOUD_FETCH_LIMIT:100}
+    soundcloud-oauth:
+      client-id: ${SOUNDCLOUD_CLIENT_ID:}
+      client-secret: ${SOUNDCLOUD_CLIENT_SECRET:}
+      redirect-uri: ${SOUNDCLOUD_REDIRECT_URI:}
+      api-base: ${SOUNDCLOUD_API_BASE:https://api.soundcloud.com}
     ytmusic:
       enabled: ${YTMUSIC_ENABLED:true}
       search-limit: ${YTMUSIC_SEARCH_LIMIT:30}
@@ -60,6 +67,10 @@ app:
       timeout-seconds: ${YT_DLP_TIMEOUT_SECONDS:45}
       # 单曲下载上限：原 900s 会让一首卡死的曲目堵住串行队列达 15 分钟
       download-timeout-seconds: ${YT_DLP_DOWNLOAD_TIMEOUT_SECONDS:180}
+      # SoundCloud 是 HLS 分片流；4 路并发单曲 ~8s 且批量稳定（8 路虽更快但会被 CDN 限流）
+      download-concurrency: ${YT_DLP_DOWNLOAD_CONCURRENCY:4}
+      # yt-dlp 源（SoundCloud / YTMusic）下载任务之间的冷却（毫秒）；直链源固定 3s
+      download-cooldown-ms: ${YT_DLP_DOWNLOAD_COOLDOWN_MS:1000}
     auth:
       rate-limit:
         enabled: ${AUTH_RATE_LIMIT_ENABLED:true}

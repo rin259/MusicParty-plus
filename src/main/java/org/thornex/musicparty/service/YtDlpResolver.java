@@ -24,7 +24,16 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class YtDlpResolver {
 
-    public record TrackMetadata(String id, String title, String artist, long durationMs, String thumbnail, String sourceUrl) {}
+    /**
+     * @param sourceUrl 解析/校验用的地址（可能指向 API 端点）
+     * @param pageUrl   用户可读的源站页面地址；拿不到时为 null（SoundCloud 的数字 id 拼不出页面）
+     */
+    public record TrackMetadata(String id, String title, String artist, long durationMs, String thumbnail,
+                                String sourceUrl, String pageUrl) {
+        public TrackMetadata(String id, String title, String artist, long durationMs, String thumbnail, String sourceUrl) {
+            this(id, title, artist, durationMs, thumbnail, sourceUrl, null);
+        }
+    }
     public record DownloadedAudio(Path file, String extension) {}
     public record SoundCloudUser(String handle, String name, String avatarUrl) {}
     public record PlaylistMetadata(String id, String name, String coverUrl, int trackCount) {}
@@ -33,6 +42,7 @@ public class YtDlpResolver {
     private final boolean enabled;
     private final long timeoutSeconds;
     private final long downloadTimeoutSeconds;
+    private final int downloadConcurrency;
     private final ObjectMapper objectMapper;
     private static final String BUVID3 = java.util.UUID.randomUUID().toString().toUpperCase() + "infoc";
 
@@ -41,6 +51,7 @@ public class YtDlpResolver {
         this.enabled = appProperties.getYtDlp().isEnabled();
         this.timeoutSeconds = appProperties.getYtDlp().getTimeoutSeconds();
         this.downloadTimeoutSeconds = appProperties.getYtDlp().getDownloadTimeoutSeconds();
+        this.downloadConcurrency = Math.clamp(appProperties.getYtDlp().getDownloadConcurrency(), 1, 64);
         this.objectMapper = objectMapper;
     }
 
@@ -106,14 +117,107 @@ public class YtDlpResolver {
                 .timeout(Duration.ofSeconds(timeoutSeconds + 5));
     }
 
+    /** playlistId → 曲目总数（5 分钟缓存；-1 表示未知） */
+    private final java.util.Map<String, Integer> playlistCountCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Long> playlistCountAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 公开 Set 的曲目。
+     *
+     * <p>坑（2026-11 实测）：
+     *  - 只把 offset/limit 传给 --playlist-start/--playlist-end 时，曲目数少于 offset 的 set
+     *    仍然返回整份（offset=50 也拿回同样的 3 首）→ 前端重复、提前判定到结尾；
+     *  - 一次取全量对 140 首的 set 会超时（yt-dlp 逐条抽取元数据）。
+     * 所以：先用 --flat-playlist 拿「总数」（快，2s 级，缓存 5 分钟），再按范围抽取并夹住上界。
+     */
     public Mono<List<TrackMetadata>> getSoundCloudPlaylistTracks(String playlistId, int offset, int limit) {
         requireEnabled();
         int safeOffset = Math.max(0, offset);
         int safeLimit = Math.clamp(limit, 1, 100);
+        return Mono.fromCallable(() -> {
+                    int count = playlistCount(playlistId);
+                    if (count >= 0 && safeOffset >= count) return List.<TrackMetadata>of();
+
+                    int end = count >= 0 ? Math.min(count, safeOffset + safeLimit) : safeOffset + safeLimit;
+                    List<TrackMetadata> items = parseSearchResult(runJsonCommand(List.of(
+                            "--dump-single-json",
+                            "--playlist-start", String.valueOf(safeOffset + 1),
+                            "--playlist-end", String.valueOf(end),
+                            "https://api.soundcloud.com/playlists/" + playlistId)), "soundcloud");
+
+                    // 某些 yt-dlp 版本会忽略范围、直接返回整份：按请求窗口截断
+                    int window = end - safeOffset;
+                    if (items.size() > window) items = new java.util.ArrayList<>(items.subList(0, window));
+                    return items;
+                })
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(Duration.ofSeconds(timeoutSeconds + 5));
+    }
+
+    /** playlistId → 曲目 id 列表（flat 抽取，5 分钟缓存） */
+    private final java.util.Map<String, List<String>> playlistIdsCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 只取歌单的曲目 id 列表（--flat-playlist，秒级）。元数据由 api-v2 的 /tracks?ids= 批量补全，
+     * 因为逐条完整抽取在 140 首的歌单上会超时。
+     */
+    public Mono<List<String>> getSoundCloudPlaylistTrackIds(String playlistId) {
+        requireEnabled();
+        return Mono.fromCallable(() -> playlistIdsCache.computeIfAbsent(playlistId, key -> {
+                    List<String> ids = new java.util.ArrayList<>();
+                    try {
+                        JsonNode node = objectMapper.readTree(runJsonCommand(List.of(
+                                "--flat-playlist", "--dump-single-json",
+                                "https://api.soundcloud.com/playlists/" + key)));
+                        for (JsonNode entry : node.path("entries")) {
+                            String id = entry.path("id").asText("");
+                            if (!id.isBlank()) ids.add(id);
+                        }
+                    } catch (RuntimeException error) {
+                        log.warn("Could not list SoundCloud playlist {}: {}", key, error.getMessage());
+                    } catch (Exception error) {
+                        log.warn("Could not parse SoundCloud playlist {}: {}", key, error.getMessage());
+                    }
+                    return ids;
+                }))
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(Duration.ofSeconds(timeoutSeconds + 5));
+    }
+
+    /** 曲目总数：--flat-playlist 只取列表，不抽取每条元数据，快得多。 */
+    private int playlistCount(String playlistId) {
+        Long at = playlistCountAt.get(playlistId);
+        if (at != null && System.currentTimeMillis() - at < 5 * 60 * 1000L) {
+            Integer cached = playlistCountCache.get(playlistId);
+            if (cached != null) return cached;
+        }
+        try {
+            String json = runJsonCommand(List.of("--flat-playlist", "--dump-single-json",
+                    "https://api.soundcloud.com/playlists/" + playlistId));
+            JsonNode node = objectMapper.readTree(json);
+            JsonNode entries = node.path("entries");
+            int count = entries.isArray() ? entries.size() : -1;
+            if (count >= 0) {
+                playlistCountCache.put(playlistId, count);
+                playlistCountAt.put(playlistId, System.currentTimeMillis());
+            }
+            return count;
+        } catch (RuntimeException error) {
+            return -1;
+        } catch (Exception error) {
+            return -1;
+        }
+    }
+
+    /** 用户「喜欢的音乐」：api-v2 不可用时的最后兜底。 */
+    public Mono<List<TrackMetadata>> getSoundCloudUserLikes(String handle, int offset, int limit) {
+        requireEnabled();
+        int safeOffset = Math.max(offset, 0);
+        int safeLimit = Math.clamp(limit, 1, 100);
         return Mono.fromCallable(() -> parseSearchResult(runJsonCommand(List.of(
                         "--dump-single-json", "--playlist-start", String.valueOf(safeOffset + 1),
                         "--playlist-end", String.valueOf(safeOffset + safeLimit),
-                        "https://api.soundcloud.com/playlists/" + playlistId)), "soundcloud"))
+                        soundCloudProfileUrl(handle) + "/likes")), "soundcloud"))
                 .subscribeOn(Schedulers.boundedElastic())
                 .timeout(Duration.ofSeconds(timeoutSeconds + 5));
     }
@@ -225,6 +329,9 @@ public class YtDlpResolver {
                 executable, "--no-playlist", "--no-warnings", "--no-progress", "--no-simulate",
                 "--format", "bestaudio", "--retries", "5", "--fragment-retries", "10",
                 "--file-access-retries", "3", "--socket-timeout", "30", "--continue",
+                // SoundCloud 的 bestaudio 是 HLS（96k aac）：不并发分片时单曲要 ~20s，
+                // 4 路并发实测 ~8s 且批量时不会触发 CDN 限流；非 HLS 源会忽略这个参数。
+                "--concurrent-fragments", String.valueOf(downloadConcurrency),
                 "--output", outputTemplate,
                 "--print", "after_move:__MUSIC_PARTY_FILE__:%(filepath)s",
                 sourceUrl
@@ -342,6 +449,8 @@ public class YtDlpResolver {
         if (sourceUrl.isBlank()) sourceUrl = node.path("url").asText();
         if ("ytmusic".equals(platform)) sourceUrl = "https://music.youtube.com/watch?v=" + id;
         if (sourceUrl.isBlank()) return null;
-        return new TrackMetadata(id, title, artist.isBlank() ? "Unknown" : artist, durationMs, thumbnail, sourceUrl);
+        // api.soundcloud.com 是接口地址，不是可读页面，不能当跳转链接
+        String pageUrl = sourceUrl.contains("api.soundcloud.com") ? null : sourceUrl;
+        return new TrackMetadata(id, title, artist.isBlank() ? "Unknown" : artist, durationMs, thumbnail, sourceUrl, pageUrl);
     }
 }

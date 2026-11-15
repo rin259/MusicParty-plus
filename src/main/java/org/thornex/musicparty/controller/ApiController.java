@@ -1,6 +1,9 @@
 package org.thornex.musicparty.controller;
 
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.Music;
@@ -12,6 +15,8 @@ import org.thornex.musicparty.dto.SourceHealth;
 import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.service.LinkResolverService;
 import org.thornex.musicparty.service.SourceHealthService;
+
+import java.net.URI;
 import org.thornex.musicparty.service.api.IMusicApiService;
 import reactor.core.publisher.Mono;
 
@@ -19,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+@Slf4j
 @RestController
 @RequestMapping("/api")
 public class ApiController {
@@ -107,17 +113,40 @@ public class ApiController {
         return linkResolverService.resolve(url);
     }
 
+    /**
+     * 由曲目 ID 反查源站页面并 302 过去。
+     * 老队列里没有存页面地址（SoundCloud 的数字 ID 拼不出链接），封面跳转用它兜底，
+     * 落到 soundcloud.com/artist/track 而不是搜索页。
+     */
+    @GetMapping("/track/url")
+    public Mono<ResponseEntity<Void>> trackPageUrl(@RequestParam String platform, @RequestParam String id) {
+        return getService(platform).resolvePageUrl(id)
+                .filter(url -> url != null && !url.isBlank())
+                .map(url -> ResponseEntity.status(HttpStatus.FOUND).location(URI.create(url)).<Void>build())
+                .defaultIfEmpty(ResponseEntity.notFound().build());
+    }
+
     @GetMapping("/user/playlists/{platform}/{userId}")
     public Mono<List<Playlist>> getUserPlaylists(@PathVariable String platform, @PathVariable String userId) {
         return getService(platform).getUserPlaylists(userId);
     }
 
     @GetMapping("/playlist/songs/{platform}/{playlistId}")
-    public Mono<List<Music>> getPlaylistSongs(@PathVariable String platform,
-                                              @PathVariable String playlistId,
-                                              @RequestParam(defaultValue = "0") int offset,
-                                              @RequestParam(defaultValue = "20") int limit) {
-        return getService(platform).getPlaylistMusics(playlistId, offset, limit);
+    public Mono<ResponseEntity<List<Music>>> getPlaylistSongs(@PathVariable String platform,
+                                                              @PathVariable String playlistId,
+                                                              @RequestParam(defaultValue = "0") int offset,
+                                                              @RequestParam(defaultValue = "20") int limit) {
+        log.info("playlist songs request: platform={} id={} offset={} limit={}",
+                platform, playlistId, offset, limit);
+        return getService(platform).getPlaylistMusicsPaged(playlistId, offset, limit)
+                .map(page -> {
+                    log.info("playlist songs response: platform={} id={} offset={} -> {} items, next={}, hasMore={}",
+                            platform, playlistId, offset, page.items().size(), page.nextOffset(), page.hasMore());
+                    return ResponseEntity.ok()
+                            .header("X-Playlist-Next-Offset", String.valueOf(page.nextOffset()))
+                            .header("X-Playlist-Has-More", String.valueOf(page.hasMore()))
+                            .body(page.items());
+                });
     }
 
     @GetMapping("/user/search/{platform}/{keyword}")

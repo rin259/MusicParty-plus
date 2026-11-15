@@ -6,7 +6,7 @@
     <div v-if="index !== undefined" class="w-6 text-center font-mono text-xs text-medical-500">{{ String(index + 1).padStart(2, '0') }}</div>
     <div v-else class="w-6 text-center font-mono text-xs text-medical-500">#</div>
 
-    <div class="flex-1 min-w-0 pr-[5.5rem] md:pr-0">
+    <div class="flex-1 min-w-0 pr-[6.5rem] md:pr-0">
       <div class="text-sm font-bold text-medical-800 truncate">{{ item.music.name }}</div>
       <div class="flex justify-between items-center">
         <div v-if="!item.status || item.status === 'READY'" class="flex min-w-0 items-center gap-1.5">

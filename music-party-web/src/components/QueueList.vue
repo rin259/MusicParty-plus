@@ -2,7 +2,7 @@
   <div id="tutorial-queue" class="h-full flex flex-col bg-surface-1 border-l border-medical-200">
     <div class="p-4 bg-medical-50 border-b border-medical-200 flex justify-between items-center">
       <div class="min-w-0">
-        <h3 class="text-sm font-bold text-medical-900">播放队列 <span class="text-accent-text text-xs">[{{ queue.length }}]</span></h3>
+        <h2 class="m-0 text-sm font-bold text-medical-900">播放队列 <span class="text-accent-text text-xs">[{{ queue.length }}]</span></h2>
         <div class="mt-0.5 font-mono text-[9px] tracking-[0.14em] text-medical-500 tabular-nums">
           READY {{ readyCount }}
           <span class="mx-1 text-medical-300">|</span>
@@ -124,7 +124,10 @@ const etaLabel = computed(() => {
   const ms = nextItems.value.reduce((sum, item) => sum + (item.music?.duration || 0), 0);
   if (!ms) return '—:—';
   const total = Math.round(ms / 1000);
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
 });
 
 const failedChip = ref(null);

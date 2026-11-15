@@ -3,64 +3,68 @@
   <!-- 全局 Toast 挂载点 -->
   <ToastNotification />
 
-  <div class="h-screen w-screen overflow-hidden font-sans transition-colors duration-500">
-    <AudioEngine />
-    <!-- 1. 认证遮罩 -->
-    <AuthOverlay @unlocked="userStore.isAuthPassed = true" v-if="!userStore.isAuthPassed" />
+  <div
+      class="w-full font-sans transition-colors duration-500"
+      :class="roomStore.entered ? 'h-app overflow-hidden' : 'min-h-app overflow-x-hidden'"
+  >
+    <!-- 0. 房间选择 / 创建（landing） -->
+    <RoomLanding v-if="!roomStore.entered" />
 
-    <!-- 2. 启动页 (Start Screen) -->
-    <!-- 注意：点击 Connect 后，我们先不销毁它，直到 socket 连接成功，或者直接切换布局 -->
-    <div v-if="userStore.isAuthPassed && !hasStarted" class="absolute inset-0 z-40 bg-medical-50 flex flex-col items-center justify-center space-y-8">
-      <h1 class="text-4xl font-bold tracking-tighter text-medical-900">MUSIC PARTY</h1>
-      <p class="font-mono text-xs text-medical-500 tracking-widest">SYSTEM READY</p>
+    <template v-else>
+      <AudioEngine />
+
+      <!-- 自动播放被浏览器拦截时，必须在真实点击手势里重新 play()；放这里以便精简模式也能看到 -->
       <button
-          @click="startGame"
-          class="px-12 py-4 min-h-12 bg-surface-strong text-white font-bold text-xl hover:bg-accent hover:text-accent-fg transition-colors chamfer-br"
+          v-if="player.audioBlocked"
+          type="button"
+          @click="resumeAudio"
+          class="fixed left-1/2 z-[75] flex min-h-11 -translate-x-1/2 items-center gap-2 border border-accent bg-accent px-4 font-mono text-[11px] font-bold text-accent-fg shadow-2xl"
+          :class="uiStore.isLiteMode
+              ? 'bottom-[max(1.5rem,env(safe-area-inset-bottom))]'
+              : 'bottom-[calc(env(safe-area-inset-bottom)+9rem)] md:bottom-28'"
+          aria-label="点击开启声音"
       >
-        CONNECT
+        <VolumeX class="h-4 w-4" />
+        点击开启声音
       </button>
-    </div>
 
-    <!-- 3. 主界面 (当 hasStarted 为 true 时显示) -->
-    <MainLayout v-if="hasStarted" @search="handleSearchClick">
-      <!-- 中间插槽: 视觉控制台 -->
-      <CenterConsole />
+      <!-- 主界面 -->
+      <MainLayout v-if="hasStarted" @search="handleSearchClick">
+        <CenterConsole />
+        <template #player>
+          <PlayerControl />
+        </template>
+      </MainLayout>
 
-      <!-- 底部插槽: 播放器 -->
-      <!-- 注意：这里不使用 v-if，而是 v-show，或者因为在 MainLayout 里是 slot，
-           只有 MainLayout 渲染了，它才会渲染。
-           关键是 useAudio 里的逻辑已经修好了，会自动处理播放。
-      -->
-      <template #player>
-        <PlayerControl />
-      </template>
-    </MainLayout>
-
-    <!-- 4. 全局弹窗 -->
-    <SearchModal :isOpen="showSearch" @close="showSearch = false" />
-    <NamePromptModal />
-    <ChatOverlay v-if="hasStarted && !uiStore.isLiteMode" />
-    <TutorialOverlay v-if="hasStarted && !uiStore.isLiteMode" />
-    <AdminAuthModal />
-    <AdminDashboard />
+      <!-- 全局弹窗 -->
+      <SearchModal :isOpen="showSearch" @close="showSearch = false" />
+      <NamePromptModal />
+      <ChatOverlay v-if="hasStarted && !uiStore.isLiteMode" />
+      <TutorialOverlay v-if="hasStarted && !uiStore.isLiteMode" />
+      <AdminAuthModal />
+      <AdminDashboard />
+    </template>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { onUnmounted, ref, watch, nextTick } from 'vue';
+import { VolumeX } from 'lucide-vue-next';
 import { useEventListener } from '@vueuse/core';
 import { usePlayerStore } from './stores/player';
 import { useUserStore } from './stores/user';
 import { useUiStore } from './stores/ui';
 import { useAdminStore } from './stores/admin';
 import { useChatStore } from './stores/chat';
+import { useRoomStore } from './stores/room';
+import { setPageScrollable } from './utils/viewport';
 
 // Components
 import MainLayout from './components/layout/MainLayout.vue';
 import CenterConsole from './components/CenterConsole.vue';
 import PlayerControl from './components/PlayerControl.vue';
 import AudioEngine from './components/AudioEngine.vue';
-import AuthOverlay from './components/AuthOverlay.vue';
+import RoomLanding from './components/RoomLanding.vue';
 import SearchModal from './components/SearchModal.vue';
 import NamePromptModal from './components/NamePromptModal.vue';
 import ChatOverlay from './components/ChatOverlay.vue';
@@ -76,6 +80,18 @@ const adminStore = useAdminStore();
 const hasStarted = ref(false);
 const showSearch = ref(false);
 const chatStore = useChatStore();
+const roomStore = useRoomStore();
+
+// landing 用文档级滚动（body 默认 overflow:hidden 会裁掉长页面）；
+// 进入房间后恢复锁定，避免主界面被页面滚动带着跑。
+const syncPageScroll = () => {
+  setPageScrollable(!roomStore.entered);
+};
+watch(() => roomStore.entered, syncPageScroll, { immediate: true });
+onUnmounted(() => {
+  document.body.classList.remove('mp-scrollable');
+  document.documentElement.classList.remove('mp-scrollable');
+});
 
 // 键盘可达性(antislop R-32)：Escape 自上而下关闭最上层浮层
 useEventListener(window, 'keydown', (e) => {
@@ -95,17 +111,27 @@ useEventListener(window, 'keydown', (e) => {
   showSearch.value = true;
 });
 
-const startGame = () => {
-  hasStarted.value = true;
-  player.connect();
-};
-
-// 自动性能优化：切后台自动进入精简模式
-useEventListener(document, 'visibilitychange', () => {
-  if (document.visibilityState === 'hidden' && hasStarted.value && !player.isPaused && uiStore.autoLiteMode) {
-    uiStore.isLiteMode = true;
+// 进入/离开房间只以 roomStore.entered 为准：
+// landing 组件在 entered 变 true 的同一 tick 会被卸载，从子组件 emit 出来的事件可能丢失。
+watch(() => roomStore.entered, async (entered) => {
+  // landing 是可滚动的长页，房间是固定的单屏：切换时把文档滚动归零，
+  // 否则从房间回到 landing 会停在上一次的滚动位置（看起来像页面自己跳了）。
+  await nextTick();
+  window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  if (entered) {
+    hasStarted.value = true;
+    player.connect();
+  } else {
+    hasStarted.value = false;
+    player.disconnect();
+    // 房间级状态必须一起清掉，不能让上一个房间的聊天/在线列表带到落地页
+    chatStore.messages = [];
+    chatStore.unreadCount = 0;
+    userStore.setOnlineUsers([]);
   }
 });
+
+const resumeAudio = () => window.dispatchEvent(new CustomEvent('music-party:resume-audio'));
 
 const handleSearchClick = () => {
   // 游客也可先逛：只在「加入队列」时才要求起名，并保留这次点歌意图。

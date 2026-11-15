@@ -50,7 +50,8 @@ const {
   handleError,
   handleBufferingStart,
   handleBufferingEnd,
-  checkAutoPlay
+  checkAutoPlay,
+  resumeAudio
 } = useAudio(audioRef, player);
 
 const audioSrc = computed(() => player.nowPlaying?.music.url || '');
@@ -122,7 +123,10 @@ const enableSpectrum = () => {
   publishSpectrum();
 };
 
+const onResumeAudio = () => resumeAudio();
+
 onMounted(() => {
+  window.addEventListener('music-party:resume-audio', onResumeAudio);
   if (audioRef.value) {
     audioRef.value.volume = ui.volume;
     audioRef.value.addEventListener('play', enableSpectrum, { once: true });
@@ -137,6 +141,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('music-party:resume-audio', onResumeAudio);
   cancelAnimationFrame(visualizerFrame);
   audioContext?.close();
 });

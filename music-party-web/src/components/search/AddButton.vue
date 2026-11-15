@@ -1,7 +1,7 @@
 <template>
   <button
       type="button"
-      class="ml-2 flex min-h-10 min-w-10 flex-shrink-0 items-center justify-center p-2 transition-all duration-300"
+      class="ml-2 flex min-h-11 min-w-11 flex-shrink-0 items-center justify-center p-2 transition-all duration-300"
       :class="buttonClass"
       :disabled="disabled"
       :title="title"

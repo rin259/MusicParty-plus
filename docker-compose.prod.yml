@@ -42,7 +42,7 @@ services:
       - .env.production
     environment:
       NETEASE_API_URL: http://netease-api:3000
-      BASE_URL: https://music.example.com:50820
+      BASE_URL: https://ajdgsu.online:50820
       APP_AUTHOR_NAME: MusicParty
       APP_BACK_WORDS: MUSIC PARTY
       NETEASE_ENABLED: "true"

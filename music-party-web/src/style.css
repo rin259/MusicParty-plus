@@ -87,6 +87,7 @@
 
 body {
   @apply bg-medical-50 text-medical-800 font-sans antialiased overflow-hidden;
+  -webkit-text-size-adjust: 100%;
   transition: background-color 380ms cubic-bezier(.22, 1, .36, 1), color 380ms cubic-bezier(.22, 1, .36, 1);
 }
 
@@ -94,6 +95,56 @@ html, #app {
   background: rgb(var(--medical-50));
   transition: background-color 380ms cubic-bezier(.22, 1, .36, 1), color 380ms cubic-bezier(.22, 1, .36, 1);
 }
+
+html { scrollbar-gutter: stable; }
+
+/*
+ * 视口高度。
+ * - 应用壳用 dvh：键盘/地址栏变化时桌面端无影响，移动端仍占满可视高度。
+ * - landing 是可文档滚动的长页，用 svh（最小视口）做下限：Safari 地址栏
+ *   收起/展开时 svh 不变，页面不会跟着工具栏上下弹。
+ */
+.h-app { height: 100vh; height: 100dvh; }
+.min-h-app { min-height: 100vh; min-height: 100svh; }
+
+/* landing 需要文档级滚动：body 默认 overflow:hidden 会把 min-h 页面直接裁掉 */
+body.mp-scrollable {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: none;
+}
+html.mp-scrollable { height: auto; }
+
+/* 移动端滚动容器：iOS 惯性滚动 + 不把滚动传给背后页面 */
+.mp-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* 聊天列表自己做锚点补偿（兼容老 Safari），关掉浏览器原生锚定避免双倍修正 */
+.chat-scroll { overflow-anchor: none; scrollbar-gutter: stable; }
+
+/* 去掉移动端 300ms 点击延迟（不改变布局） */
+button, [role="button"], a, input[type="range"] {
+  touch-action: manipulation;
+}
+
+/*
+ * iOS Safari：输入框字号 <16px 会在聚焦时自动放大整个页面，缩放后
+ * visualViewport/键盘计算全部失真。移动端强制 16px（视觉层级靠 padding/字重维持）。
+ */
+@supports (-webkit-touch-callout: none) {
+  @media (max-width: 767px) {
+    input, textarea, select, [contenteditable="true"] {
+      font-size: 16px !important;
+    }
+  }
+}
+
+/* 刘海/底部指示条安全区 */
+.safe-bottom { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }
+.safe-top { padding-top: max(0.5rem, env(safe-area-inset-top)); }
 
 /* 暗色模式经 CSS 变量天然翻转；仅阴影需要单独调暗。 */
 html.dark .shadow-lg,
@@ -170,7 +221,7 @@ html.theme-transition *::after {
   animation: scan 1s linear infinite;
 }
 
-/* 工业风 range：音量与精简模式共用同一套轨道/滑块 */
+/* 工业风 range：音量滑块 */
 input[type="range"].mp-range {
   -webkit-appearance: none;
   appearance: none;

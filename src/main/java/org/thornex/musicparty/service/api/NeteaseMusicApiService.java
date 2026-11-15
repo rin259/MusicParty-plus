@@ -17,6 +17,7 @@ import org.thornex.musicparty.dto.UserSearchResult;
 import org.thornex.musicparty.enums.CacheStatus;
 import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.service.LocalCacheService;
+import org.thornex.musicparty.service.LocalCacheService.DownloadPriority;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -39,6 +40,7 @@ public class NeteaseMusicApiService implements IMusicApiService {
     private final String initialCookieFromConfig;
     private final String quality;
     private final LocalCacheService localCacheService;
+    private final Duration resolveTimeout;
     private volatile String currentCookie;
     private static final String PLATFORM = "netease";
 
@@ -54,6 +56,8 @@ public class NeteaseMusicApiService implements IMusicApiService {
         this.initialCookieFromConfig = appProperties.getNetease().getCookie();
         this.quality = appProperties.getNetease().getQuality();
         this.localCacheService = localCacheService;
+        this.resolveTimeout = Duration.ofSeconds(
+                Math.max(1L, appProperties.getNetease().getResolveTimeoutSeconds()));
         // 初始化时先使用配置文件的内容
         this.currentCookie = initialCookieFromConfig;
     }
@@ -272,7 +276,7 @@ public class NeteaseMusicApiService implements IMusicApiService {
                 .map(music -> {
                     String localUrl = localCacheService.getLocalUrl(cacheId(musicId));
                     if (localUrl == null) {
-                        prefetchMusic(musicId);
+                        prefetchMusic(musicId, DownloadPriority.URGENT);
                     }
                     return new PlayableMusic(
                             music.id(), music.name(), music.artists(), music.duration(), music.platform(),
@@ -283,6 +287,11 @@ public class NeteaseMusicApiService implements IMusicApiService {
 
     @Override
     public void prefetchMusic(String musicId) {
+        prefetchMusic(musicId, DownloadPriority.NORMAL);
+    }
+
+    @Override
+    public void prefetchMusic(String musicId, DownloadPriority priority) {
         ensureConfigured();
         String cacheId = cacheId(musicId);
         CacheStatus status = localCacheService.getStatus(cacheId);
@@ -298,7 +307,7 @@ public class NeteaseMusicApiService implements IMusicApiService {
                                 "User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
                         ),
                         extensionFor(url)
-                )));
+                )), priority);
     }
 
     /**
@@ -318,7 +327,13 @@ public class NeteaseMusicApiService implements IMusicApiService {
                 levels.add(level);
             }
         }
-        return resolveMusicUrl(musicId, levels, 0);
+        // 实测 2026-11-10：网易云网关偶发「连接建立成功但整段不回包」，
+        // 没有总预算时单个任务会把串行下载队列堵满 4 分钟（外层 TASK_TIMEOUT），
+        // 期间其他用户点的歌全部排在后面。重试 + 降档整体不超过 resolveTimeout。
+        return resolveMusicUrl(musicId, levels, 0)
+                .timeout(resolveTimeout)
+                .onErrorMap(TimeoutException.class, error -> new ApiRequestException(
+                        "网易云取流地址解析超时（" + resolveTimeout.toSeconds() + "s），已跳过本曲"));
     }
 
     private Mono<String> resolveMusicUrl(String musicId, List<String> levels, int index) {

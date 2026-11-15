@@ -1,22 +1,62 @@
 <!-- src/components/layout/MainLayout.vue -->
 <script setup>
-import { ref, onMounted } from 'vue';
-import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun } from 'lucide-vue-next';
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
+import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare } from 'lucide-vue-next';
 import UserList from '../UserList.vue';
 import QueueList from '../QueueList.vue';
 import CoverImage from '../CoverImage.vue';
 import { useUserStore } from '../../stores/user';
 import { useUiStore } from '../../stores/ui';
 import { usePlayerStore } from '../../stores/player';
+import { useRoomStore } from '../../stores/room';
+import { useChatStore } from '../../stores/chat';
+import { useToast } from '../../composables/useToast';
 
 const emit = defineEmits(['search']);
 const userStore = useUserStore();
 const uiStore = useUiStore();
 const playerStore = usePlayerStore();
+const roomStore = useRoomStore();
+const chatStore = useChatStore();
+const { success } = useToast();
+
+const switchRoom = () => {
+  mobileMenuOpen.value = false;
+  // App 监听 roomStore.entered，会自动断开连接并清空房间状态
+  roomStore.leave();
+};
+
+const inviteLink = computed(() => `${window.location.origin}${window.location.pathname}?room=${roomStore.roomId}`);
+
+/** 房间码就是邀请凭证：优先系统分享，其次复制链接，最后退回手选。 */
+const invite = async () => {
+  mobileMenuOpen.value = false;
+  const title = roomStore.currentName || 'MUSIC PARTY';
+  const link = inviteLink.value;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: `加入「${title}」一起听歌`, text: `房间码 ${roomStore.roomId}`, url: link });
+      return;
+    } catch (e) {
+      if (e?.name === 'AbortError') return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(link);
+    success(`邀请链接已复制 · 房间码 ${roomStore.roomId}`);
+  } catch {
+    window.prompt('复制邀请链接', link);
+  }
+};
+
+const closeChat = () => {
+  if (chatStore.isOpen) chatStore.toggleChat();
+};
 
 onMounted(() => {
   uiStore.fetchConfig();
 });
+
 
 const mobileQueueOpen = ref(false);
 const mobileUserOpen = ref(false);
@@ -24,15 +64,28 @@ const mobileMenuOpen = ref(false);
 
 const toggleMobileQueue = () => {
   mobileQueueOpen.value = !mobileQueueOpen.value;
-  if(mobileQueueOpen.value) mobileUserOpen.value = false;
+  if(mobileQueueOpen.value) { mobileUserOpen.value = false; closeChat(); }
   mobileMenuOpen.value = false;
 };
 
 const toggleMobileUser = () => {
   mobileUserOpen.value = !mobileUserOpen.value;
-  if(mobileUserOpen.value) mobileQueueOpen.value = false;
+  if(mobileUserOpen.value) { mobileQueueOpen.value = false; closeChat(); }
   mobileMenuOpen.value = false;
 };
+
+const toggleMobileMenu = () => {
+  mobileMenuOpen.value = !mobileMenuOpen.value;
+  if (mobileMenuOpen.value) { mobileQueueOpen.value = false; mobileUserOpen.value = false; closeChat(); }
+};
+
+watch([mobileMenuOpen, mobileQueueOpen, mobileUserOpen], ([menu, queue, users]) => {
+  uiStore.mobileOverlayOpen = !!(menu || queue || users);
+});
+
+onUnmounted(() => {
+  uiStore.mobileOverlayOpen = false;
+});
 
 const handleSearchClick = () => {
   mobileMenuOpen.value = false;
@@ -41,13 +94,31 @@ const handleSearchClick = () => {
 </script>
 
 <template>
-  <div class="h-[100dvh] w-screen flex flex-col relative overflow-hidden bg-medical-50">
+  <div class="h-app w-full flex flex-col relative overflow-hidden bg-medical-50">
     <!-- 1. 顶部栏 Header -->
-    <header v-if="!uiStore.isLiteMode" class="h-14 bg-surface-1 border-b border-medical-200 flex justify-between items-center gap-3 px-3 md:px-6 flex-shrink-0 relative z-50">
+    <header v-if="!uiStore.isLiteMode" class="min-h-14 pt-[env(safe-area-inset-top)] bg-surface-1 border-b border-medical-200 flex justify-between items-center gap-3 px-3 md:px-6 flex-shrink-0 relative z-50">
       <div class="flex min-w-0 items-center gap-2">
         <div class="w-2.5 h-2.5 md:w-3 md:h-3 bg-accent flex-shrink-0"></div>
-        <div class="min-w-0 flex items-baseline gap-1">
-          <h1 class="font-bold text-sm md:text-xl tracking-tighter text-medical-900 whitespace-nowrap m-0">MUSIC PARTY</h1>
+        <div class="min-w-0 flex flex-col justify-center">
+          <h1 class="font-bold text-sm md:text-xl tracking-tighter text-medical-900 whitespace-nowrap m-0 leading-tight">MUSIC PARTY</h1>
+          <span class="sm:hidden truncate max-w-[7.5rem] font-mono text-[9px] leading-4 tracking-[0.08em] text-medical-500">{{ roomStore.currentName }}</span>
+        </div>
+        <div class="hidden sm:flex min-w-0 items-center gap-2 ml-1">
+          <span class="font-mono text-[10px] text-medical-500 truncate max-w-[120px] md:max-w-[180px]" :title="roomStore.currentName">
+            {{ roomStore.currentName }}
+          </span>
+          <button
+              type="button"
+              @click="switchRoom"
+              class="inline-flex min-h-11 items-center font-mono text-[9px] tracking-[0.12em] px-1.5 border border-medical-200 bg-medical-50 text-medical-500 hover:border-accent hover:text-accent-text transition-colors"
+              title="切换房间"
+          >SWITCH</button>
+          <button
+              type="button"
+              @click="invite"
+              class="flex min-h-11 items-center gap-1 border border-medical-200 bg-medical-50 px-1.5 font-mono text-[9px] tracking-[0.12em] text-medical-500 transition-colors hover:border-accent hover:text-accent-text"
+              title="复制邀请链接"
+          ><Share2 class="h-3 w-3" />INVITE</button>
         </div>
       </div>
 
@@ -79,20 +150,26 @@ const handleSearchClick = () => {
       </div>
 
       <div class="flex md:hidden items-center gap-2 flex-shrink-0">
+        <!-- 移动端聊天入口放在头部：不再用浮动 launcher，避免它压在歌词/曲目卡片和播放器上 -->
         <button
-            @click="uiStore.toggleTheme"
-            class="flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 text-medical-600 transition-colors rounded-sm"
-            :title="uiStore.theme === 'dark' ? '切换浅色模式' : '切换深色模式'"
-            :aria-label="uiStore.theme === 'dark' ? '切换浅色模式' : '切换深色模式'"
+            id="tutorial-chat-mobile"
+            @click="chatStore.toggleChat"
+            :aria-expanded="chatStore.isOpen"
+            class="relative flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 text-medical-600 transition-colors rounded-sm"
+            :class="chatStore.unreadCount > 0 ? 'border-accent text-accent-text' : ''"
+            aria-label="聊天"
         >
-          <Sun v-if="uiStore.theme === 'dark'" class="w-5 h-5" />
-          <Moon v-else class="w-5 h-5" />
+          <MessageSquare class="w-5 h-5" />
+          <span
+              v-if="chatStore.unreadCount > 0"
+              class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 font-mono text-[9px] font-bold leading-none text-accent-fg shadow-sm"
+          >{{ chatStore.unreadCount > 99 ? '99+' : chatStore.unreadCount }}</span>
         </button>
         <button id="tutorial-search-mobile" @click="handleSearchClick" class="flex items-center justify-center w-11 h-11 border border-accent bg-accent hover:bg-accent-hover font-bold text-sm text-accent-fg transition-all rounded-sm" aria-label="添加歌曲">
           <Search class="w-5 h-5" />
         </button>
         <button
-            @click="mobileMenuOpen = !mobileMenuOpen"
+            @click="toggleMobileMenu"
             class="flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 text-medical-600 transition-colors rounded-sm"
             :class="mobileMenuOpen ? 'bg-medical-200 text-medical-900 border-medical-300' : 'hover:bg-medical-100'"
             :aria-expanded="mobileMenuOpen"
@@ -114,12 +191,26 @@ const handleSearchClick = () => {
           role="dialog"
           aria-modal="true"
           aria-label="菜单"
-          class="md:hidden fixed inset-y-0 right-0 z-[70] w-[min(18rem,calc(100vw-1rem))] bg-surface-1 border-l border-medical-200 shadow-2xl p-4 flex flex-col gap-3"
+          class="md:hidden fixed inset-y-0 right-0 z-[70] w-[min(18rem,calc(100vw-1rem))] bg-surface-1 border-l border-medical-200 shadow-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] flex flex-col gap-3 overflow-y-auto mp-scroll"
       >
         <div class="flex items-center justify-between border-b border-medical-200 pb-3">
           <span class="font-mono text-xs font-bold text-medical-500">MENU</span>
           <button @click="mobileMenuOpen = false" class="flex items-center justify-center w-11 h-11 -mr-2 text-medical-500 hover:text-medical-900" aria-label="关闭菜单"><X class="w-5 h-5" /></button>
         </div>
+        <button
+            @click="switchRoom"
+            class="w-full min-h-11 flex items-center justify-between gap-2 p-3 border border-medical-200 bg-medical-50 text-medical-700"
+        >
+          <span class="flex items-center gap-2 text-sm font-bold"><LogOut class="w-4 h-4" /> 切换房间</span>
+          <span class="font-mono text-[10px] text-medical-500 truncate max-w-[7rem]">{{ roomStore.currentName }}</span>
+        </button>
+        <button
+            @click="invite"
+            class="w-full min-h-11 flex items-center justify-between gap-2 p-3 border border-accent/40 bg-accent/5 text-medical-800"
+        >
+          <span class="flex items-center gap-2 text-sm font-bold"><Share2 class="w-4 h-4" /> 邀请 / 房间码</span>
+          <span class="font-mono text-[10px] text-accent-text truncate max-w-[7rem]">{{ roomStore.roomId }}</span>
+        </button>
         <button id="tutorial-rename-mobile" @click="toggleMobileUser" class="w-full min-h-11 flex items-center justify-between p-3 border border-medical-200 bg-medical-50 text-medical-700">
           <span class="flex items-center gap-2 text-sm font-bold"><Users class="w-4 h-4" /> 在线用户</span>
           <span class="font-mono text-xs text-accent-text">{{ userStore.onlineUsers.length }}</span>
@@ -168,14 +259,14 @@ const handleSearchClick = () => {
     </div>
 
     <!-- 3. 精简模式视图 -->
-    <div v-else class="flex-1 flex flex-col items-center justify-center bg-medical-50 relative overflow-hidden p-6">
+    <div v-else class="relative flex-1 min-h-0 overflow-y-auto bg-medical-50 p-4 md:p-6 mp-scroll">
       <!-- 背景装饰 -->
-      <div class="absolute inset-0 z-0 pointer-events-none opacity-40">
+      <div class="fixed inset-0 z-0 pointer-events-none opacity-40">
         <div class="absolute inset-0 bg-[linear-gradient(rgb(var(--medical-900)/0.04)_1px,transparent_1px),linear-gradient(90deg,rgb(var(--medical-900)/0.04)_1px,transparent_1px)] bg-[size:32px_32px]"></div>
         <div class="absolute top-0 left-0 w-full h-full bg-[repeating-linear-gradient(45deg,transparent,transparent_20px,rgb(var(--medical-900)/0.03)_20px,rgb(var(--medical-900)/0.03)_21px)]"></div>
       </div>
 
-      <div class="relative z-10 w-full max-w-lg flex flex-col items-center gap-10">
+      <div class="relative z-10 mx-auto w-full max-w-lg flex flex-col items-center gap-6 md:gap-10 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         <!-- 头部状态 (文案简化) -->
         <div class="flex items-center gap-3 text-[11px] text-medical-500 tracking-[0.2em] uppercase font-sans">
           <Activity class="w-3 h-3 text-accent-text animate-pulse" />
@@ -233,24 +324,6 @@ const handleSearchClick = () => {
            </div>
         </div>
 
-        <!-- 后台自动精简开关 -->
-        <button
-            type="button"
-            role="switch"
-            :aria-checked="uiStore.autoLiteMode"
-            @click="uiStore.autoLiteMode = !uiStore.autoLiteMode"
-            class="flex items-center gap-2 cursor-pointer group select-none min-h-11"
-        >
-           <div class="relative w-8 h-4 rounded-full transition-colors duration-300 flex-shrink-0"
-                :class="uiStore.autoLiteMode ? 'bg-accent' : 'bg-medical-300'">
-             <div class="absolute left-0.5 top-0.5 w-3 h-3 bg-surface-1 rounded-full transition-transform duration-300"
-                  :style="{ transform: uiStore.autoLiteMode ? 'translateX(16px)' : 'translateX(0)' }"></div>
-           </div>
-           <span class="text-[11px] font-mono text-medical-500 group-hover:text-medical-600 transition-colors">
-              后台播放时自动进入精简模式
-           </span>
-        </button>
-
         <!-- 主操作：精简模式下也必须能点歌——否则访客的第一任务是隐藏的 -->
         <button
             type="button"
@@ -259,6 +332,15 @@ const handleSearchClick = () => {
         >
           <Search class="w-5 h-5" />
           <span class="text-sm tracking-widest">添加歌曲</span>
+        </button>
+
+        <button
+            type="button"
+            @click="switchRoom"
+            class="w-full border border-medical-200 text-medical-600 font-bold py-3 flex items-center justify-center gap-2 transition-all hover:border-accent hover:text-accent-text active:scale-[0.98]"
+        >
+          <LogOut class="w-4 h-4" />
+          <span class="text-xs tracking-widest uppercase">切换房间 · {{ roomStore.currentName }}</span>
         </button>
 
         <!-- 退出动作（次级） -->

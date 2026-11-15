@@ -1,3 +1,16 @@
+// 房间级广播频道：所有房间内的状态都从这里走，跨房间串消息在结构上不可能发生
+export const roomTopics = (roomId) => {
+    const id = roomId || 'main';
+    return {
+        TOPIC_EVENTS: `/topic/r/${id}/player/events`,
+        TOPIC_STATE: `/topic/r/${id}/player/state`,
+        TOPIC_QUEUE: `/topic/r/${id}/player/queue`,
+        TOPIC_USERS: `/topic/r/${id}/users/online`,
+        TOPIC_CHAT: `/topic/r/${id}/chat`,
+        TOPIC_SEEK: `/topic/r/${id}/player/seek`
+    };
+};
+
 // WebSocket 目的地
 export const WS_DEST = {
     // 发送指令 (Publish)
@@ -17,14 +30,7 @@ export const WS_DEST = {
     USER_RENAME: '/app/user/rename',
     RESYNC: '/app/player/resync',
 
-    // 订阅频道 (Subscribe)
-    TOPIC_EVENTS: '/topic/player/events',
-    TOPIC_STATE: '/topic/player/state',
-    TOPIC_QUEUE: '/topic/player/queue',
-    TOPIC_USERS: '/topic/users/online',
-    TOPIC_CHAT: '/topic/chat',
-    TOPIC_SEEK: '/topic/player/seek',
-
+    // 订阅频道请使用 roomTopics(roomId)，不要在这里写死全局频道
     // 个人频道
     USER_ME: '/app/user/me',
     USER_ME_UPDATE: '/user/queue/me',

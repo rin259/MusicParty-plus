@@ -12,6 +12,7 @@ import org.thornex.musicparty.controller.AuthController;
 import org.thornex.musicparty.event.RuntimeConfigChangedEvent;
 import org.thornex.musicparty.service.api.BilibiliMusicApiService;
 import org.thornex.musicparty.service.api.NeteaseMusicApiService;
+import org.thornex.musicparty.room.RoomRegistry;
 import org.thornex.musicparty.service.stream.LiveStreamService;
 
 import java.io.File;
@@ -30,7 +31,7 @@ public class RuntimeConfigService {
     private final ObjectMapper objectMapper;
     private final AppProperties appProperties;
     private final AuthController authController;
-    private final MusicPlayerService musicPlayerService;
+    private final RoomRegistry roomRegistry;
     private final NeteaseMusicApiService neteaseMusicApiService;
     private final BilibiliMusicApiService bilibiliMusicApiService;
     private final LiveStreamService liveStreamService;
@@ -39,12 +40,14 @@ public class RuntimeConfigService {
 
     @EventListener(ApplicationReadyEvent.class)
     public synchronized void restoreAtStartup() {
+        // 先确保默认房运行时已创建，配置才能应用到它身上
+        roomRegistry.mainRuntime();
         RuntimeConfig config = read();
         if (config != null) {
             apply(config);
             log.info("Runtime configuration restored from {}", getFile().getAbsolutePath());
         }
-        musicPlayerService.prefetchRestoredQueue();
+        roomRegistry.mainRuntime().player().prefetchRestoredQueue();
         ready = true;
         save();
     }
@@ -112,7 +115,7 @@ public class RuntimeConfigService {
         config.setRoomInitialized(authController.getRawPassword() != null);
         config.setRoomPassword(authController.getRawPassword());
         config.setStreamEnabled(liveStreamService.isEnabled());
-        config.setPlayer(musicPlayerService.getRuntimeSettings());
+        config.setPlayer(roomRegistry.mainRuntime().player().getRuntimeSettings());
 
         config.setQueueMaxSize(appProperties.getQueue().getMaxSize());
         config.setQueueHistorySize(appProperties.getQueue().getHistorySize());
@@ -149,7 +152,11 @@ public class RuntimeConfigService {
         if (config.getStreamEnabled() != null) {
             liveStreamService.setEnabled(config.getStreamEnabled());
         }
-        musicPlayerService.restoreRuntimeSettings(config.getPlayer());
+        if (config.getPlayer() != null) {
+            for (var runtime : roomRegistry.runtimes()) {
+                runtime.player().restoreRuntimeSettings(config.getPlayer());
+            }
+        }
     }
 
     private File getFile() {

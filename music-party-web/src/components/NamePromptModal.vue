@@ -1,7 +1,7 @@
 <!-- File: music-party-web/src/components/NamePromptModal.vue -->
 <template>
   <div v-if="userStore.showNameModal" class="fixed inset-0 z-[110] bg-scrim/90 backdrop-blur-sm flex items-center justify-center p-4">
-    <div ref="dialogRef" role="dialog" aria-modal="true" aria-labelledby="name-modal-title" aria-describedby="name-modal-help" class="bg-surface-1 p-6 w-full max-w-sm chamfer-br shadow-2xl relative">
+    <div ref="dialogRef" role="dialog" aria-modal="true" aria-labelledby="name-modal-title" aria-describedby="name-modal-help" class="bg-surface-1 p-6 w-[calc(100vw-2rem)] max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto chamfer-br shadow-2xl relative mp-scroll">
       <!-- 装饰条 -->
       <div class="absolute top-0 left-0 w-full h-0.5 bg-accent"></div>
 
@@ -16,6 +16,7 @@
           @keyup.enter="confirm"
           placeholder="ENTER CODENAME"
           aria-label="你的昵称"
+          @focus="revealOnFocus"
           class="w-full min-h-11 bg-medical-50 border border-medical-200 p-3 outline-none focus:border-accent font-bold mb-4 text-medical-900 placeholder:text-medical-500"
           autofocus
       />
@@ -39,6 +40,7 @@ import { ref, watch, computed } from 'vue';
 import { useUserStore } from '../stores/user';
 import { usePlayerStore } from '../stores/player';
 import { useFocusTrap } from '../composables/useFocusTrap';
+import { revealOnFocus } from '../utils/viewport';
 
 const userStore = useUserStore();
 const playerStore = usePlayerStore();
