@@ -232,6 +232,32 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         });
     }
 
+    private void invalidatePlaylistCache(String playlistId) {
+        if (playlistId == null) return;
+        if (playlistId.matches("\\d+")) {
+            playlistIdsCache.remove(playlistId);
+            return;
+        }
+        if (playlistId.startsWith(LIKES_PREFIX)) {
+            String handle = playlistId.substring(LIKES_PREFIX.length());
+            trackPages.keySet().removeIf(key -> key.startsWith(handle + "|"));
+            return;
+        }
+        if (playlistId.startsWith(MY_TRACKS_PREFIX)) {
+            String handle = playlistId.substring(MY_TRACKS_PREFIX.length());
+            trackPages.keySet().removeIf(key -> key.startsWith(handle + "|"));
+            return;
+        }
+        if (playlistId.startsWith(OWN_PLAYLIST_PREFIX)) {
+            String rest = playlistId.substring(OWN_PLAYLIST_PREFIX.length());
+            int split = rest.indexOf(':');
+            if (split > 0) {
+                String realId = rest.substring(split + 1);
+                trackPages.keySet().removeIf(key -> key.contains(realId));
+            }
+        }
+    }
+
     /**
      * 按 id 分页取公开 Set：因为「区域不可用」的曲目会被 /tracks?ids= 丢弃，
      * 直接按 offset+limit 取会得到短页，前端据此误判到底（提前 END OF PLAYLIST）。
@@ -239,6 +265,15 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
      */
     @Override
     public Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit) {
+        return getPlaylistMusicsPaged(playlistId, offset, limit, false);
+    }
+
+    @Override
+    public Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit, boolean refresh) {
+        if (refresh) {
+            log.info("Invalidating SoundCloud playlist cache for {}", playlistId);
+            invalidatePlaylistCache(playlistId);
+        }
         if (!playlistId.matches("\\d+")) {
             return getPlaylistMusics(playlistId, offset, limit)
                     .map(items -> PagedPlaylist.of(items, offset, limit));

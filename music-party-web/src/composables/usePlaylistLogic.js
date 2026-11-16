@@ -4,7 +4,13 @@ import { usePlayerStore } from '../stores/player.js';
 import { musicApi } from '../api/music.js';
 import { useDebounceFn } from '@vueuse/core';
 import { useToast } from './useToast';
-import { readPlaylistCache, writePlaylistCache } from '../logic/playlistCache.js';
+import {
+    readPlaylistCache,
+    writePlaylistCache,
+    updatePlaylistScrollTop,
+    getUserPlaylistsCache,
+    setUserPlaylistsCache
+} from '../logic/playlistCache.js';
 
 export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef) {
     const userStore = useUserStore();
@@ -26,7 +32,21 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     // 歌单缓存：切走时保存，切回时同步还原（含滚动位置）
     let viewportScrollTop = 0;
     let pendingRestoreScrollTop = 0;
-    const setPlaylistScrollTop = (value) => { viewportScrollTop = Math.max(0, Number(value) || 0); };
+    let updateScrollTimer = null;
+    const setPlaylistScrollTop = (value) => {
+        const top = Math.max(0, Number(value) || 0);
+        viewportScrollTop = top;
+        // 关键：滚动时防抖持久化，保证刷新标签页（F5）或异常关闭时滚动位置不丢
+        if (currentPlaylistId.value && listModeRef.value === 'playlist') {
+            if (updateScrollTimer) clearTimeout(updateScrollTimer);
+            updateScrollTimer = setTimeout(() => {
+                updateScrollTimer = null;
+                if (currentPlaylistId.value) {
+                    updatePlaylistScrollTop(platformRef.value, currentPlaylistId.value, top);
+                }
+            }, 250);
+        }
+    };
     const takeRestoreScrollTop = () => {
         const value = pendingRestoreScrollTop;
         pendingRestoreScrollTop = 0;
@@ -73,7 +93,16 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         }
 
         const key = `${platform}:${uid}`;
-        const cached = playlistsCache.get(key);
+        let cached = playlistsCache.get(key);
+        if (!cached) {
+            // 进程内存没有，从 localStorage 恢复，使刷新标签页也能瞬间显示
+            const persistent = getUserPlaylistsCache(platform, uid);
+            if (persistent && persistent.length) {
+                cached = persistent;
+                playlistsCache.set(key, cached);
+                playlistsCacheAt.set(key, Date.now() - (PLAYLISTS_FRESH_MS / 2));
+            }
+        }
         if (cached) playlists.value = cached;
         if (cached && Date.now() - (playlistsCacheAt.get(key) || 0) < PLAYLISTS_FRESH_MS) {
             // 一分钟内刚取过：直接用缓存，不再发请求
@@ -88,6 +117,7 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
             playlists.value = data || [];
             playlistsCache.set(key, playlists.value);
             playlistsCacheAt.set(key, Date.now());
+            setUserPlaylistsCache(platform, uid, playlists.value);
         } catch (e) {
             if (seq !== playlistsRequestSeq) return;
             console.error(e);
@@ -115,6 +145,7 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
                     if (!Array.isArray(data)) return;
                     playlistsCache.set(key, data);
                     playlistsCacheAt.set(key, Date.now());
+                    setUserPlaylistsCache(platform, uid, data);
                 })
                 .catch(() => { /* 预热失败无所谓，切过去时会正常重试 */ });
         });
@@ -255,8 +286,9 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         try {
             // page === 0 保证空歌单/首次加载失败后也能真正发一次请求。
             // 旧条件 fetched.length < target 在 target=0 时直接跳过循环，按钮点了等于没点。
+            // 关键：page === 0 传入 refresh=true，穿透后端的 5 分钟缓存，让 REFRESH LIST 真正更新源站数据
             for (let page = 0; page < 40 && serverHasMore && (page === 0 || fetched.length < target); page++) {
-                const res = await musicApi.getPlaylistSongsPage(plat, pid, nextHint, limit.value);
+                const res = await musicApi.getPlaylistSongsPage(plat, pid, nextHint, limit.value, page === 0);
                 // 刷新期间切了平台/歌单：迟到的响应不能覆盖新界面的数据
                 if (platformRef.value !== plat || currentPlaylistId.value !== pid) return;
                 const raw = res.data || [];

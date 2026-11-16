@@ -45,6 +45,7 @@ class SoundCloudPrivatePlaylistContractTest {
     private HttpServer server;
     private final List<String> authHeaders = new CopyOnWriteArrayList<>();
     private final AtomicInteger mePlaylistsCalls = new AtomicInteger();
+    private final AtomicInteger ownTracksCalls = new AtomicInteger();
     private YtDlpResolver resolver;
     private SoundCloudMusicApiService service;
 
@@ -73,6 +74,7 @@ class SoundCloudPrivatePlaylistContractTest {
 
         server.createContext("/playlists/soundcloud:playlists:111/tracks", exchange -> {
             record(exchange);
+            ownTracksCalls.incrementAndGet();
             respond(exchange, """
                     {"collection":[
                       {"urn":"soundcloud:tracks:9001","title":"Private A","duration":200000,
@@ -221,5 +223,23 @@ class SoundCloudPrivatePlaylistContractTest {
         service.getUserPlaylists("djtest").block();
         assertThat(authHeaders).isNotEmpty();
         assertThat(authHeaders).anyMatch(header -> header.equals("Bearer test-token") || header.equals("OAuth test-token"));
+    }
+
+    @Test
+    void cachesPlaylistTracksAndRefreshesOnDemand() {
+        // 第一次获取：调用后端接口
+        var first = service.getPlaylistMusicsPaged("own:djtest:111", 0, 50, false).block();
+        assertThat(first.items()).hasSize(2);
+        assertThat(ownTracksCalls.get()).isEqualTo(1);
+
+        // 第二次获取（普通模式）：命中缓存，调用次数不变
+        var cached = service.getPlaylistMusicsPaged("own:djtest:111", 0, 50, false).block();
+        assertThat(cached.items()).hasSize(2);
+        assertThat(ownTracksCalls.get()).as("未超时命中缓存").isEqualTo(1);
+
+        // 第三次获取（点击 REFRESH LIST）：refresh=true 穿透缓存，重新向源站拉取
+        var refreshed = service.getPlaylistMusicsPaged("own:djtest:111", 0, 50, true).block();
+        assertThat(refreshed.items()).hasSize(2);
+        assertThat(ownTracksCalls.get()).as("refresh=true 清除缓存重新拉取").isEqualTo(2);
     }
 }

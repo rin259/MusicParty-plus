@@ -28,6 +28,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.StreamSupport;
 
@@ -435,9 +436,27 @@ public class NeteaseMusicApiService implements IMusicApiService {
                 });
     }
 
+    /** 歌单列表缓存：列表内容很少变，避免频繁请求上游触发风控（与 SoundCloud 对齐，TTL 60s） */
+    private final Map<String, CachedPlaylists> userPlaylistsCache = new ConcurrentHashMap<>();
+    private static final long USER_PLAYLISTS_TTL_MS = 60_000L;
+    private record CachedPlaylists(List<Playlist> items, long at) {}
+
+    /** 歌单曲目缓存：与 SoundCloud 对齐，TTL 5 分钟，避免重复拉取上游 */
+    private final Map<String, CachedPlaylistTracks> playlistTracksCache = new ConcurrentHashMap<>();
+    private static final long PLAYLIST_TRACKS_TTL_MS = 5 * 60_000L;
+
+    private static final class CachedPlaylistTracks {
+        final Map<String, List<Music>> pages = new ConcurrentHashMap<>();
+        final long createdAt = System.currentTimeMillis();
+    }
+
     @Override
     public Mono<List<Playlist>> getUserPlaylists(String userId) {
         ensureConfigured();
+        CachedPlaylists cached = userPlaylistsCache.get(userId);
+        if (cached != null && System.currentTimeMillis() - cached.at() < USER_PLAYLISTS_TTL_MS) {
+            return Mono.just(cached.items());
+        }
         return webClient.get()
                 .uri(baseUrl + "/user/playlist?uid={userId}&cookie={cookie}", userId, getCookie())
                 .retrieve()
@@ -452,12 +471,37 @@ public class NeteaseMusicApiService implements IMusicApiService {
                             pl.path("trackCount").asInt(),
                             PLATFORM
                     )));
+                    if (userPlaylistsCache.size() > 128) userPlaylistsCache.clear();
+                    userPlaylistsCache.put(userId, new CachedPlaylists(List.copyOf(playlists), System.currentTimeMillis()));
                     return playlists;
                 });
     }
 
     @Override
+    public Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit) {
+        return getPlaylistMusicsPaged(playlistId, offset, limit, false);
+    }
+
+    @Override
+    public Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit, boolean refresh) {
+        if (refresh) {
+            log.info("Invalidating NetEase playlist cache for {}", playlistId);
+            playlistTracksCache.remove(playlistId);
+        }
+        return getPlaylistMusics(playlistId, offset, limit)
+                .map(items -> PagedPlaylist.of(items, offset, limit));
+    }
+
+    @Override
     public Mono<List<Music>> getPlaylistMusics(String playlistId, int offset, int limit) {
+        CachedPlaylistTracks cached = playlistTracksCache.get(playlistId);
+        if (cached != null && System.currentTimeMillis() - cached.createdAt < PLAYLIST_TRACKS_TTL_MS) {
+            String pageKey = offset + ":" + limit;
+            List<Music> cachedPage = cached.pages.get(pageKey);
+            if (cachedPage != null) {
+                return Mono.just(cachedPage);
+            }
+        }
         ensureConfigured();
         return webClient.get()
                 .uri(baseUrl + "/playlist/track/all?id={playlistId}&limit={limit}&offset={offset}&cookie={cookie}", playlistId, limit, offset, getCookie())
@@ -480,6 +524,9 @@ public class NeteaseMusicApiService implements IMusicApiService {
                                 songCoverUrl(song)
                         ));
                     });
+                    if (playlistTracksCache.size() > 128) playlistTracksCache.clear();
+                    CachedPlaylistTracks entry = playlistTracksCache.computeIfAbsent(playlistId, k -> new CachedPlaylistTracks());
+                    entry.pages.put(offset + ":" + limit, musicList);
                     return musicList;
                 });
     }

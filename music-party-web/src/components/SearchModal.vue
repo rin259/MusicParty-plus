@@ -734,10 +734,52 @@ const useRecent = (term) => {
   keyword.value = term;
   handleSearchAction();
 };
+const VIEW_STORAGE_KEY = 'mp_search_last_view';
+const rememberActiveView = () => {
+  try {
+    const data = {
+      platform: platform.value,
+      listMode: listMode.value,
+      playlistId: currentPlaylistId.value || null
+    };
+    localStorage.setItem(VIEW_STORAGE_KEY, JSON.stringify(data));
+  } catch { /* 隐私模式下忽略 */ }
+};
+
+let viewRestored = false;
+const tryRestoreLastView = async () => {
+  if (viewRestored) return;
+  viewRestored = true;
+  try {
+    const raw = JSON.parse(localStorage.getItem(VIEW_STORAGE_KEY) || '{}');
+    if (raw && raw.platform && isPlatformEnabled(raw.platform) && raw.platform !== 'all') {
+      if (raw.listMode === 'playlist' && raw.playlistId) {
+        platform.value = raw.platform;
+        await nextTick();
+        await handleSelectPlaylist(raw.playlistId);
+        return;
+      }
+    }
+  } catch { /* 忽略损坏数据 */ }
+};
+
+const onBeforeUnload = () => {
+  flushScrollPosition();
+  saveCurrentPlaylist();
+  rememberActiveView();
+};
+
 onMounted(() => {
   loadRecent();
   // 页面加载就预热歌单列表：SoundCloud 冷启动 ~1.5s，等用户点开面板时通常已经就绪
   prefetchPlaylists();
+  window.addEventListener('beforeunload', onBeforeUnload);
+  window.addEventListener('pagehide', onBeforeUnload);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload);
+  window.removeEventListener('pagehide', onBeforeUnload);
 });
 
 const handleSearchAction = async () => {
@@ -766,16 +808,37 @@ const importJob = computed(() => {
 });
 
 // === 交互胶水 ===
+const applyScrollTopRobust = (targetTop) => {
+  const target = Math.max(0, Math.round(targetTop || 0));
+  if (!contentScrollRef.value) return;
+  contentScrollRef.value.scrollTop = target;
+  if (target === 0) return;
+
+  // 关键：DOM 异步布局（图片、子组件展开）可能导致首帧 scrollHeight 不足而被截断
+  // 在接下来的几帧反复确认并补齐，直到 scrollTop 真正到位
+  let frames = 0;
+  const verify = () => {
+    const el = contentScrollRef.value;
+    if (!el || frames++ > 8) return;
+    if (Math.abs(el.scrollTop - target) > 2 && el.scrollHeight - el.clientHeight >= target) {
+      el.scrollTop = target;
+    }
+    requestAnimationFrame(verify);
+  };
+  requestAnimationFrame(verify);
+};
+
 const handleSelectPlaylist = async (pid) => {
   saveScrollPosition();
   playlistKeyword.value = '';
   await loadPlaylist(pid);
   mobileView.value = 'songs';
-  // 命中缓存时，列表内容已经就位，按缓存里的滚动位置还原才有意义
+  rememberActiveView();
+  // 命中缓存时，列表内容已经就位，按缓存里的滚动位置稳妥还原
   const cachedTop = takeRestoreScrollTop();
   await nextTick();
-  if (contentScrollRef.value && cachedTop > 0) {
-    contentScrollRef.value.scrollTop = cachedTop;
+  if (cachedTop > 0) {
+    applyScrollTopRobust(cachedTop);
   } else {
     restoreScrollPosition();
   }
@@ -853,7 +916,7 @@ const flushScrollPosition = () => {
 const restoreScrollPosition = async () => {
   await nextTick();
   if (contentScrollRef.value) {
-    contentScrollRef.value.scrollTop = savedScrollPositions.value[scrollKey()] || 0;
+    applyScrollTopRobust(savedScrollPositions.value[scrollKey()] || 0);
   }
 };
 
@@ -874,6 +937,7 @@ const onContentScroll = (event) => {
 const closeModal = () => {
   flushScrollPosition();
   saveCurrentPlaylist();
+  rememberActiveView();
   emit('close');
 };
 
@@ -882,10 +946,12 @@ const switchPlatform = (nextPlatform) => {
   flushScrollPosition();
   saveCurrentPlaylist();
   platform.value = nextPlatform;
+  rememberActiveView();
 };
 
 watch(listMode, (mode) => {
   if (mode === 'search') mobileView.value = 'songs';
+  rememberActiveView();
   if (props.isOpen) restoreScrollPosition();
 });
 
@@ -913,13 +979,15 @@ watch(playlistKeyword, (value) => {
 
 watch(() => props.isOpen, async (val) => {
   if (val) {
-    mobileView.value = supportsPlaylists.value ? 'playlists' : 'songs';
+    await tryRestoreLastView();
+    mobileView.value = supportsPlaylists.value && !currentPlaylistId.value ? 'playlists' : 'songs';
     await restoreScrollPosition();
     probeHealth();
     // 预取歌单列表：SoundCloud 冷启动约 1.5s，用户点开再切过去就不用等
     prefetchPlaylists();
   } else {
     saveScrollPosition();
+    rememberActiveView();
   }
 });
 </script>

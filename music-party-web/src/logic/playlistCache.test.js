@@ -9,8 +9,14 @@ globalThis.localStorage = {
   removeItem: (k) => store.delete(k)
 };
 
-const { readPlaylistCache, writePlaylistCache, dropPlaylistCache } =
-  await import('./playlistCache.js');
+const {
+  readPlaylistCache,
+  writePlaylistCache,
+  updatePlaylistScrollTop,
+  dropPlaylistCache,
+  getUserPlaylistsCache,
+  setUserPlaylistsCache
+} = await import('./playlistCache.js');
 
 const song = (id) => ({ id, name: `song-${id}`, artists: ['a'], duration: 1000 });
 
@@ -34,29 +40,61 @@ test('keeps platforms and playlists apart', () => {
   assert.equal(readPlaylistCache('soundcloud', 'p1').songs[0].id, 'b');
 });
 
-test('expires entries past the ttl', () => {
+test('expires entries past the 7-day ttl', () => {
   writePlaylistCache('netease', 'old', { songs: [song('x')], offset: 1, hasMore: false, scrollTop: 0 });
   const raw = JSON.parse(store.get('mp_playlist_cache_v2'));
-  raw['netease:old'].at = Date.now() - 31 * 60 * 1000;
+  // 超过 7 天
+  raw['netease:old'].at = Date.now() - 8 * 24 * 60 * 60 * 1000;
   store.set('mp_playlist_cache_v2', JSON.stringify(raw));
 
   assert.equal(readPlaylistCache('netease', 'old'), null);
 });
 
-test('evicts the least recently used beyond the cap', () => {
-  for (let i = 0; i < 10; i++) {
+test('survives within 7-day ttl without unexpected expiration', () => {
+  writePlaylistCache('netease', 'recent', { songs: [song('y')], offset: 1, hasMore: false, scrollTop: 100 });
+  const raw = JSON.parse(store.get('mp_playlist_cache_v2'));
+  // 2 天前
+  raw['netease:recent'].at = Date.now() - 2 * 24 * 60 * 60 * 1000;
+  store.set('mp_playlist_cache_v2', JSON.stringify(raw));
+
+  const entry = readPlaylistCache('netease', 'recent');
+  assert.ok(entry);
+  assert.equal(entry.scrollTop, 100);
+});
+
+test('lightweight updatePlaylistScrollTop updates scrollTop without rewriting whole object', () => {
+  writePlaylistCache('netease', 'scroll_test', {
+    songs: [song('s1')], offset: 10, hasMore: true, scrollTop: 0
+  });
+  updatePlaylistScrollTop('netease', 'scroll_test', 850);
+  const entry = readPlaylistCache('netease', 'scroll_test');
+  assert.equal(entry.scrollTop, 850);
+  assert.equal(entry.songs.length, 1);
+  assert.equal(entry.offset, 10);
+});
+
+test('evicts the least recently used beyond the 64 cap', () => {
+  for (let i = 0; i < 70; i++) {
     writePlaylistCache('netease', `p${i}`, { songs: [song(String(i))], offset: 1, hasMore: false, scrollTop: 0 });
   }
-  // 最多保留 8 个：最早的 p0/p1 应被淘汰
+  // 最多保留 64 个：最早的几个应被淘汰
   assert.equal(readPlaylistCache('netease', 'p0'), null);
-  assert.equal(readPlaylistCache('netease', 'p1'), null);
-  assert.ok(readPlaylistCache('netease', 'p9'));
+  assert.equal(readPlaylistCache('netease', 'p5'), null);
+  assert.ok(readPlaylistCache('netease', 'p69'));
 });
 
 test('drop removes a single entry', () => {
   writePlaylistCache('netease', 'gone', { songs: [song('z')], offset: 1, hasMore: false, scrollTop: 0 });
   dropPlaylistCache('netease', 'gone');
   assert.equal(readPlaylistCache('netease', 'gone'), null);
+});
+
+test('user playlists list caching works and survives', () => {
+  setUserPlaylistsCache('netease', 'u123', [{ id: 'pl1', name: '我的歌单' }]);
+  const cached = getUserPlaylistsCache('netease', 'u123');
+  assert.ok(Array.isArray(cached));
+  assert.equal(cached.length, 1);
+  assert.equal(cached[0].name, '我的歌单');
 });
 
 test('survives corrupt storage', () => {

@@ -35,6 +35,10 @@ public interface IMusicApiService {
     }
 
     default Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit) {
+        return getPlaylistMusicsPaged(playlistId, offset, limit, false);
+    }
+
+    default Mono<PagedPlaylist> getPlaylistMusicsPaged(String playlistId, int offset, int limit, boolean refresh) {
         return getPlaylistMusics(playlistId, offset, limit)
                 // 没有精确元数据的平台：按「本页是否满」推断，绝不能写死 false，
                 // 否则网易云/B站这类超过一页的歌单会立刻被判为到底。

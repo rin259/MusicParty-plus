@@ -18,12 +18,13 @@ export const musicApi = {
     getLyric: (platform, songId) => client.get(`/api/music/lyric/${platform}/${songId}`),
 
     // 获取用户歌单
-    getUserPlaylists: (platform, userId) => client.get(`/api/user/playlists/${platform}/${userId}`),
+    getUserPlaylists: (platform, userId, refresh = false) =>
+        client.get(`/api/user/playlists/${platform}/${userId}`, { params: refresh ? { refresh: true } : {} }),
 
     // 获取歌单详情 (分页)
-    getPlaylistSongsPage: (platform, playlistId, offset, limit) =>
+    getPlaylistSongsPage: (platform, playlistId, offset, limit, refresh = false) =>
         client.get(`/api/playlist/songs/${platform}/${encodeURIComponent(playlistId)}`,
-            { params: { offset, limit }, raw: true }),
+            { params: { offset, limit, ...(refresh ? { refresh: true } : {}) }, raw: true }),
 
     // 搜索用户
     searchUser: (platform, keyword) => client.get(`/api/user/search/${platform}`, { params: { keyword } }),

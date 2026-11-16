@@ -38,10 +38,21 @@ class NeteaseMusicApiServiceTest {
     /** 模拟「连接建立成功但一直不回包」的上游。 */
     private volatile long hangMillis = 0;
 
+    private final AtomicInteger playlistRequests = new AtomicInteger();
+    private final AtomicInteger trackRequests = new AtomicInteger();
+
     @BeforeEach
     void startStub() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/song/url/v1", this::handle);
+        server.createContext("/user/playlist", exchange -> {
+            playlistRequests.incrementAndGet();
+            respond(exchange, 200, "{\"code\":200,\"playlist\":[{\"id\":\"pl1\",\"name\":\"我的歌单\",\"trackCount\":10,\"coverImgUrl\":\"\"}]}");
+        });
+        server.createContext("/playlist/track/all", exchange -> {
+            trackRequests.incrementAndGet();
+            respond(exchange, 200, "{\"code\":200,\"songs\":[{\"id\":\"101\",\"name\":\"Song 101\",\"ar\":[{\"name\":\"Singer\"}],\"dt\":200000,\"al\":{\"picUrl\":\"\"}}]}");
+        });
         server.start();
     }
 
@@ -143,5 +154,36 @@ class NeteaseMusicApiServiceTest {
         assertThatThrownBy(() -> service().resolveMusicUrl("1").block())
                 .isInstanceOf(ApiRequestException.class);
         assertThat(requests.get()).as("每个音质档各试一次").isEqualTo(3);
+    }
+
+    @Test
+    void cachesUserPlaylistsToPreventRepeatedHits() {
+        NeteaseMusicApiService api = service();
+        var first = api.getUserPlaylists("user_1").block();
+        var second = api.getUserPlaylists("user_1").block();
+
+        assertThat(first).hasSize(1);
+        assertThat(second).hasSize(1);
+        assertThat(playlistRequests.get()).as("60s 内第二次调用命中缓存").isEqualTo(1);
+    }
+
+    @Test
+    void cachesPlaylistTracksAndRefreshesWhenRequested() {
+        NeteaseMusicApiService api = service();
+
+        // 第一次调用：网络请求
+        var first = api.getPlaylistMusicsPaged("pl1", 0, 50, false).block();
+        assertThat(first.items()).hasSize(1);
+        assertThat(trackRequests.get()).isEqualTo(1);
+
+        // 第二次调用（普通模式）：命中 5 分钟缓存，不产生新请求
+        var cached = api.getPlaylistMusicsPaged("pl1", 0, 50, false).block();
+        assertThat(cached.items()).hasSize(1);
+        assertThat(trackRequests.get()).as("5分钟内命中缓存不打网络").isEqualTo(1);
+
+        // 第三次调用（用户点击 REFRESH LIST）：refresh=true 穿透缓存，向上游刷新
+        var refreshed = api.getPlaylistMusicsPaged("pl1", 0, 50, true).block();
+        assertThat(refreshed.items()).hasSize(1);
+        assertThat(trackRequests.get()).as("refresh=true 穿透缓存重新获取").isEqualTo(2);
     }
 }
