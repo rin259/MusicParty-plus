@@ -13,6 +13,7 @@ import org.thornex.musicparty.service.YtDlpResolver;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -501,8 +502,12 @@ public class SoundCloudSearchClient {
     private JsonNode fetchByUrl(String url, String clientId) {
         String finalUrl = url.contains("client_id=") ? url
                 : (url + (url.contains("?") ? "&" : "?") + "client_id=" + clientId);
+        // 关键：url 里的 offset 游标包含 %2C、%3A 等已被转义的字符；
+        // 若直接传 String 给 uri(String)，Spring WebClient 会把它当模板再次转义（% -> %25），
+        // 导致 SoundCloud 上游抛出 400 Bad Request: ChronoParams.Cursor: invalid cursor format。
+        // 使用 URI.create 保持已有编码。
         return webClient.get()
-                .uri(finalUrl)
+                .uri(URI.create(finalUrl))
                 .retrieve()
                 .bodyToMono(JsonNode.class)
                 .block(REQUEST_TIMEOUT);
@@ -519,16 +524,20 @@ public class SoundCloudSearchClient {
     }
 
     private String resolveClientId(boolean forceRefresh) {
-        // 注册应用的 client_id 优先（不再依赖首页抓取）；401/403 时仍可回退到抓取
-        if (!forceRefresh && configuredClientId != null && !configuredClientId.isBlank()) {
-            return configuredClientId;
-        }
         String cached = clientId;
         if (!forceRefresh && cached != null) return cached;
         synchronized (this) {
             if (!forceRefresh && clientId != null) return clientId;
-            clientId = discoverClientId();
-            return clientId;
+            try {
+                clientId = discoverClientId();
+                return clientId;
+            } catch (Exception e) {
+                // 网页抓取失败时，回退到配置文件里配置的 client_id（若有）
+                if (configuredClientId != null && !configuredClientId.isBlank()) {
+                    return configuredClientId;
+                }
+                throw e;
+            }
         }
     }
 
