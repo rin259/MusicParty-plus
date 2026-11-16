@@ -241,6 +241,7 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
         if (playlistId.startsWith(LIKES_PREFIX)) {
             String handle = playlistId.substring(LIKES_PREFIX.length());
             trackPages.keySet().removeIf(key -> key.startsWith(handle + "|"));
+            searchClient.invalidateLikes(handle);
             return;
         }
         if (playlistId.startsWith(MY_TRACKS_PREFIX)) {

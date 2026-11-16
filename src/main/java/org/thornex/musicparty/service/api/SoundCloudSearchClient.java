@@ -16,6 +16,9 @@ import reactor.core.scheduler.Schedulers;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -300,9 +303,25 @@ public class SoundCloudSearchClient {
                 .block(REQUEST_TIMEOUT);
     }
 
+    /** 用户「喜欢的音乐」游标累积缓存（公开端点） */
+    private final Map<String, PublicLikesPage> publicLikesPages = new ConcurrentHashMap<>();
+
+    private static final class PublicLikesPage {
+        final List<YtDlpResolver.TrackMetadata> items = new ArrayList<>();
+        final Set<String> seen = new java.util.LinkedHashSet<>();
+        String nextHref;
+        boolean complete;
+        long at = System.currentTimeMillis();
+    }
+
+    public void invalidateLikes(String handle) {
+        if (handle != null) publicLikesPages.remove(handle);
+    }
+
     /**
      * 用户「喜欢的音乐」。公开 Sets 走 /users/{id}/playlists 拿不到点赞，
-     * 必须单独查 /users/{id}/likes——返回的是 like 对象，里面包着 track。
+     * 必须查 /users/{id}/likes。该端点使用游标分页，不认数字 offset（否则上游报 400
+     * ChronoParams.Cursor: invalid cursor format），因此必须按游标累积后再切片。
      */
     public Mono<List<YtDlpResolver.TrackMetadata>> likedTracks(String handle, int offset, int limit) {
         return Mono.fromCallable(() -> likesBlocking(handle, offset, limit))
@@ -315,31 +334,90 @@ public class SoundCloudSearchClient {
         int safeLimit = Math.clamp(limit, 1, 200);
         int safeOffset = Math.max(offset, 0);
 
-        JsonNode response;
-        try {
-            long userId = resolveUserId(handle, resolveClientId(false));
-            if (userId <= 0) return List.of();
-            response = fetchLikes(userId, safeOffset, safeLimit, resolveClientId(false));
-        } catch (WebClientResponseException error) {
-            int status = error.getStatusCode().value();
-            if (status == 401 || status == 403) {
-                try {
-                    long userId = resolveUserId(handle, resolveClientId(true));
-                    if (userId <= 0) return List.of();
-                    response = fetchLikes(userId, safeOffset, safeLimit, resolveClientId(true));
-                } catch (Exception retryError) {
-                    log.warn("SoundCloud likes fetch failed for {}: {}", handle, retryError.getMessage());
-                    return List.of();
-                }
-            } else {
-                log.warn("SoundCloud likes fetch failed for {} (status {}): {}", handle, status, error.getMessage());
-                return List.of();
+        PublicLikesPage page = publicLikesPages.computeIfAbsent(handle, k -> new PublicLikesPage());
+        synchronized (page) {
+            if (System.currentTimeMillis() - page.at > 5 * 60_000L) {
+                page.items.clear();
+                page.seen.clear();
+                page.nextHref = null;
+                page.complete = false;
+                page.at = System.currentTimeMillis();
             }
-        } catch (Exception error) {
-            log.warn("SoundCloud likes fetch unexpected error for {}: {}", handle, error.getMessage());
-            return List.of();
+
+            int want = safeOffset + safeLimit;
+            int guard = 0;
+            while (!page.complete && page.items.size() < want && guard++ < 20) {
+                JsonNode response = null;
+                try {
+                    String cId = resolveClientId(false);
+                    if (page.nextHref != null) {
+                        response = fetchByUrl(page.nextHref, cId);
+                    } else {
+                        long userId = resolveUserId(handle, cId);
+                        if (userId <= 0) { page.complete = true; break; }
+                        response = fetchInitialLikes(userId, 50, cId);
+                    }
+                } catch (WebClientResponseException error) {
+                    int status = error.getStatusCode().value();
+                    if (status == 401 || status == 403) {
+                        try {
+                            String freshId = resolveClientId(true);
+                            if (page.nextHref != null) {
+                                response = fetchByUrl(page.nextHref, freshId);
+                            } else {
+                                long userId = resolveUserId(handle, freshId);
+                                if (userId <= 0) { page.complete = true; break; }
+                                response = fetchInitialLikes(userId, 50, freshId);
+                            }
+                        } catch (Exception retryError) {
+                            log.warn("SoundCloud likes fetch retry failed for {}: {}", handle, retryError.getMessage());
+                            page.complete = true;
+                            break;
+                        }
+                    } else {
+                        log.warn("SoundCloud likes fetch failed for {} (status {}): {}", handle, status, error.getMessage());
+                        page.complete = true;
+                        break;
+                    }
+                } catch (Exception error) {
+                    log.warn("SoundCloud likes fetch unexpected error for {}: {}", handle, error.getMessage());
+                    page.complete = true;
+                    break;
+                }
+
+                if (response == null) {
+                    page.complete = true;
+                    break;
+                }
+
+                List<YtDlpResolver.TrackMetadata> batch = parseLikes(response);
+                if (batch.isEmpty()) {
+                    page.complete = true;
+                    page.nextHref = null;
+                    break;
+                }
+                int newItems = 0;
+                for (YtDlpResolver.TrackMetadata item : batch) {
+                    if (page.seen.add(item.id())) {
+                        page.items.add(item);
+                        newItems++;
+                    }
+                }
+                if (newItems == 0) {
+                    page.complete = true;
+                    page.nextHref = null;
+                    break;
+                }
+                String next = response.path("next_href").asText(null);
+                page.nextHref = (next != null && !next.isBlank()) ? next : null;
+                if (page.nextHref == null) {
+                    page.complete = true;
+                }
+            }
+
+            if (safeOffset >= page.items.size()) return List.of();
+            return new ArrayList<>(page.items.subList(safeOffset, Math.min(page.items.size(), safeOffset + safeLimit)));
         }
-        return parseLikes(response);
     }
 
     /** urn → 末尾数字：soundcloud:playlists:1212781357 → 1212781357 */
@@ -405,17 +483,26 @@ public class SoundCloudSearchClient {
         return node == null ? 0L : node.path("id").asLong(0L);
     }
 
-    private JsonNode fetchLikes(long userId, int offset, int limit, String clientId) {
+    private JsonNode fetchInitialLikes(long userId, int limit, String clientId) {
         return webClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .scheme("https")
                         .host("api-v2.soundcloud.com")
                         .path("/users/" + userId + "/likes")
                         .queryParam("limit", limit)
-                        .queryParam("offset", offset)
                         .queryParam("linked_partitioning", "1")
                         .queryParam("client_id", clientId)
                         .build())
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block(REQUEST_TIMEOUT);
+    }
+
+    private JsonNode fetchByUrl(String url, String clientId) {
+        String finalUrl = url.contains("client_id=") ? url
+                : (url + (url.contains("?") ? "&" : "?") + "client_id=" + clientId);
+        return webClient.get()
+                .uri(finalUrl)
                 .retrieve()
                 .bodyToMono(JsonNode.class)
                 .block(REQUEST_TIMEOUT);
