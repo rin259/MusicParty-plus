@@ -322,10 +322,22 @@ public class SoundCloudSearchClient {
             response = fetchLikes(userId, safeOffset, safeLimit, resolveClientId(false));
         } catch (WebClientResponseException error) {
             int status = error.getStatusCode().value();
-            if (status != 401 && status != 403) throw error;
-            long userId = resolveUserId(handle, resolveClientId(true));
-            if (userId <= 0) return List.of();
-            response = fetchLikes(userId, safeOffset, safeLimit, resolveClientId(true));
+            if (status == 401 || status == 403) {
+                try {
+                    long userId = resolveUserId(handle, resolveClientId(true));
+                    if (userId <= 0) return List.of();
+                    response = fetchLikes(userId, safeOffset, safeLimit, resolveClientId(true));
+                } catch (Exception retryError) {
+                    log.warn("SoundCloud likes fetch failed for {}: {}", handle, retryError.getMessage());
+                    return List.of();
+                }
+            } else {
+                log.warn("SoundCloud likes fetch failed for {} (status {}): {}", handle, status, error.getMessage());
+                return List.of();
+            }
+        } catch (Exception error) {
+            log.warn("SoundCloud likes fetch unexpected error for {}: {}", handle, error.getMessage());
+            return List.of();
         }
         return parseLikes(response);
     }

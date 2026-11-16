@@ -562,19 +562,27 @@ public class SoundCloudMusicApiService extends YtDlpMusicApiService {
     /**
      * 「喜欢的音乐」取数顺序：
      * 1) OAuth token 调 /me/likes/tracks（能拿到用户自己的完整点赞，含非公开项）
-     * 2) 退回 api-v2 /users/{id}/likes（公开点赞，无需授权）
-     * 3) 再退回 yt-dlp 的 likes 页面
+     * 2) 没有 token 时才退回 api-v2 /users/{id}/likes（公开点赞）
+     * 3) 最后退回 yt-dlp 的 likes 页面
      */
     private Mono<List<YtDlpResolver.TrackMetadata>> likedTracks(String handle, int offset, int limit) {
-        // 注意：switchIfEmpty 的参数会被立即求值——必须包 Mono.defer，
-        // 否则 token 成功时也会额外打一次公开接口（白费配额，还加速限流）
-        return userLikesWithToken(handle, offset, limit)
-                .filter(tracks -> !tracks.isEmpty())
-                .switchIfEmpty(Mono.defer(() -> searchClient.likedTracks(handle, offset, limit)))
-                .onErrorResume(error -> searchClient.likedTracks(handle, offset, limit))
+        if (oauthService.validAccessToken(handle).isPresent()) {
+            return userLikesWithToken(handle, offset, limit)
+                    .onErrorResume(error -> {
+                        log.warn("SoundCloud /me/likes/tracks failed for {}: {}", handle, error.getMessage());
+                        return Mono.just(List.of());
+                    });
+        }
+        return searchClient.likedTracks(handle, offset, limit)
+                .onErrorResume(error -> {
+                    log.warn("SoundCloud searchClient.likedTracks failed for {}, falling back to yt-dlp: {}",
+                            handle, error.getMessage());
+                    return resolver.getSoundCloudUserLikes(handle, offset, limit);
+                })
                 .flatMap(tracks -> tracks.isEmpty()
                         ? resolver.getSoundCloudUserLikes(handle, offset, limit)
-                        : Mono.just(tracks));
+                        : Mono.just(tracks))
+                .onErrorResume(error -> Mono.just(List.of()));
     }
 
     private Mono<List<YtDlpResolver.TrackMetadata>> userLikesWithToken(String handle, int offset, int limit) {
