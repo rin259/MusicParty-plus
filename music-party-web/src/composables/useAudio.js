@@ -36,20 +36,46 @@ export function useAudio(audioRef, playerStore) {
         }
     };
 
+    // Safari（尤其 iOS 16 以下）没有 MediaMetadata 构造器，或 mediaSession 只读属性会抛
+    const hasMediaSession = () => typeof navigator !== 'undefined' && 'mediaSession' in navigator;
+
+    const setPlaybackState = (state) => {
+        if (!hasMediaSession()) return;
+        try {
+            navigator.mediaSession.playbackState = state;
+        } catch {
+            /* Safari 会在没有元数据时抛 InvalidStateError */
+        }
+    };
+
+    /**
+     * Safari 在 metadata 还没加载时给 currentTime 赋值会抛
+     * InvalidStateError（"The operation is not supported"），
+     * 并且会把 250ms 的同步定时器整个打断。只在这两个条件都满足时seek。
+     */
+    const canSeek = (audio) => !!audio
+        && audio.readyState >= 1 /* HAVE_METADATA */
+        && Number.isFinite(audio.duration);
+
     // 更新系统媒体中心 (锁屏控制)
     const updateMediaSession = () => {
-        if (!('mediaSession' in navigator) || !playerStore.nowPlaying) return;
+        if (!hasMediaSession() || !playerStore.nowPlaying || typeof MediaMetadata === 'undefined') return;
 
         const music = playerStore.nowPlaying.music;
 
-        // 1. 设置元数据
-        navigator.mediaSession.metadata = new MediaMetadata({
-            title: music.name,
-            artist: music.artists.join(' / '),
-            artwork: [
-                { src: music.coverUrl, sizes: '512x512', type: 'image/png' }
-            ]
-        });
+        // 1. 设置元数据（Safari 对空 src 的 artwork 会抛，过滤掉）
+        const artwork = music.coverUrl
+            ? [{ src: music.coverUrl, sizes: '512x512', type: 'image/png' }]
+            : [];
+        try {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: music.name,
+                artist: music.artists.join(' / '),
+                artwork
+            });
+        } catch (err) {
+            console.warn('Media Session metadata warning:', err);
+        }
 
         // 2. 注册控制事件 (关键：告诉系统我们支持后台控制)
         // 这样点击锁屏的下一首/暂停，会通过 WebSocket 发送给服务器
@@ -127,24 +153,30 @@ export function useAudio(audioRef, playerStore) {
         if (!audioRef.value) return;
         if (newPaused) {
             audioRef.value.pause();
-            navigator.mediaSession.playbackState = 'paused';
+            setPlaybackState('paused');
             releaseWakeLock();
         } else {
             safePlay();
-            navigator.mediaSession.playbackState = 'playing';
+            setPlaybackState('playing');
         }
     });
 
     // === 3. 监听切歌 ===
     watch(() => playerStore.nowPlaying?.music?.id, () => {
         // 更新媒体中心信息 (锁屏显示)
-        if ('mediaSession' in navigator && playerStore.nowPlaying) {
+        if (hasMediaSession() && playerStore.nowPlaying && typeof MediaMetadata !== 'undefined') {
             const music = playerStore.nowPlaying.music;
-            navigator.mediaSession.metadata = new MediaMetadata({
-                title: music.name,
-                artist: music.artists.join(' / '),
-                artwork: [{ src: music.coverUrl, sizes: '512x512', type: 'image/png' }]
-            });
+            try {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: music.name,
+                    artist: music.artists.join(' / '),
+                    artwork: music.coverUrl
+                        ? [{ src: music.coverUrl, sizes: '512x512', type: 'image/png' }]
+                        : []
+                });
+            } catch (err) {
+                console.warn('Media Session metadata warning:', err);
+            }
         }
 
         retryCount.value = 0;
@@ -208,7 +240,10 @@ export function useAudio(audioRef, playerStore) {
         if (!audioRef.value || !playerStore.nowPlaying) return;
         const durationMs = playerStore.nowPlaying.music.duration || 0;
         const positionMs = Math.max(0, Math.min(Number(event.detail) || 0, durationMs));
-        audioRef.value.currentTime = positionMs / 1000;
+        // Safari：元数据没就绪时赋值 currentTime 会抛 InvalidStateError
+        if (canSeek(audioRef.value)) {
+            audioRef.value.currentTime = positionMs / 1000;
+        }
         localProgress.value = positionMs;
         lastForcedSyncAt = Date.now();
         if (!playerStore.isPaused) safePlay();
@@ -254,7 +289,7 @@ export function useAudio(audioRef, playerStore) {
                 // Repeat rewinds are authoritative server jumps, not ordinary drift correction.
                 if (repeatRestart && Date.now() - lastRepeatRestartAt >= 1000) {
                     lastRepeatRestartAt = Date.now();
-                    audio.currentTime = targetTime / 1000;
+                    if (canSeek(audio)) audio.currentTime = targetTime / 1000;
                     safePlay();
                     return;
                 }
@@ -262,7 +297,7 @@ export function useAudio(audioRef, playerStore) {
                 // 如果是暂停状态，强制对齐
                 if (playerStore.isPaused) {
                     // 避免重复赋值导致杂音
-                    if (Math.abs(audioRef.value.currentTime * 1000 - targetTime) > 200) {
+                    if (canSeek(audio) && Math.abs(audioRef.value.currentTime * 1000 - targetTime) > 200) {
                         audioRef.value.currentTime = targetTime / 1000;
                     }
                 }
