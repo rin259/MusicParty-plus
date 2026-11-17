@@ -13,6 +13,8 @@
  *    高頻燈隨鑔片/齒音閃動；於是背景的「哪一顆亮」本身就是頻譜信息的空間化。
  *  - 低解析度畫布再放大：柔化天然，光斑使用预绘制精灵。
  */
+import { getVisualTheme } from './themeRuntime.js';
+
 const COUNT = 16;
 const MIN_HZ = 20;
 const MAX_HZ = 16000;
@@ -37,7 +39,7 @@ const WHITE_LIGHT = [212, 218, 228];
 const srgbToLinear = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
 const linearToSrgb = (v) => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
 /** t = 0 → 低頻（橙），t = 1 → 高頻（白端） */
-export const pointLightColor = (t, white) => ORANGE.map((c, channel) => {
+export const pointLightColor = (t, white, accent = ORANGE) => accent.map((c, channel) => {
     const a = srgbToLinear(c / 255);
     const b = srgbToLinear(white[channel] / 255);
     return Math.round(linearToSrgb(a + (b - a) * t) * 255);
@@ -220,6 +222,12 @@ export class PointLights {
     /** 预渲染 16×2 张宽柔光斑，不逐帧创建渐变。 */
     buildSprites() {
         if (typeof document === 'undefined') return;
+        const accent = getVisualTheme().accent;
+        this._accentKey = accent.join(',');
+        this.palettes = {
+            light: Array.from({ length: COUNT }, (_, i) => pointLightColor(i / (COUNT - 1), WHITE_LIGHT, accent)),
+            dark: Array.from({ length: COUNT }, (_, i) => pointLightColor(i / (COUNT - 1), WHITE_DARK, accent))
+        };
         // Preserve broad radius and mid-halo intensity (~0.45 at 45% radius).
         // A flat-topped Gaussian shoulder and zero-slope tail avoid a pin-core
         // or a hard circular rim. Separation comes from exposure, not tighter spots.
@@ -327,6 +335,7 @@ export class PointLights {
     draw(dt) {
         const { ctx, width, height } = this;
         if (!ctx || !width || !height) return;
+        if (getVisualTheme().accent.join(',') !== this._accentKey) this.buildSprites();
 
         this.flash *= Math.pow(0.87, dt * 60);
         this.crowd *= Math.pow(0.998, dt * 60);

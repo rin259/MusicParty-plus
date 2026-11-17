@@ -92,7 +92,7 @@
           <div
               v-if="!player.isErrorState"
               class="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 rotate-45 transition-all duration-150 bg-accent group-hover/progress:scale-150"
-              :class="isSeeking ? 'scale-150 shadow-[0_0_8px_rgba(249,115,22,0.65)]' : ''"
+              :class="isSeeking ? 'scale-150 shadow-[0_0_8px_rgb(var(--accent)/0.65)]' : ''"
           ></div>
         </div>
         <div v-if="isSeeking" class="absolute bottom-full mb-1 -translate-x-1/2 rounded-sm bg-scrim px-2 py-1 font-mono text-[11px] text-white shadow-lg" :style="{ left: progressPercent + '%' }">

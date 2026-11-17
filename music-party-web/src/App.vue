@@ -2,6 +2,7 @@
 <template>
   <!-- 全局 Toast 挂载点 -->
   <ToastNotification />
+  <ThemeSettings />
 
   <div
       class="w-full font-sans transition-colors duration-500"
@@ -73,6 +74,8 @@ import ToastNotification from './components/ToastNotification.vue';
 import TutorialOverlay from './components/TutorialOverlay.vue';
 import AdminAuthModal from './components/AdminAuthModal.vue';
 import AdminDashboard from './components/AdminDashboard.vue';
+import ThemeSettings from './components/ThemeSettings.vue';
+import { useAppearanceStore } from './stores/appearance';
 
 const player = usePlayerStore();
 const userStore = useUserStore();
@@ -82,6 +85,22 @@ const hasStarted = ref(false);
 const showSearch = ref(false);
 const chatStore = useChatStore();
 const roomStore = useRoomStore();
+const appearanceStore = useAppearanceStore();
+watch(() => [uiStore.appearanceSource, player.nowPlaying?.music?.coverUrl], async ([source, cover], _, onCleanup) => {
+  const controller = new AbortController();
+  onCleanup(() => controller.abort());
+  uiStore.setMonetAccent(null);
+  if (source !== 'monet' || !cover) return;
+  try {
+    const { extractCoverColor } = await import('./logic/monet.js');
+    if (controller.signal.aborted) return;
+    const color = await extractCoverColor(cover, { signal: controller.signal });
+    if (!controller.signal.aborted) uiStore.setMonetAccent(color);
+  } catch {
+    // Offline/stale chunk failures must not break the app or its audio engine.
+    if (!controller.signal.aborted) uiStore.setMonetAccent(null);
+  }
+}, { immediate: true });
 
 // landing 用文档级滚动（body 默认 overflow:hidden 会裁掉长页面）；
 // 进入房间后恢复锁定，避免主界面被页面滚动带着跑。
@@ -97,6 +116,7 @@ onUnmounted(() => {
 // 键盘可达性(antislop R-32)：Escape 自上而下关闭最上层浮层
 useEventListener(window, 'keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (appearanceStore.isOpen) return; // native appearance dialog owns Escape, not the room below it
   if (adminStore.showAuthModal) { adminStore.showAuthModal = false; return; }
   if (userStore.showNameModal) { userStore.showNameModal = false; return; }
   if (adminStore.showDashboard) { adminStore.showDashboard = false; return; }
@@ -107,6 +127,7 @@ useEventListener(window, 'keydown', (e) => {
 // Cmd/Ctrl+K：随处唤起搜索（房间内、无更高层浮层时）
 useEventListener(window, 'keydown', (e) => {
   if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'k') return;
+  if (appearanceStore.isOpen) return;
   if (!hasStarted.value || adminStore.showAuthModal || adminStore.showDashboard || userStore.showNameModal) return;
   e.preventDefault();
   showSearch.value = true;

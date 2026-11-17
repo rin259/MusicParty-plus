@@ -43,7 +43,7 @@
               <div class="bg-surface-1 border border-medical-200 shadow-sm overflow-hidden chamfer-br">
                 <div class="p-3 bg-surface-strong text-white flex items-center justify-between">
                   <div class="flex items-center gap-2">
-                    <PlayCircle class="w-4 h-4 text-accent-text" />
+                    <PlayCircle class="w-4 h-4 text-accent-on-strong" />
                     <span class="text-xs font-bold uppercase tracking-widest font-mono">播放核心 / Playback_Core</span>
                   </div>
                   <span class="text-[11px] font-mono text-white/70">{{ playerStore.nowPlaying ? 'ON_AIR' : 'IDLE' }} · Q{{ playerStore.queue.length }}</span>
@@ -219,7 +219,7 @@
                 <h4 class="text-danger text-[11px] font-bold flex items-center gap-2 uppercase tracking-tighter">
                   <AlertTriangle class="w-4 h-4" /> 危险区域 / DANGER_ZONE.SH
                 </h4>
-                <button @click="handleReset" class="w-full py-2 bg-danger text-white font-bold text-[11px] hover:brightness-110 transition-all uppercase tracking-widest shadow-sm">
+                <button @click="handleReset" class="w-full py-2 bg-danger text-danger-fg font-bold text-[11px] hover:brightness-110 transition-all uppercase tracking-widest shadow-sm">
                   全系统重置 (慎用)
                 </button>
               </div>

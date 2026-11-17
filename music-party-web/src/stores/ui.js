@@ -1,8 +1,9 @@
 // src/stores/ui.js
 import { defineStore } from 'pinia';
-import { ref, watch } from 'vue';
+import { ref, watch, onScopeDispose } from 'vue';
 import { STORAGE_KEYS } from '../constants/keys';
 import client from '../api/client';
+import { getThemeRuntime } from '../logic/themeRuntime.js';
 
 export const useUiStore = defineStore('ui', () => {
     const isLiteMode = ref(localStorage.getItem(STORAGE_KEYS.LITE_MODE) === 'true');
@@ -10,8 +11,14 @@ export const useUiStore = defineStore('ui', () => {
     const keepAliveEnabled = ref(localStorage.getItem(STORAGE_KEYS.KEEP_ALIVE) === 'true');
     // 移动端抽屉/全屏面板打开时，隐藏浮动聊天按钮，避免它压在面板和播放器上
     const mobileOverlayOpen = ref(false);
-    const storedTheme = localStorage.getItem(STORAGE_KEYS.THEME);
-    const theme = ref(storedTheme || (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+    const themeRuntime = getThemeRuntime();
+    const theme = ref(themeRuntime.getSnapshot().palette.mode);
+    const appearanceSource = ref(themeRuntime.getSnapshot().appearance.source);
+    const stopTheme = themeRuntime.subscribe(snapshot => {
+        theme.value = snapshot.palette.mode;
+        appearanceSource.value = snapshot.appearance.source;
+    });
+    onScopeDispose(stopTheme);
 
     const authorName = ref('ThorNex');
     const backWords = ref('THORNEX');
@@ -30,17 +37,11 @@ export const useUiStore = defineStore('ui', () => {
     };
 
     const applyTheme = (nextTheme) => {
-        theme.value = nextTheme === 'dark' ? 'dark' : 'light';
-        document.documentElement.classList.add('theme-transition');
-        document.documentElement.classList.toggle('dark', theme.value === 'dark');
-        document.documentElement.dataset.theme = theme.value;
-        localStorage.setItem(STORAGE_KEYS.THEME, theme.value);
-        window.setTimeout(() => document.documentElement.classList.remove('theme-transition'), 420);
+        themeRuntime.save({ ...themeRuntime.getSnapshot().committed, mode: nextTheme });
     };
 
     const toggleTheme = () => applyTheme(theme.value === 'dark' ? 'light' : 'dark');
-
-    applyTheme(theme.value);
+    const setMonetAccent = color => themeRuntime.setMonetAccent(color);
 
     const fetchConfig = async () => {
         try {
@@ -70,8 +71,10 @@ export const useUiStore = defineStore('ui', () => {
         toggleKeepAlive,
         mobileOverlayOpen,
         theme,
+        appearanceSource,
         applyTheme,
         toggleTheme,
+        setMonetAccent,
         authorName,
         backWords,
         fetchConfig

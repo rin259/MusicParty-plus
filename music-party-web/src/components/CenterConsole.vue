@@ -696,9 +696,9 @@ onUnmounted(() => {
 @keyframes telemetry-fault {
   0% { transform: none; clip-path: none; text-shadow: none; }
   18% { transform: translateX(calc(-1 * var(--ga, 1.4px))); clip-path: inset(12% 0 58% 0);
-        text-shadow: 1px 0 rgba(249, 115, 22, 0.45), -1px 0 rgba(56, 189, 248, 0.3); }
+        text-shadow: 1px 0 rgb(var(--accent) / 0.45), -1px 0 rgb(var(--accent-glow) / 0.3); }
   38% { transform: translateX(var(--ga, 1.4px)); clip-path: inset(60% 0 14% 0);
-        text-shadow: -1px 0 rgba(249, 115, 22, 0.45), 1px 0 rgba(56, 189, 248, 0.3); }
+        text-shadow: -1px 0 rgb(var(--accent) / 0.45), 1px 0 rgb(var(--accent-glow) / 0.3); }
   60% { transform: translateX(calc(-0.66 * var(--ga, 1.4px))); clip-path: inset(34% 0 42% 0); text-shadow: none; }
   80% { transform: none; clip-path: none; }
   100% { transform: none; clip-path: none; }

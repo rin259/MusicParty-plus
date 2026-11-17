@@ -1,7 +1,7 @@
 <!-- src/components/layout/MainLayout.vue -->
 <script setup>
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
-import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare } from 'lucide-vue-next';
+import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare, Palette } from 'lucide-vue-next';
 import UserList from '../UserList.vue';
 import QueueList from '../QueueList.vue';
 import CoverImage from '../CoverImage.vue';
@@ -11,6 +11,7 @@ import { usePlayerStore } from '../../stores/player';
 import { useRoomStore } from '../../stores/room';
 import { useChatStore } from '../../stores/chat';
 import { useToast } from '../../composables/useToast';
+import { useAppearanceStore } from '../../stores/appearance';
 
 const emit = defineEmits(['search']);
 const userStore = useUserStore();
@@ -18,6 +19,7 @@ const uiStore = useUiStore();
 const playerStore = usePlayerStore();
 const roomStore = useRoomStore();
 const chatStore = useChatStore();
+const appearanceStore = useAppearanceStore();
 const { success } = useToast();
 
 const switchRoom = () => {
@@ -142,6 +144,9 @@ const handleSearchClick = () => {
           <Sun v-if="uiStore.theme === 'dark'" class="w-4 h-4" />
           <Moon v-else class="w-4 h-4" />
         </button>
+        <button @click="appearanceStore.open" class="flex items-center justify-center w-11 h-11 border border-medical-200 bg-medical-50 hover:bg-medical-100 text-medical-600 transition-all rounded-sm" title="自定义主题" aria-label="自定义主题">
+          <Palette class="w-4 h-4" />
+        </button>
 
         <button id="tutorial-search" @click="handleSearchClick" class="flex items-center justify-center h-11 px-4 border border-accent bg-accent hover:bg-accent-hover font-bold text-sm text-accent-fg transition-all rounded-sm gap-2">
           <Search class="w-4 h-4" />
@@ -227,6 +232,7 @@ const handleSearchClick = () => {
           <button @click="uiStore.toggleLiteMode" class="flex items-center justify-center gap-2 min-h-11 p-3 border border-medical-200 text-medical-600">
             <Minimize2 class="w-4 h-4" /><span class="text-xs font-bold">精简</span>
           </button>
+          <button @click="appearanceStore.open" class="col-span-2 flex items-center justify-center gap-2 min-h-11 p-3 border border-accent/40 bg-accent/5 text-accent-text"><Palette class="w-4 h-4" /><span class="text-xs font-bold">自定义主题</span></button>
         </div>
       </aside>
     </Transition>
@@ -342,6 +348,8 @@ const handleSearchClick = () => {
           <LogOut class="w-4 h-4" />
           <span class="text-xs tracking-widest uppercase">切换房间 · {{ roomStore.currentName }}</span>
         </button>
+
+        <button type="button" @click="appearanceStore.open" class="flex w-full min-h-11 items-center justify-center gap-2 border border-medical-200 text-xs font-bold text-medical-600 hover:border-accent hover:text-accent-text"><Palette class="h-4 w-4" />自定义主题</button>
 
         <!-- 退出动作（次级） -->
         <button

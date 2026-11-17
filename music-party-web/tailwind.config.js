@@ -25,6 +25,7 @@ export default {
           hover: 'rgb(var(--accent-hover) / <alpha-value>)',
           text: 'rgb(var(--accent-text) / <alpha-value>)',
           fg: 'rgb(var(--accent-fg) / <alpha-value>)',
+          'on-strong': 'rgb(var(--accent-on-strong) / <alpha-value>)',
         },
         'surface': {
           1: 'rgb(var(--surface-1) / <alpha-value>)',
@@ -39,6 +40,7 @@ export default {
         },
         'danger': {
           DEFAULT: 'rgb(var(--danger) / <alpha-value>)',
+          fg: 'rgb(var(--danger-fg) / <alpha-value>)',
           bg: 'rgb(var(--danger-bg) / <alpha-value>)',
           border: 'rgb(var(--danger-border) / <alpha-value>)',
         },

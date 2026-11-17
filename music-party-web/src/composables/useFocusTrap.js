@@ -34,6 +34,10 @@ export function useFocusTrap(isOpen, containerRef, options = {}) {
 
     const onKeydown = (event) => {
         if (event.key !== 'Tab' || !containerRef.value) return;
+        // The native theme dialog lives in the top layer; don't pull its focus
+        // back into a search/name modal underneath it.
+        const nativeDialog = document.querySelector('dialog[open]');
+        if (nativeDialog && !nativeDialog.contains(containerRef.value)) return;
         const items = focusables();
         if (items.length === 0) {
             event.preventDefault();

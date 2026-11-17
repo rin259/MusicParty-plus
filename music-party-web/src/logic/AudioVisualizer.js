@@ -2,6 +2,8 @@ import {
     deriveThreeWay, createRadiatorState, stepRadiator, coneAccel, boxPressure, staticExcursion
 } from './passiveRadiator.js';
 import { fidelity } from './Fidelity.js';
+import { getVisualTheme } from './themeRuntime.js';
+import { mixRgb } from './theme.js';
 
 export const sampleSpectrumFrequency = (spectrum, sampleRate, fftSize, frequency) => {
     if (!spectrum.length) return 0;
@@ -508,6 +510,13 @@ export class AudioVisualizer {
         this.squareness += (squareTarget - this.squareness) * AudioVisualizer.EASE_SLOW;
 
         // --- 3. Layered center light field behind the cover ---
+        const theme = getVisualTheme();
+        const accentKey = theme.accent.join(',');
+        if (this._accentKey !== accentKey) {
+            this._accentKey = accentKey;
+            this._washGrad = this._coreGrad = null;
+        }
+        const accentRgb = theme.accent.join(',');
         ctx.save();
         ctx.globalCompositeOperation = 'screen';
         const maxField = this.center * 0.92;
@@ -524,9 +533,9 @@ export class AudioVisualizer {
             const washRadius = Math.min(maxField, 285 + this.energy * 85);
             const washAlpha = this.isPlaying ? 0.019 + this.energy * 0.033 : 0.007;
             this._washGrad = ctx.createRadialGradient(center, center, this.center * 0.16, center, center, washRadius);
-            this._washGrad.addColorStop(0, `rgba(249, 115, 22, ${washAlpha})`);
-            this._washGrad.addColorStop(0.55, `rgba(249, 115, 22, ${washAlpha * 0.45})`);
-            this._washGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
+            this._washGrad.addColorStop(0, `rgba(${accentRgb}, ${washAlpha})`);
+            this._washGrad.addColorStop(0.55, `rgba(${accentRgb}, ${washAlpha * 0.45})`);
+            this._washGrad.addColorStop(1, `rgba(${accentRgb}, 0)`);
             this._washRadius = washRadius;
             this._washEnergy = this.energy;
         }
@@ -540,9 +549,9 @@ export class AudioVisualizer {
             const coreRadius = Math.min(maxField, 112 + bassPulse * 112 + this.energy * 42);
             const coreAlpha = this.isPlaying ? 0.022 + bassPulse * 0.090 : 0.009;
             this._coreGrad = ctx.createRadialGradient(center, center, 10, center, center, coreRadius);
-            this._coreGrad.addColorStop(0, `rgba(255, 196, 120, ${coreAlpha})`);
-            this._coreGrad.addColorStop(0.45, `rgba(249, 115, 22, ${coreAlpha * 0.5})`);
-            this._coreGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
+            this._coreGrad.addColorStop(0, `rgba(${theme.glow.join(',')}, ${coreAlpha})`);
+            this._coreGrad.addColorStop(0.45, `rgba(${accentRgb}, ${coreAlpha * 0.5})`);
+            this._coreGrad.addColorStop(1, `rgba(${accentRgb}, 0)`);
             this._coreRadius = coreRadius;
             this._corePulse = bassPulse;
         }
@@ -651,8 +660,8 @@ export class AudioVisualizer {
             const mix = Math.min(1, Math.max(0, mm * 0.144)) * (ring.hot || 0);
             // 填色：橙 500（249,115,22），受光時混向暖高光；邊色取橙 600（234,88,12），
             // 白底上才有真輪廓——先前柔邊加低 alpha，等於一團霞。
-            const fillBase = `rgba(${Math.round(249 + 6 * mix)}, ${Math.round(115 + 81 * mix)}, ${Math.round(22 + 98 * mix)}, `;
-            const edgeBase = `rgba(${Math.round(234 + 21 * mix)}, ${Math.round(88 + 108 * mix)}, ${Math.round(12 + 108 * mix)}, `;
+            const fillBase = `rgba(${mixRgb(theme.accent, theme.glow, mix).join(',')}, `;
+            const edgeBase = `rgba(${mixRgb(theme.hover, theme.glow, mix).join(',')}, `;
             // 外暈已去（2026-10 實看）：寬描邊並非真輝光，只把帶緣糊成第二道淡邊。
             // 英雄之別改由實心帶、較粗銳邊與較寬帶幅承擔（見 rings 設定）。
             ctx.fillStyle = `${fillBase}${Math.min(0.55, (ring.fillAlpha + boost) * presence)})`;

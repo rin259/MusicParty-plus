@@ -189,7 +189,7 @@
       :style="launcherStyle"
       class="fixed left-0 top-0 z-[72] flex h-11 w-11 touch-none select-none items-center justify-center overflow-hidden rounded-sm border transition-all cursor-move"
       :class="chatStore.unreadCount > 0
-          ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(249,115,22,0.6)] scale-110'
+          ? 'bg-accent border-accent text-accent-fg shadow-[0_0_15px_rgb(var(--accent)/0.6)] scale-110'
           : 'bg-surface-1 border-medical-200 text-medical-500 shadow-lg hover:text-medical-900 hover:border-medical-300'"
   >
     <span v-if="chatStore.unreadCount > 0" class="font-bold font-mono text-sm relative z-10 animate-pulse">
