@@ -152,3 +152,17 @@ test('SpectralWordmark responds to spectrum, remeasures cleanly and restores amb
     wordmark.unmount();
     assert.equal(wordmark.letters.length, 0);
 });
+
+test('theme-linked spectral wordmark uses the current theme endpoint', async () => {
+    const { SpectralWordmark } = await import('./SpectralWordmark.js');
+    const letters = [{ style: { opacity: '', color: '' } }];
+    const wordmark = new SpectralWordmark();
+    wordmark.attach({ querySelectorAll: () => letters });
+    for (let i = 0; i < 5; i++) {
+        wordmark.setSpectrum({ data: new Uint8Array(1024).fill(220), sampleRate: 48000, fftSize: 2048 });
+        await new Promise(r => setTimeout(r, 16));
+    }
+    wordmark.draw(1 / 30);
+    assert.match(letters[0].style.color, /^rgb\(/);
+    wordmark.unmount();
+});

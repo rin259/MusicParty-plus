@@ -121,7 +121,7 @@ export class AudioVisualizer {
     static EASE_FALL = 0.16;
     static TIME_SCALE = 0.22;
     static SIM_HZ = 2400;
-    static UNITS_PER_MM = 5.2; // 提升振幅标尺，释放物理行程
+    static UNITS_PER_MM = 3.6; // 保留真实行程，但把屏幕映射收回克制范围
     static FLOW_RATE = 28;
     static BAND_GAIN = 60;
     static ENERGY_GAIN = 150;
@@ -180,18 +180,18 @@ export class AudioVisualizer {
         // 2: 中音（Bessel J1/J2 偶极与四极声学指向性叶瓣）
         // 3: 高音发丝层（极高频微细声学微扰）
         this.rings = [
-            { role: 'radiator', source: 'pr', radius: 420, baseWidth: 0.9, maxWidth: 9, speed: 0.014,
-              offset: 0, drift: 0.022, fillAlpha: 0.035, edgeAlpha: 0.32, edgeWidth: 0.95,
-              cap: 64, priority: 1, points: 96 },
-            { role: 'woofer', source: 'woofer', radius: 350, baseWidth: 1.2, maxWidth: 18, speed: -0.018,
-              offset: 0, drift: 0, fillAlpha: 0.09, edgeAlpha: 0.78, edgeWidth: 1.35,
-              cap: 56, hot: 1, priority: 0, points: 120 },
-            { role: 'mid', source: 'mid', radius: 280, baseWidth: 0.9, maxWidth: 11, speed: -0.022,
-              offset: 1.7, drift: 0.035, fillAlpha: 0.035, edgeAlpha: 0.36, edgeWidth: 0.95,
-              cap: 32, priority: 2, points: 96 },
-            { role: 'tweeter', source: 'tweeter', radius: 210, baseWidth: 0.75, maxWidth: 6.5, speed: 0.028,
-              offset: 2.6, drift: 0.048, fillAlpha: 0.02, edgeAlpha: 0.28, edgeWidth: 0.8,
-              cap: 18, priority: 3, points: 80 }
+            { role: 'radiator', source: 'pr', radius: 420, baseWidth: 0.9, maxWidth: 5.5, speed: 0.010,
+              offset: 0, drift: 0.014, fillAlpha: 0.018, edgeAlpha: 0.20, edgeWidth: 0.85,
+              cap: 38, priority: 1, points: 96 },
+            { role: 'woofer', source: 'woofer', radius: 350, baseWidth: 1.2, maxWidth: 10, speed: -0.012,
+              offset: 0, drift: 0, fillAlpha: 0.045, edgeAlpha: 0.52, edgeWidth: 1.15,
+              cap: 34, hot: 1, priority: 0, points: 120 },
+            { role: 'mid', source: 'mid', radius: 280, baseWidth: 0.9, maxWidth: 6, speed: -0.015,
+              offset: 1.7, drift: 0.022, fillAlpha: 0.018, edgeAlpha: 0.23, edgeWidth: 0.85,
+              cap: 20, priority: 2, points: 96 },
+            { role: 'tweeter', source: 'tweeter', radius: 210, baseWidth: 0.75, maxWidth: 3.5, speed: 0.018,
+              offset: 2.6, drift: 0.030, fillAlpha: 0.012, edgeAlpha: 0.18, edgeWidth: 0.75,
+              cap: 10, priority: 3, points: 80 }
         ];
 
         this.squareness = 0;
@@ -324,34 +324,22 @@ export class AudioVisualizer {
         this._lastSpectrumAt = now;
         const approach = (prev, next, tau) => prev + (next - prev) * (1 - Math.exp(-dt / tau));
 
-        // 1. 动态检测次低频（20Hz ~ 120Hz）优势基频，驱动 AC 交流振荡
-        const binHz = this.sampleRate / this.fftSize;
-        const subLo = Math.max(1, Math.floor(20 / binHz));
-        const subHi = Math.min(this.spectrum.length - 1, Math.ceil(120 / binHz));
-        let maxAmp = 0;
-        let maxBin = subLo;
-        for (let i = subLo; i <= subHi; i++) {
-            const amp = BYTE_TO_AMP[this.spectrum[i]];
-            if (amp > maxAmp) {
-                maxAmp = amp;
-                maxBin = i;
-            }
-        }
-        const measuredFreq = maxAmp > 0.003 ? maxBin * binHz : (this.threeWay.Fb || 36);
-        const targetFreq = Math.max(26, Math.min(85, measuredFreq));
-        this.fundFreq += (targetFreq - this.fundFreq) * (1 - Math.exp(-dt / 0.15));
+        // 1. 稳定交流载波：FFT 最大峰会在钢琴基音/泛音之间跳变，不能直接拿来驱动
+        //    相位。这里用箱体自身的调谐频率作为稳定物理载波，低频能量只控制力幅度。
+        //    这样仍保留真实 AC 双自由度运动，但不会把钢琴的谐波切换放大成“鬼畜”。
+        this.fundFreq = this.threeWay.Fb || 36;
 
         // 2. 滚动环境响度追踪（Crest-Factor AGC）
         const total = this.spectrum.reduce((sum, value) => sum + BYTE_TO_AMP[value], 0) / this.spectrum.length;
         this.slowLoudness += (total - this.slowLoudness) * (1 - Math.exp(-dt / 1.6));
-        const energyTarget = Math.tanh(Math.pow(total / Math.max(0.012, this.slowLoudness * 1.4), 0.85));
+        const energyTarget = Math.tanh(Math.pow(total / Math.max(0.012, this.slowLoudness * 1.7), 0.9));
         this.energy = approach(this.energy, energyTarget, energyTarget > this.energy ? 0.023 : 0.044);
 
         // 3. 自适应软饱和频带跟随（无硬削顶，保留高响度微动态）
         const bandLevel = (fLow, fHigh) => {
             const raw = spectrumBandEnergy(this.spectrum, this.sampleRate, this.fftSize, fLow, fHigh, 1);
-            const norm = raw / Math.max(0.015, this.slowLoudness * 1.5);
-            return Math.tanh(Math.pow(norm, 0.85));
+            const norm = raw / Math.max(0.015, this.slowLoudness * 1.8);
+            return Math.min(0.82, Math.tanh(Math.pow(norm, 0.9)));
         };
         const follow = (prev, next) => approach(prev, next, next > prev ? 0.020 : 0.080);
         this.band = {
@@ -498,7 +486,7 @@ export class AudioVisualizer {
 
         const [ar, ag, ab] = theme.accent;
         const [gr, gg, gb] = theme.glow;
-        const rollAlpha = (0.35 + Math.min(0.48, Math.abs(xw) * 140)) * presence;
+        const rollAlpha = (0.14 + Math.min(0.24, Math.abs(xw) * 80)) * presence;
 
         // 悬边外脊线（高张力发丝线）
         ctx.lineWidth = Math.max(0.85, (1.15 - pressureTighten * 0.2) * (this.worldPerCss || 1));
@@ -556,20 +544,20 @@ export class AudioVisualizer {
         const h = 1 / AudioVisualizer.SIM_HZ;
         let guard = 0;
         const omega = 2 * Math.PI * this.fundFreq;
+        const acAmplitude = Math.min(0.68, this.band.low);
 
         while (this.simAcc >= h && guard++ < 240) {
             this.subPhase += omega * h;
             if (this.subPhase > 2 * Math.PI) this.subPhase -= 2 * Math.PI;
             // 关键：以实测次低频基频正弦交变力驱动！音盆持续交流冲程振荡，不陷入直流死锁
-            const acDrive = this.isPlaying
-                ? Math.cos(this.subPhase) * this.band.low
+            const forceW = this.isPlaying
+                ? this.threeWay.woofer.Bl * this.threeWay.current * Math.cos(this.subPhase) * acAmplitude * 0.62
                 : 0;
-            const forceW = this.threeWay.woofer.Bl * this.threeWay.current * acDrive;
             this.radState = stepRadiator(this.radState, forceW, h, this.threeWay);
             this.simAcc -= h;
         }
         this.pressure = boxPressure(this.radState, this.threeWay);
-        this.coneA = coneAccel(this.radState, this.isPlaying ? this.threeWay.woofer.Bl * this.threeWay.current * this.band.low * Math.cos(this.subPhase) : 0, this.threeWay);
+        this.coneA = coneAccel(this.radState, this.isPlaying ? this.threeWay.woofer.Bl * this.threeWay.current * acAmplitude * Math.cos(this.subPhase) * 0.62 : 0, this.threeWay);
 
         const xw = this.radState.xw;
         const xr = this.radState.xr;
@@ -592,7 +580,7 @@ export class AudioVisualizer {
 
         // 时间步进与外向行波位移推进
         this.rippleTime += dt * AudioVisualizer.FLOW_RATE * this.speedMultiplier;
-        this.wavefrontTravel += dt * (18 + 24 * this.energy);
+        this.wavefrontTravel += dt * (6 + 8 * this.energy);
 
         if (this.smoothAlpha < 0.01) return;
 
@@ -639,8 +627,8 @@ export class AudioVisualizer {
         ctx.fill();
 
         if (this._coreGrad === null || Math.abs(bassPulse - this._corePulse) > 0.015) {
-            const coreRadius = Math.min(maxField, 110 + bassPulse * 125 + this.energy * 45);
-            const coreAlpha = this.isPlaying ? 0.020 + bassPulse * 0.095 : 0.008;
+            const coreRadius = Math.min(maxField, 105 + bassPulse * 80 + this.energy * 30);
+            const coreAlpha = this.isPlaying ? 0.014 + bassPulse * 0.055 : 0.008;
             this._coreGrad = ctx.createRadialGradient(center, center, 10, center, center, coreRadius);
             this._coreGrad.addColorStop(0, `rgba(${theme.glow.join(',')}, ${coreAlpha.toFixed(4)})`);
             this._coreGrad.addColorStop(0.45, `rgba(${accentRgb}, ${(coreAlpha * 0.45).toFixed(4)})`);
@@ -683,32 +671,32 @@ export class AudioVisualizer {
             const attenuation = Math.max(0.24, 1 / Math.sqrt(1 + normR * 2.5));
 
             // 行波连续向外扩散波动量（消除持续音下的静态停滞）
-            const wavePropagation = Math.sin(this.wavefrontTravel * 0.09 - normR * Math.PI * 3.5) * (mm * 0.35);
+            const wavePropagation = Math.sin(this.wavefrontTravel * 0.04 - normR * Math.PI * 3.5) * (mm * 0.12);
 
             // 基于物理单体的贝塞尔模态位移函数
             const modalDisplacement = (angle) => {
                 if (ring.source === 'woofer') {
                     // 低音主活塞：J0 纯径向呼吸冲程 + 偶极展宽 + 行波外推
                     const j0 = besselJ(0, 2.4048 * normR);
-                    const quadrupole = 0.32 * Math.cos(angle * 2 - flowPhase);
-                    const disp = (j0 + quadrupole) * mm * AudioVisualizer.UNITS_PER_MM + wavePropagation;
+                    const quadrupole = 0.18 * Math.cos(angle * 2 - flowPhase);
+                    const disp = (j0 + quadrupole) * mm * AudioVisualizer.UNITS_PER_MM * 0.72 + wavePropagation;
                     return Math.max(-ring.cap, Math.min(ring.cap, disp));
                 } else if (ring.source === 'pr') {
                     // 被动辐射器：36Hz 共振超大冲程物理声压
                     const j0 = besselJ(0, 2.4048 * normR);
-                    const disp = j0 * mm * AudioVisualizer.UNITS_PER_MM * 0.85 + wavePropagation * 0.8;
+                    const disp = j0 * mm * AudioVisualizer.UNITS_PER_MM * 0.58 + wavePropagation * 0.5;
                     return Math.max(-ring.cap, Math.min(ring.cap, disp));
                 } else if (ring.source === 'mid') {
                     // 中音：J1 偶极与 J2 四极旋转模态
                     const j1 = besselJ(1, 3.8317 * normR) * Math.cos(angle + flowPhase);
                     const j2 = 0.5 * besselJ(2, 5.1356 * normR) * Math.cos(angle * 2 - flowPhase * 1.5);
-                    const disp = (j1 + j2) * mm * AudioVisualizer.UNITS_PER_MM * 1.35 + wavePropagation * 0.5;
+                    const disp = (j1 + j2) * mm * AudioVisualizer.UNITS_PER_MM * 0.72 + wavePropagation * 0.3;
                     return Math.max(-ring.cap, Math.min(ring.cap, disp));
                 } else {
                     // 高音发丝层：高频谐波微颤
                     const h6 = 0.6 * Math.cos(angle * 6 - flowPhase * 2.2);
                     const h8 = 0.4 * Math.cos(angle * 8 + flowPhase * 3.1);
-                    const disp = (h6 + h8) * (1.0 + Math.abs(mm) * 1.5) * (this.worldPerCss || 1);
+                    const disp = (h6 + h8) * (0.55 + Math.abs(mm) * 0.75) * (this.worldPerCss || 1);
                     return Math.max(-ring.cap, Math.min(ring.cap, disp));
                 }
             };

@@ -1,4 +1,5 @@
 import { spectrumBandEnergy } from './AudioVisualizer.js';
+import { getVisualTheme } from './themeRuntime.js';
 
 /**
  * 頻譜字標（spectral wordmark）—— 取時頻譜之「思想」，不取其形。
