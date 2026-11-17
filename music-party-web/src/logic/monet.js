@@ -1,5 +1,8 @@
 import { QuantizerCelebi, Score, argbFromRgb, hexFromArgb } from '@material/material-color-utilities';
 
+const colorCache = new Map();
+export const clearCoverColorCache = () => colorCache.clear();
+
 export function seedFromPixels(pixels) {
     const colors = [];
     for (let i = 0; i + 3 < pixels.length; i += 4) {
@@ -14,12 +17,17 @@ export function seedFromPixels(pixels) {
 // Bounded sampling, anonymous CORS, no proxy or uploads. Failure is a normal fallback.
 export function extractCoverColor(url, { ImageCtor = globalThis.Image, documentRef = globalThis.document, signal, timeoutMs = 4000 } = {}) {
     if (!url || !ImageCtor || !documentRef?.createElement || signal?.aborted) return Promise.resolve(null);
+    if (colorCache.has(url)) return Promise.resolve(colorCache.get(url));
     return new Promise(resolve => {
         const image = new ImageCtor();
         let settled = false;
         const finish = value => {
             if (settled) return;
             settled = true;
+            if (value) {
+                if (colorCache.size >= 64) colorCache.delete(colorCache.keys().next().value);
+                colorCache.set(url, value);
+            }
             clearTimeout(timer);
             signal?.removeEventListener('abort', abort);
             image.onload = image.onerror = null;

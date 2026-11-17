@@ -58,7 +58,9 @@ export function createThemeRuntime({ win, doc, storage }) {
     };
     const cancel = () => { current = normalizeAppearance(committed); apply('cancel'); };
     const setMonetAccent = value => {
-        monetAccent = value ? normalizeAppearance({ accent: value }).accent : null;
+        const next = value ? normalizeAppearance({ accent: value }).accent : null;
+        if (next === monetAccent) return;
+        monetAccent = next;
         if (current.source === 'monet') apply('monet');
     };
     const systemChanged = () => { if (current.mode === 'system') apply('system'); };

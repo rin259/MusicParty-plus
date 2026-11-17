@@ -37,10 +37,18 @@ export class SpectralWordmark {
     }
 
     attach(root) {
+        this.unmount();
         this.root = root || null;
         this.letters = root ? Array.from(root.querySelectorAll('.spectral-letter')) : [];
         this.level = new Float32Array(this.letters.length);
         this.written = new Array(this.letters.length).fill('');
+        if (typeof window !== 'undefined') {
+            this._themeHandler = (e) => {
+                this._theme = e?.detail || getVisualTheme();
+            };
+            window.addEventListener('music-party:theme-change', this._themeHandler);
+            this._themeHandler();
+        }
     }
 
     /** 重新量測字母（字標內容可被設定更改） */
@@ -109,6 +117,10 @@ export class SpectralWordmark {
     }
 
     unmount() {
+        if (this._themeHandler && typeof window !== 'undefined') {
+            window.removeEventListener('music-party:theme-change', this._themeHandler);
+            this._themeHandler = null;
+        }
         if (this.animationId) cancelAnimationFrame(this.animationId);
         this.animationId = null;
         this.root = null;
@@ -126,7 +138,8 @@ export class SpectralWordmark {
         const dark = document.documentElement.dataset.theme === 'dark'
             || document.documentElement.classList.contains('dark');
         const from = dark ? [64, 70, 84] : [228, 230, 235];
-        const to = dark ? getVisualTheme().glow : getVisualTheme().accent;
+        const theme = this._theme || getVisualTheme();
+        const to = dark ? theme.glow : theme.accent;
 
         for (let i = 0; i < this.letters.length; i++) {
             const lv = clamp01(this.level[i] * boost);

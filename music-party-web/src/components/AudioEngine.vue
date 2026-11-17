@@ -92,7 +92,7 @@ watch(isErrorState, (val) => {
 });
 
 // 监听播放状态以维持保活音轨
-watch(() => [player.isPaused, player.nowPlaying?.music.url, ui.keepAliveEnabled, ui.volume], () => {
+watch([() => player.isPaused, () => player.nowPlaying?.music?.url, () => ui.keepAliveEnabled, () => ui.volume], () => {
   if (player.nowPlaying && !player.isPaused && ui.keepAliveEnabled && ui.volume > 0) {
     const element = aliveAudioRef.value;
     if (element) {

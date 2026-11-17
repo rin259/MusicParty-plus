@@ -207,10 +207,21 @@ export class PointLights {
             ? new ResizeObserver(() => this.resize())
             : null;
         this._observer?.observe(canvas.parentElement || canvas);
+        if (typeof window !== 'undefined') {
+            this._themeHandler = (e) => {
+                const accent = e?.detail?.accent || getVisualTheme().accent;
+                if (accent.join(',') !== this._accentKey) this.buildSprites();
+            };
+            window.addEventListener('music-party:theme-change', this._themeHandler);
+        }
         this.start();
     }
 
     unmount() {
+        if (this._themeHandler && typeof window !== 'undefined') {
+            window.removeEventListener('music-party:theme-change', this._themeHandler);
+            this._themeHandler = null;
+        }
         if (this.animationId) cancelAnimationFrame(this.animationId);
         this.animationId = null;
         this._observer?.disconnect();
@@ -335,7 +346,7 @@ export class PointLights {
     draw(dt) {
         const { ctx, width, height } = this;
         if (!ctx || !width || !height) return;
-        if (getVisualTheme().accent.join(',') !== this._accentKey) this.buildSprites();
+        if (!this.sprites) this.buildSprites();
 
         this.flash *= Math.pow(0.87, dt * 60);
         this.crowd *= Math.pow(0.998, dt * 60);

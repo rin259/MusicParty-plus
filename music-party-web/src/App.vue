@@ -86,21 +86,43 @@ const showSearch = ref(false);
 const chatStore = useChatStore();
 const roomStore = useRoomStore();
 const appearanceStore = useAppearanceStore();
-watch(() => [uiStore.appearanceSource, player.nowPlaying?.music?.coverUrl], async ([source, cover], _, onCleanup) => {
-  const controller = new AbortController();
-  onCleanup(() => controller.abort());
-  uiStore.setMonetAccent(null);
-  if (source !== 'monet' || !cover) return;
-  try {
-    const { extractCoverColor } = await import('./logic/monet.js');
-    if (controller.signal.aborted) return;
-    const color = await extractCoverColor(cover, { signal: controller.signal });
-    if (!controller.signal.aborted) uiStore.setMonetAccent(color);
-  } catch {
-    // Offline/stale chunk failures must not break the app or its audio engine.
-    if (!controller.signal.aborted) uiStore.setMonetAccent(null);
-  }
-}, { immediate: true });
+let lastMonetCover = null;
+watch(
+  [() => uiStore.appearanceSource, () => player.nowPlaying?.music?.coverUrl],
+  async ([source, cover], [oldSource, oldCover], onCleanup) => {
+    if (source !== 'monet') {
+      lastMonetCover = null;
+      uiStore.setMonetAccent(null);
+      return;
+    }
+    if (!cover) {
+      lastMonetCover = null;
+      uiStore.setMonetAccent(null);
+      return;
+    }
+    // Cover URL unchanged (e.g. state sync on like, progress, or vote): keep active palette seamlessly
+    if (cover === lastMonetCover && oldSource === source) return;
+
+    const controller = new AbortController();
+    onCleanup(() => controller.abort());
+    // Never flash to null while extracting: keep previous accent until new one is ready
+    try {
+      const { extractCoverColor } = await import('./logic/monet.js');
+      if (controller.signal.aborted) return;
+      const color = await extractCoverColor(cover, { signal: controller.signal });
+      if (!controller.signal.aborted) {
+        lastMonetCover = cover;
+        uiStore.setMonetAccent(color);
+      }
+    } catch {
+      if (!controller.signal.aborted) {
+        lastMonetCover = cover;
+        uiStore.setMonetAccent(null);
+      }
+    }
+  },
+  { immediate: true }
+);
 
 // landing 用文档级滚动（body 默认 overflow:hidden 会裁掉长页面）；
 // 进入房间后恢复锁定，避免主界面被页面滚动带着跑。

@@ -192,10 +192,20 @@ export class AudioVisualizer {
         this.center = this.width / 2;
         this.worldScale = 1;
         this.buildBloomSprites();
+        if (typeof window !== 'undefined') {
+            this._themeHandler = (e) => {
+                const theme = e?.detail || getVisualTheme();
+                this._theme = theme;
+                this._accentKey = theme.accent.join(',');
+                this._washGrad = this._coreGrad = null;
+            };
+            window.addEventListener('music-party:theme-change', this._themeHandler);
+            this._themeHandler();
+        }
         this.startLoop();
     }
 
-        /**
+    /**
      * 預渲靜態資源。2026-10：膠片顆粒層已移除——
      * 它以 overlay 3% 鋪滿整塊畫布，令畫布方形與背景之間出現可見色差（深色偏淺、淺色偏深），
      * 形成一塊「矩形」。質感由網格與字標承擔，不再需要該層。
@@ -205,6 +215,10 @@ export class AudioVisualizer {
     }
 
     unmount() {
+        if (this._themeHandler && typeof window !== 'undefined') {
+            window.removeEventListener('music-party:theme-change', this._themeHandler);
+            this._themeHandler = null;
+        }
         if (this.animationId) {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;
@@ -510,12 +524,7 @@ export class AudioVisualizer {
         this.squareness += (squareTarget - this.squareness) * AudioVisualizer.EASE_SLOW;
 
         // --- 3. Layered center light field behind the cover ---
-        const theme = getVisualTheme();
-        const accentKey = theme.accent.join(',');
-        if (this._accentKey !== accentKey) {
-            this._accentKey = accentKey;
-            this._washGrad = this._coreGrad = null;
-        }
+        const theme = this._theme || getVisualTheme();
         const accentRgb = theme.accent.join(',');
         ctx.save();
         ctx.globalCompositeOperation = 'screen';

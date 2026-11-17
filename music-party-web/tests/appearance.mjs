@@ -85,9 +85,22 @@ try {
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await dialog.getByRole('button', { name: 'Monet · 跟随封面', exact: true }).click();
-    await page.evaluate(() => { window.appearanceFixture.player.nowPlaying = { music: { id: 'cover', name: '封面测试', artists: ['Artist'], coverUrl: '/cover-blue.svg' } }; });
+    await page.evaluate(() => { window.appearanceFixture.player.nowPlaying = { music: { id: 'cover', name: '封面测试', artists: ['Artist'], coverUrl: '/cover-blue.svg' }, likedUserIds: [] }; });
     await page.waitForFunction(() => window.appearanceFixture.appearance.snapshot.monetAccent);
     const blue = await accent();
+    // Simulate like / state sync: new nowPlaying object reference with same coverUrl must not jump or flicker
+    let themeChangeCount = 0;
+    await page.exposeFunction('onThemeChangedInTest', () => themeChangeCount++);
+    await page.evaluate(() => window.addEventListener('music-party:theme-change', window.onThemeChangedInTest));
+    await page.evaluate(() => {
+        window.appearanceFixture.player.nowPlaying = {
+            music: { id: 'cover', name: '封面测试', artists: ['Artist'], coverUrl: '/cover-blue.svg' },
+            likedUserIds: ['self']
+        };
+    });
+    await page.waitForTimeout(100);
+    assert.equal(await accent(), blue, 'like update with same coverUrl must keep active theme');
+    assert.equal(themeChangeCount, 0, 'like update with same coverUrl must not re-dispatch theme changes');
     await page.evaluate(() => { window.appearanceFixture.player.nowPlaying.music.coverUrl = '/cover-red.svg'; });
     await page.waitForFunction(previous => document.documentElement.style.getPropertyValue('--accent') !== previous && window.appearanceFixture.appearance.snapshot.monetAccent, blue);
     await page.evaluate(() => { window.appearanceFixture.player.nowPlaying.music.coverUrl = '/broken-cover'; });

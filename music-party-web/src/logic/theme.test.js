@@ -112,3 +112,16 @@ test('cover CORS, abort, missing image and timeout failures never reject', async
         createElement: () => ({ getContext: () => ({ drawImage() {}, getImageData() { throw new Error('tainted canvas'); } }) })
     } }), null);
 });
+test('setMonetAccent is idempotent and does not dispatch redundant events', () => {
+    const f = fakeRuntime();
+    f.runtime.preview({ ...DEFAULT_APPEARANCE, source: 'monet', accent: '#ff0000' });
+    let events = 0;
+    f.win.addEventListener('music-party:theme-change', () => events++);
+    f.runtime.setMonetAccent('#0000ff');
+    assert.equal(events, 1);
+    f.runtime.setMonetAccent('#0000ff');
+    assert.equal(events, 1, 'identical accent must not re-dispatch or recalculate');
+    f.runtime.setMonetAccent('#00ff00');
+    assert.equal(events, 2);
+    f.runtime.dispose();
+});
