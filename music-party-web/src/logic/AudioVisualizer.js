@@ -121,7 +121,7 @@ export class AudioVisualizer {
     static EASE_FALL = 0.16;
     static TIME_SCALE = 0.22;
     static SIM_HZ = 2400;
-    static UNITS_PER_MM = 3.6; // 保留真实行程，但把屏幕映射收回克制范围
+    static UNITS_PER_MM = 4.3; // 保留真实行程，但把屏幕映射收回克制范围
     static FLOW_RATE = 28;
     static BAND_GAIN = 60;
     static ENERGY_GAIN = 150;
@@ -180,18 +180,18 @@ export class AudioVisualizer {
         // 2: 中音（Bessel J1/J2 偶极与四极声学指向性叶瓣）
         // 3: 高音发丝层（极高频微细声学微扰）
         this.rings = [
-            { role: 'radiator', source: 'pr', radius: 420, baseWidth: 0.9, maxWidth: 5.5, speed: 0.010,
-              offset: 0, drift: 0.014, fillAlpha: 0.018, edgeAlpha: 0.20, edgeWidth: 0.85,
-              cap: 38, priority: 1, points: 96 },
-            { role: 'woofer', source: 'woofer', radius: 350, baseWidth: 1.2, maxWidth: 10, speed: -0.012,
-              offset: 0, drift: 0, fillAlpha: 0.045, edgeAlpha: 0.52, edgeWidth: 1.15,
-              cap: 34, hot: 1, priority: 0, points: 120 },
-            { role: 'mid', source: 'mid', radius: 280, baseWidth: 0.9, maxWidth: 6, speed: -0.015,
-              offset: 1.7, drift: 0.022, fillAlpha: 0.018, edgeAlpha: 0.23, edgeWidth: 0.85,
-              cap: 20, priority: 2, points: 96 },
-            { role: 'tweeter', source: 'tweeter', radius: 210, baseWidth: 0.75, maxWidth: 3.5, speed: 0.018,
-              offset: 2.6, drift: 0.030, fillAlpha: 0.012, edgeAlpha: 0.18, edgeWidth: 0.75,
-              cap: 10, priority: 3, points: 80 }
+            { role: 'radiator', source: 'pr', radius: 420, baseWidth: 0.9, maxWidth: 7, speed: 0.012,
+              offset: 0, drift: 0.014, fillAlpha: 0.024, edgeAlpha: 0.25, edgeWidth: 0.85,
+              cap: 46, priority: 1, points: 96 },
+            { role: 'woofer', source: 'woofer', radius: 350, baseWidth: 1.2, maxWidth: 13, speed: -0.014,
+              offset: 0, drift: 0, fillAlpha: 0.06, edgeAlpha: 0.62, edgeWidth: 1.15,
+              cap: 42, hot: 1, priority: 0, points: 120 },
+            { role: 'mid', source: 'mid', radius: 280, baseWidth: 0.9, maxWidth: 8, speed: -0.017,
+              offset: 1.7, drift: 0.022, fillAlpha: 0.024, edgeAlpha: 0.28, edgeWidth: 0.85,
+              cap: 25, priority: 2, points: 96 },
+            { role: 'tweeter', source: 'tweeter', radius: 210, baseWidth: 0.75, maxWidth: 4.5, speed: 0.020,
+              offset: 2.6, drift: 0.030, fillAlpha: 0.016, edgeAlpha: 0.22, edgeWidth: 0.75,
+              cap: 13, priority: 3, points: 80 }
         ];
 
         this.squareness = 0;
@@ -544,7 +544,7 @@ export class AudioVisualizer {
         const h = 1 / AudioVisualizer.SIM_HZ;
         let guard = 0;
         const omega = 2 * Math.PI * this.fundFreq;
-        const acAmplitude = Math.min(0.68, this.band.low);
+        const acAmplitude = Math.min(0.78, this.band.low);
 
         while (this.simAcc >= h && guard++ < 240) {
             this.subPhase += omega * h;
@@ -580,7 +580,7 @@ export class AudioVisualizer {
 
         // 时间步进与外向行波位移推进
         this.rippleTime += dt * AudioVisualizer.FLOW_RATE * this.speedMultiplier;
-        this.wavefrontTravel += dt * (6 + 8 * this.energy);
+        this.wavefrontTravel += dt * (8 + 11 * this.energy);
 
         if (this.smoothAlpha < 0.01) return;
 
@@ -627,8 +627,8 @@ export class AudioVisualizer {
         ctx.fill();
 
         if (this._coreGrad === null || Math.abs(bassPulse - this._corePulse) > 0.015) {
-            const coreRadius = Math.min(maxField, 105 + bassPulse * 80 + this.energy * 30);
-            const coreAlpha = this.isPlaying ? 0.014 + bassPulse * 0.055 : 0.008;
+            const coreRadius = Math.min(maxField, 108 + bassPulse * 95 + this.energy * 36);
+            const coreAlpha = this.isPlaying ? 0.016 + bassPulse * 0.068 : 0.008;
             this._coreGrad = ctx.createRadialGradient(center, center, 10, center, center, coreRadius);
             this._coreGrad.addColorStop(0, `rgba(${theme.glow.join(',')}, ${coreAlpha.toFixed(4)})`);
             this._coreGrad.addColorStop(0.45, `rgba(${accentRgb}, ${(coreAlpha * 0.45).toFixed(4)})`);
@@ -671,26 +671,26 @@ export class AudioVisualizer {
             const attenuation = Math.max(0.24, 1 / Math.sqrt(1 + normR * 2.5));
 
             // 行波连续向外扩散波动量（消除持续音下的静态停滞）
-            const wavePropagation = Math.sin(this.wavefrontTravel * 0.04 - normR * Math.PI * 3.5) * (mm * 0.12);
+            const wavePropagation = Math.sin(this.wavefrontTravel * 0.045 - normR * Math.PI * 3.5) * (mm * 0.16);
 
             // 基于物理单体的贝塞尔模态位移函数
             const modalDisplacement = (angle) => {
                 if (ring.source === 'woofer') {
                     // 低音主活塞：J0 纯径向呼吸冲程 + 偶极展宽 + 行波外推
                     const j0 = besselJ(0, 2.4048 * normR);
-                    const quadrupole = 0.18 * Math.cos(angle * 2 - flowPhase);
-                    const disp = (j0 + quadrupole) * mm * AudioVisualizer.UNITS_PER_MM * 0.72 + wavePropagation;
+                    const quadrupole = 0.22 * Math.cos(angle * 2 - flowPhase);
+                    const disp = (j0 + quadrupole) * mm * AudioVisualizer.UNITS_PER_MM * 0.82 + wavePropagation;
                     return Math.max(-ring.cap, Math.min(ring.cap, disp));
                 } else if (ring.source === 'pr') {
                     // 被动辐射器：36Hz 共振超大冲程物理声压
                     const j0 = besselJ(0, 2.4048 * normR);
-                    const disp = j0 * mm * AudioVisualizer.UNITS_PER_MM * 0.58 + wavePropagation * 0.5;
+                    const disp = j0 * mm * AudioVisualizer.UNITS_PER_MM * 0.68 + wavePropagation * 0.6;
                     return Math.max(-ring.cap, Math.min(ring.cap, disp));
                 } else if (ring.source === 'mid') {
                     // 中音：J1 偶极与 J2 四极旋转模态
                     const j1 = besselJ(1, 3.8317 * normR) * Math.cos(angle + flowPhase);
                     const j2 = 0.5 * besselJ(2, 5.1356 * normR) * Math.cos(angle * 2 - flowPhase * 1.5);
-                    const disp = (j1 + j2) * mm * AudioVisualizer.UNITS_PER_MM * 0.72 + wavePropagation * 0.3;
+                    const disp = (j1 + j2) * mm * AudioVisualizer.UNITS_PER_MM * 0.82 + wavePropagation * 0.4;
                     return Math.max(-ring.cap, Math.min(ring.cap, disp));
                 } else {
                     // 高音发丝层：高频谐波微颤
@@ -736,12 +736,12 @@ export class AudioVisualizer {
             const fillBase = `rgba(${mixRgb(theme.accent, theme.glow, mix).join(',')}, `;
             const edgeBase = `rgba(${mixRgb(theme.hover, theme.glow, mix).join(',')}, `;
 
-            const fillA = Math.min(0.40, (ring.fillAlpha + boost * 0.5) * presence * attenuation);
+            const fillA = Math.min(0.46, (ring.fillAlpha + boost * 0.5) * presence * attenuation);
             ctx.fillStyle = `${fillBase}${fillA.toFixed(4)})`;
             ctx.fill();
 
             // 0.8px ~ 1.35px 发丝级矢量主波前线（Teenage Engineering / Braun 精度）
-            const edgeA = Math.min(0.95, (ring.edgeAlpha + boost * 1.8) * presence * attenuation);
+            const edgeA = Math.min(0.82, (ring.edgeAlpha + boost * 1.8) * presence * attenuation);
             ctx.strokeStyle = `${edgeBase}${edgeA.toFixed(4)})`;
             ctx.lineWidth = Math.max(0.65, ring.edgeWidth * (this.worldPerCss || 1));
             ctx.stroke();

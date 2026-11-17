@@ -151,7 +151,8 @@ export class SpectralWordmark {
             document.documentElement?.classList?.contains('dark')
         );
         const from = dark ? [64, 70, 84] : [228, 230, 235];
-        const to = dark ? [255, 188, 122] : [236, 124, 40];
+        const theme = this._theme || getVisualTheme();
+        const to = dark ? theme.glow : theme.accent;
 
         for (let i = 0; i < this.letters.length; i++) {
             const lv = clamp01(this.level[i] * boost);
