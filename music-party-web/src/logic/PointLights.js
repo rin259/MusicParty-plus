@@ -1,5 +1,3 @@
-import { spectrumBandEnergy } from './AudioVisualizer.js';
-
 /**
  * 隨機點光源（spectrum-linked point lights）。
  *
@@ -10,10 +8,10 @@ import { spectrumBandEnergy } from './AudioVisualizer.js';
  *  - 位置：不再固定。但**不做瞬移式隨機**（光點跳位會被讀成故障/閃爍）；
  *    改為連續游走：每顆燈有各自航向的隨機游走（sin 調變的轉向速率），
  *    速度隨其頻帶能量增減——響時游得快、靜時幾乎凝住，故「時刻在變」卻不跳變。
- *    出界前先在邊緣淡出，再從對側回卷，避免可見的瞬移。
+ *    触边连续反射，不从画布对侧瞬移。
  *  - 與頻譜的關係：16 顆燈各自绑定一段對數頻帶（低→高），低頻燈在鼓點上先亮，
  *    高頻燈隨鑔片/齒音閃動；於是背景的「哪一顆亮」本身就是頻譜信息的空間化。
- *  - 低解析度畫布再放大：柔化天然、成本極低（每幀 16 個徑向漸變）。
+ *  - 低解析度畫布再放大：柔化天然，光斑使用预绘制精灵。
  */
 const COUNT = 16;
 const MIN_HZ = 20;
@@ -39,11 +37,62 @@ const WHITE_LIGHT = [212, 218, 228];
 const srgbToLinear = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
 const linearToSrgb = (v) => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
 /** t = 0 → 低頻（橙），t = 1 → 高頻（白端） */
-const bandColor = (t, white) => ORANGE.map((c) => {
+export const pointLightColor = (t, white) => ORANGE.map((c, channel) => {
     const a = srgbToLinear(c / 255);
-    const b = srgbToLinear(white[0] / 255);
+    const b = srgbToLinear(white[channel] / 255);
     return Math.round(linearToSrgb(a + (b - a) * t) * 255);
 });
+
+/** 17 shared edges, not 16 starts spaced 1/15 with widths of 1/16. */
+export const POINT_LIGHT_BANDS = Array.from({ length: COUNT }, (_, i) => ({
+    from: MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, i / COUNT),
+    to: MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, (i + 1) / COUNT)
+}));
+
+const AMPLITUDES = Float32Array.from({ length: 256 }, (_, i) => (
+    i === 0 ? 0 : Math.pow(10, (-100 + i / 255 * 70) / 20)
+));
+
+/**
+ * Integrate FFT-bin coverage instead of floor/ceil sampling whole boundary bins.
+ * Low bands cannot have more detail than the supplied FFT, but a partial bin
+ * must not get a full extra vote in every neighbouring band. Keep headroom:
+ * compression happens once, below, not inside the shared audio/telemetry helper.
+ */
+export function pointLightBandEnergy(data, sampleRate, fftSize, from, to, gain) {
+    if (!data?.length || !(sampleRate > 0) || !(fftSize > 0) || !(to > from)) return 0;
+    const binHz = sampleRate / fftSize;
+    const lo = Math.max(0, Math.ceil(from / binHz - 0.5));
+    const hi = Math.min(data.length - 1, Math.floor(to / binHz + 0.5));
+    let sum = 0;
+    let weight = 0;
+    let peak = 0;
+    for (let i = lo; i <= hi; i++) {
+        const overlap = Math.max(0, Math.min(to, (i + 0.5) * binHz)
+            - Math.max(from, Math.max(0, i - 0.5) * binHz));
+        if (!overlap) continue;
+        const amp = AMPLITUDES[data[i]];
+        sum += amp * overlap;
+        weight += overlap;
+        peak = Math.max(peak, amp);
+    }
+    return weight ? (sum / weight + peak) * 0.5 * gain : 0;
+}
+
+export const pointLightLevel = raw => Math.max(0, raw) / (0.75 + Math.max(0, raw));
+
+/** Broad, smooth light with no bright pin-core or visible outer ring. */
+export function pointLightFalloff(t) {
+    const r = Math.min(1, Math.max(0, t));
+    const edge = Math.min(1, Math.max(0, (r - 0.65) / 0.35));
+    return Math.exp(-4 * r * r) * (1 - edge * edge * (3 - 2 * edge));
+}
+
+/** Soft exposure ceiling; crowded strong passages get alpha relief, not smaller spots. */
+export function pointLightOpacity(level, pop, strength, density) {
+    const exposure = strength * 10 * Math.pow(Math.max(0, level + pop * 0.22), 1.3);
+    return 0.62 * (1 - Math.exp(-exposure / 0.62)) / (1 + 0.3 * density);
+}
 
 export class PointLights {
     constructor() {
@@ -52,6 +101,9 @@ export class PointLights {
         this.width = 0;
         this.height = 0;
         this.levels = new Float32Array(COUNT);
+        // Radius keeps the incumbent response/scale. Brightness gets its own
+        // headroom, so refining exposure cannot accidentally shrink the soft lights.
+        this.radiusLevels = new Float32Array(COUNT);
         this.prevRaw = new Float32Array(COUNT);   // 上一帧该带的原始能量（算上升量）
         this.riseMean = new Float32Array(COUNT);  // 上升量的慢速均值（onset 自适应阈值）
         this.pop = new Float32Array(COUNT);       // 瞬态脉冲，0..1
@@ -72,8 +124,8 @@ export class PointLights {
         this.lights = this.seed();
         // 兩套調色板：淺色/深色各一套，繪製時依當前主題取用（避免白燈在淺底上隱形）
         this.palettes = {
-            light: Array.from({ length: COUNT }, (_, i) => bandColor(i / (COUNT - 1), WHITE_LIGHT)),
-            dark: Array.from({ length: COUNT }, (_, i) => bandColor(i / (COUNT - 1), WHITE_DARK))
+            light: Array.from({ length: COUNT }, (_, i) => pointLightColor(i / (COUNT - 1), WHITE_LIGHT)),
+            dark: Array.from({ length: COUNT }, (_, i) => pointLightColor(i / (COUNT - 1), WHITE_DARK))
         };
     }
 
@@ -99,7 +151,7 @@ export class PointLights {
                 x: p.x,
                 y: p.y,
                 r: rand(0.055, 0.12),            // 半徑回到原水平；擁擠度由「點數 16 + 互斥 0.16」控制
-                alpha: rand(0.05, 0.10),
+                alpha: rand(0.075, 0.085), // Music, not a 2× random multiplier, determines brightness.
                 band: t,
                 angle: rand(0, Math.PI * 2),     // 航向
                 speed: rand(0.022, 0.048),       // 基礎速度（容器比例 / 秒）
@@ -111,7 +163,7 @@ export class PointLights {
 
     /**
      * 互斥：任两盏灯中心距离小于 MIN_SEP 时互相推开（各让一半）。
-     * 位置松弛按 dt 归一，故 60/120Hz 的收敛速度一致；276 对/帧，成本可忽略。
+     * 位置松弛按 dt 归一，故 60/120Hz 的收敛速度一致；120 对/帧。
      */
     separate(dt) {
         const { width, height } = this;
@@ -139,9 +191,11 @@ export class PointLights {
     }
 
     mount(canvas) {
+        if (this.canvas === canvas && this.animationId) return;
+        this.unmount();
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d', { alpha: true });
-        this.buildSprites();
+        if (!this.sprites) this.buildSprites();
         this.resize();
         this._observer = typeof ResizeObserver === 'function'
             ? new ResizeObserver(() => this.resize())
@@ -159,13 +213,12 @@ export class PointLights {
         this.ctx = null;
     }
 
-    /** 预渲染 24×2 张径向光斑 sprite：替代每帧 24 次 createRadialGradient。 */
+    /** 预渲染 16×2 张宽柔光斑，不逐帧创建渐变。 */
     buildSprites() {
         if (typeof document === 'undefined') return;
-        // 光晕剖面 a(t) = (1-t)^2 * (1 + 1.084t)：
-        //   a(0)=1、a(0.45)=0.45（与旧版中段亮度一致）、a(1)=0，且 t=1 处导数为 0——
-        //   旧版在 t=0.45 处斜率突变、末端线性收口，放大后能看到一圈「边界」；
-        //   这个剖面全程连续可导，尾部收得极慢，边缘几乎不可分辨。
+        // Preserve broad radius and mid-halo intensity (~0.45 at 45% radius).
+        // A flat-topped Gaussian shoulder and zero-slope tail avoid a pin-core
+        // or a hard circular rim. Separation comes from exposure, not tighter spots.
         const SIZE = 256;
         const STOPS = 32;
         const make = (color) => {
@@ -178,7 +231,7 @@ export class PointLights {
             const [r, gr, b] = color;
             for (let s = 0; s <= STOPS; s++) {
                 const t = s / STOPS;
-                const a = (1 - t) * (1 - t) * (1 + 1.084 * t);
+                const a = pointLightFalloff(t);
                 grad.addColorStop(t, `rgba(${r}, ${gr}, ${b}, ${a.toFixed(5)})`);
             }
             g.fillStyle = grad;
@@ -217,25 +270,26 @@ export class PointLights {
         for (let i = 0; i < COUNT; i++) {
             const attack = 1 - Math.exp(-dt / this.attackTau[i]);
             const release = 1 - Math.exp(-dt / this.releaseTau[i]);
-            const t = this.lights[i].band;
-            const fLo = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, t);
-            const bandEnd = Math.min(1, t + 1 / COUNT);
-            const fHi = MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, bandEnd);
-            // 18dB tilt：低端 −9dB、高端 +9dB；位置/半径/alpha 一律不动。
+            const { from: fLo, to: fHi } = POINT_LIGHT_BANDS[i];
+            const bandEnd = (i + 1) / COUNT;
+            // Retain the incumbent 18dB tilt: low −9dB, high +9dB.
             const tilt = Math.pow(10, (TILT_DB * (bandEnd - 0.5)) / 20);
             const gain = (34 + 46 * bandEnd) * tilt;
-            const raw = spectrumBandEnergy(data, sampleRate, fftSize, fLo, fHi, gain);
-            const target = Math.min(1, 1 - Math.exp(-1.8 * raw));
+            const raw = pointLightBandEnergy(data, sampleRate, fftSize, fLo, fHi, gain);
+            const target = pointLightLevel(raw);
             const rate = target > this.levels[i] ? attack : release;
             this.levels[i] += (target - this.levels[i]) * rate;
+            const radiusTarget = 1 - Math.exp(-1.8 * Math.min(1, raw));
+            const radiusRate = radiusTarget > this.radiusLevels[i] ? attack : release;
+            this.radiusLevels[i] += (radiusTarget - this.radiusLevels[i]) * radiusRate;
 
             // 每盞燈自己的 onset：該帶上升量超過自身慢速均值 1.6 倍即判為瞬態。
-            // 用自適應閾值而非固定值，故與素材電平、幀率都無關。
-            const rise = raw - this.prevRaw[i];
-            this.prevRaw[i] = raw;
+            // Adaptive floor limits tiny rises; retain a bounded pulse for strong onsets.
+            const rise = target - this.prevRaw[i];
+            this.prevRaw[i] = target;
             this.riseMean[i] += (Math.max(0, rise) - this.riseMean[i]) * (1 - Math.exp(-dt / 0.5));
             if (rise > Math.max(0.02, this.riseMean[i] * 1.6)) {
-                this.pop[i] = Math.min(1, this.pop[i] + 0.85);
+                this.pop[i] = Math.min(1, this.pop[i] + Math.min(0.65, rise * 2));
             }
         }
     }
@@ -275,7 +329,10 @@ export class PointLights {
         // 頻譜事件停止（暫停/斷流）時自行歸零，保證「靜音即不可見」不依賴上游是否還在發事件
         if (this._lastSpectrumAt && performance.now() - this._lastSpectrumAt > 450) {
             const k = Math.pow(0.86, dt * 60);
-            for (let i = 0; i < COUNT; i++) this.levels[i] *= k;
+            for (let i = 0; i < COUNT; i++) {
+                this.levels[i] *= k;
+                this.radiusLevels[i] *= k;
+            }
         }
         const boost = 1 + 0.45 * this.flash + 0.15 * this.crowd;
         this.time += dt;
@@ -287,12 +344,12 @@ export class PointLights {
         const dark = document.documentElement.dataset.theme === 'dark'
             || document.documentElement.classList.contains('dark');
 
+        const density = this.levels.reduce((sum, value) => sum + value, 0) / COUNT;
         for (let i = 0; i < COUNT; i++) {
             const light = this.lights[i];
             const lv = Math.min(1, this.levels[i] * boost);
             this.pop[i] *= Math.pow(0.86, dt * 60);
             // 瞬態只在亮度上「彈」一下，不改半徑/形狀
-            const glow = Math.min(1, lv + 0.5 * this.pop[i]);
 
             // 連續游走：轉向由各自相位緩慢調變；速度隨該帶能量（響則游得快，靜時仍緩行）
             light.angle += Math.sin(this.time * light.turn + light.phase) * 0.9 * dt;
@@ -317,11 +374,11 @@ export class PointLights {
             // 邊緣淡出：接近邊界時漸隱，避免光斑被切邊或回卷時突兀
             const edge = Math.min(1, Math.min(light.x, 1 - light.x) / 0.12,
                 Math.min(light.y, 1 - light.y) / 0.12);
-            // 半徑與亮度同步隨所屬頻帶（並對正相關，與字標同一原則）
-            // 亮度：底噪为 0（静音时完全不可见），并拉开极差——
-            // lv 做 1.3 次幂，故弱段压得更暗、强段更快逼近上限（0.72）。
-            const r = Math.max(8, light.r * base * (1 + 1.1 * lv));
-            const alpha = Math.min(0.72, light.alpha * 12 * Math.pow(glow, 1.3)) * Math.max(0, edge);
+            // Keep the broad radius/expansion independently of exposure. Many
+            // strong bands get opacity relief, not smaller, harder-edged spots.
+            const radiusLevel = Math.min(1, this.radiusLevels[i] * boost);
+            const r = Math.max(8, light.r * base * (1 + 1.1 * radiusLevel));
+            const alpha = pointLightOpacity(lv, this.pop[i], light.alpha, density) * Math.max(0, edge);
             if (alpha < 0.0005) continue;
 
             const cx = light.x * width;

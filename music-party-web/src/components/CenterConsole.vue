@@ -108,7 +108,7 @@
 
     <!-- LAYER 0: 静态背景层 (最底层) -->
     <div class="absolute inset-0 z-0 pointer-events-none">
-      <!-- 随机点光源：16 颗各自绑定一段频带，只做即时响应（不漂移） -->
+      <!-- 16 颗宽柔点光源：连续游走，各自响应一段连续频带 -->
       <canvas ref="lightsRef" aria-hidden="true" class="absolute inset-0 w-full h-full"></canvas>
       <div class="absolute inset-0 bg-[linear-gradient(rgb(var(--medical-900)/0.04)_1px,transparent_1px),linear-gradient(90deg,rgb(var(--medical-900)/0.04)_1px,transparent_1px)] bg-[size:40px_40px]"></div>
       <!-- 频谱字标：取时频谱之思想（频率→位置、能量→强度、时间→余辉），落在本站字标上 -->
@@ -592,26 +592,41 @@ watch(wordLetters, async () => {
 
 // 脱敏工具
 
-onMounted(() => {
-  // 1. 挂载 Canvas & Visualizer
-  if (canvasRef.value) {
-    visualizer.mount(canvasRef.value);
-    visualizer.setPlaying(isVisualizerActive.value);
-    nextTick(refreshVisualizerMetrics);
-    // 容器尺寸变化（侧栏收合、精简模式、断点切换）未必触发 window resize，
-    // 故直接观察画布本体——环场几何须随实测定，方能处处不压封面、不出画布。
-    if (typeof ResizeObserver === 'function') {
-      resizeObserver = new ResizeObserver(() => refreshVisualizerMetrics());
-      resizeObserver.observe(canvasRef.value.parentElement || canvasRef.value);
-    }
+// The desktop v-else branch replaces these nodes on every mobile breakpoint
+// crossing without remounting CenterConsole. Own resources by node identity,
+// not just by this component's first onMounted.
+watch(canvasRef, (canvas) => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+  visualizer.unmount();
+  if (!canvas) return;
+  visualizer.mount(canvas);
+  visualizer.setPlaying(isVisualizerActive.value);
+  refreshVisualizerMetrics();
+  if (typeof ResizeObserver === 'function') {
+    resizeObserver = new ResizeObserver(refreshVisualizerMetrics);
+    resizeObserver.observe(canvas.parentElement || canvas);
   }
-  if (wordRef.value) {
-    wordmark.attach(wordRef.value);
+}, { flush: 'post' });
+
+watch(lightsRef, (canvas) => {
+  lights.unmount();
+  if (canvas) lights.mount(canvas);
+}, { flush: 'post' });
+
+watch(wordRef, (root) => {
+  wordmark.unmount();
+  if (root) {
+    wordmark.attach(root);
     wordmark.start();
   }
-  if (lightsRef.value) lights.mount(lightsRef.value);
-  if (telemetryRef.value) telemetry.attach(telemetryRef.value, srRef.value);
+}, { flush: 'post' });
 
+watch([telemetryRef, srRef], ([root, summary]) => {
+  telemetry.attach(root, summary);
+}, { flush: 'post' });
+
+onMounted(() => {
   // 2. 监听全局自定义事件
   useEventListener(window, 'resize', refreshVisualizerMetrics);
   useEventListener(window, 'player:like', () => triggerBurst());
