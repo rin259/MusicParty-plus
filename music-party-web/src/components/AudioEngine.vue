@@ -10,6 +10,7 @@
         @waiting="handleBufferingStart"
         @stalled="handleBufferingStart"
         @playing="handleBufferingEnd"
+        @play="prepareOutput"
         @canplay="onCanPlay"
         @seeked="onCanPlay"
         referrerpolicy="no-referrer"
@@ -44,12 +45,8 @@ import { usePlayerStore } from '../stores/player';
 import { useUiStore } from '../stores/ui';
 import { useAudio } from '../composables/useAudio';
 import {
-  attachAudioGraph,
-  createAudioContext,
-  elementVolumeIsWritable,
-  forgetAudioGraph,
+  createAudioOutput,
   needsSilentChannel,
-  resumeAudioContext
 } from '../logic/audioGraph';
 
 const player = usePlayerStore();
@@ -57,7 +54,7 @@ const ui = useUiStore();
 const audioRef = ref(null);
 const aliveAudioRef = ref(null);
 const silentRef = ref(null);
-let context = null;
+let output = null;
 let graph = null;
 let frequencyData;
 let spectrumCopy;
@@ -76,7 +73,10 @@ const {
   handleBufferingEnd,
   checkAutoPlay,
   resumeAudio
-} = useAudio(audioRef, player);
+} = useAudio(audioRef, player, {
+  beforePlay: () => prepareOutput(),
+  isOutputBlocked: () => output?.blocked || false
+});
 
 const audioSrc = computed(() => player.nowPlaying?.music.url || '');
 
@@ -92,13 +92,17 @@ watch(isErrorState, (val) => {
 });
 
 // 监听播放状态以维持保活音轨
-watch(() => player.isPaused, (paused) => {
-  if (!paused && ui.keepAliveEnabled) {
-    aliveAudioRef.value?.play().catch(() => {});
+watch(() => [player.isPaused, player.nowPlaying?.music.url, ui.keepAliveEnabled, ui.volume], () => {
+  if (player.nowPlaying && !player.isPaused && ui.keepAliveEnabled && ui.volume > 0) {
+    const element = aliveAudioRef.value;
+    if (element) {
+      element.volume = 0.001;
+      element.play().catch(() => {});
+    }
   } else {
     aliveAudioRef.value?.pause();
   }
-});
+}, { flush: 'post' });
 
 /**
  * 音量输出统一入口。
@@ -109,7 +113,7 @@ watch(() => player.isPaused, (paused) => {
 const applyOutputVolume = (value) => {
   const level = Number.isFinite(Number(value)) ? Math.min(1, Math.max(0, Number(value))) : 0.5;
   if (graph) {
-    graph.applyVolume(level);
+    output.applyVolume();
     return;
   }
   if (!audioRef.value) return;
@@ -119,8 +123,17 @@ const applyOutputVolume = (value) => {
 
 watch(() => ui.volume, applyOutputVolume, { immediate: true });
 
+// No silent helper should outlive the actual music or bypass a manual mute.
+watch(() => !player.nowPlaying || player.isPaused || ui.volume === 0, (silent) => {
+  if (silent) {
+    silentRef.value?.pause();
+    aliveAudioRef.value?.pause();
+  }
+});
+
 const onCanPlay = () => {
   handleBufferingEnd();
+  prepareOutput();
   checkAutoPlay();
 };
 
@@ -151,30 +164,12 @@ const startSpectrum = () => {
   publishSpectrum();
 };
 
-// iOS 在锁屏 / 来电 / 切到后台后会挂起 AudioContext，元素还在「播放」但一点声音没有。
-// 这种情况只能靠一次真实点击恢复，所以把「点击开启声音」按钮重新亮出来。
-let promptForGesture = false;
-
-const watchContextState = () => {
-  if (!context) return;
-  context.onstatechange = () => {
-    const running = context?.state === 'running';
-    if (!running && !player.isPaused && player.nowPlaying) {
-      promptForGesture = true;
-      player.audioBlocked = true;
-    } else if (running && promptForGesture) {
-      promptForGesture = false;
-      player.audioBlocked = false;
-    }
-  };
-};
-
 /**
  * iOS 17 之前的静音开关绕行：必须在用户手势里播放一个静音媒体元素。
  * 任何异常都不能影响主播放器。
  */
 const startSilentChannel = () => {
-  if (!needsSilentChannel()) return;
+  if (!needsSilentChannel() || !player.nowPlaying || player.isPaused || ui.volume === 0) return;
   const element = silentRef.value;
   if (!element) return;
   try {
@@ -186,59 +181,52 @@ const startSilentChannel = () => {
 };
 
 /**
- * 建立/恢复音频图。必须在用户手势的调用栈里执行。
+ * Try on mount/before playback as well as gestures. Autoplay-capable contexts
+ * must not wait for another click; blocked contexts keep the native path.
  *
  * 关键：只有 context 真的 running 才允许接图。把元素接进 suspended 的图
  * 会让本来正常的声音彻底消失（iOS 和 macOS Safari 都会），这正是
  * 「时不时有声音时不时没声音」的来源。
  */
-const ensureAudioGraph = async () => {
+function prepareOutput(gesture = false) {
   if (!audioRef.value) return;
-
-  startSilentChannel();
-
-  if (!context) {
-    context = createAudioContext();
-    if (!context) return; // 没有 Web Audio 的环境：保持原生播放
+  if (!output) {
+    output = createAudioOutput({
+      element: audioRef.value,
+      getVolume: () => ui.volume,
+      onGraph: (attached) => {
+        graph = attached;
+        startSpectrum();
+      },
+      onBlocked: (blocked) => {
+        // Do not clear a play() autoplay rejection just because the graph runs.
+        if (blocked && player.nowPlaying && !player.isPaused) player.audioBlocked = true;
+        else if (!blocked && !audioRef.value?.paused) player.audioBlocked = false;
+      }
+    });
   }
-
-  const running = await resumeAudioContext(context);
-  if (!running) {
-    console.info('[audio] AudioContext 未 running，保持原生播放，等待下一次用户手势');
-    return;
-  }
-
-  if (!graph) {
-    graph = attachAudioGraph(audioRef.value, context);
-    if (!graph) return;
-    applyOutputVolume(ui.volume);
-    startSpectrum();
-    watchContextState();
-    console.info(
-      `[audio] Web Audio graph attached (state=${graph.state}, `
-      + `elementVolume=${elementVolumeIsWritable() ? 'writable' : 'read-only -> gain'})`
-    );
-  }
-};
+  if (gesture === true) startSilentChannel();
+  output.prepare({ gesture: gesture === true });
+}
 
 // iPhone 上 pointerdown 之外还要兜 touchstart（老 iOS / 某些内嵌浏览器）
-const GESTURE_EVENTS = ['pointerdown', 'touchstart', 'keydown'];
+const GESTURE_EVENTS = ['pointerdown', 'touchstart', 'touchend', 'click', 'keydown'];
 
 const onUserGesture = () => {
-  ensureAudioGraph();
+  prepareOutput(true);
 };
 
 const onResumeAudio = () => {
   // 用户点「开启声音」：同一个手势里建图 + resume + play
-  ensureAudioGraph();
+  prepareOutput(true);
   resumeAudio();
 };
 
 const onPageVisible = () => {
-  if (!context || document.visibilityState === 'hidden') return;
+  if (document.visibilityState === 'hidden') return;
   // 从后台/锁屏回来时 iOS 会挂起 AudioContext。没有手势时 resume 可能失败，
   // 但能成功的话就不用等用户再点一次（失败时由 onstatechange 亮出「点击开启声音」）。
-  resumeAudioContext(context).catch(() => {});
+  prepareOutput();
 };
 
 onMounted(() => {
@@ -249,15 +237,8 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onPageVisible);
   window.addEventListener('pageshow', onPageVisible);
 
-  applyOutputVolume(ui.volume);
+  prepareOutput();
 
-  // 初始尝试播放保活音轨
-  if (!player.isPaused && ui.keepAliveEnabled) {
-    if (aliveAudioRef.value) {
-      aliveAudioRef.value.volume = 0.001;
-      aliveAudioRef.value.play().catch(() => {});
-    }
-  }
 });
 
 onUnmounted(() => {
@@ -269,15 +250,10 @@ onUnmounted(() => {
   window.removeEventListener('pageshow', onPageVisible);
   cancelAnimationFrame(visualizerFrame);
   visualizerFrame = 0;
-  try {
-    context?.close?.()?.catch?.(() => {});
-  } catch {
-    /* 已关闭的 context 再 close 会抛，卸载时忽略 */
-  }
-  // 图已随 context 关闭而失效，元素如果再被复用不能拿到旧图（否则永久静音）
-  forgetAudioGraph(audioRef.value);
+  output?.dispose();
   graph = null;
-  context = null;
+  output = null;
   silentRef.value?.pause?.();
+  aliveAudioRef.value?.pause?.();
 });
 </script>

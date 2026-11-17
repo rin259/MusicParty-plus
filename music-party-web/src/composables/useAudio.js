@@ -1,20 +1,21 @@
 // src/composables/useAudio.js
 
 import { ref, onMounted, onUnmounted, watch } from 'vue';
-import { useToast } from './useToast';
-import { shouldRestartRepeat } from '../logic/audioSync';
+import { shouldRestartRepeat } from '../logic/audioSync.js';
 
-export function useAudio(audioRef, playerStore) {
+export function useAudio(audioRef, playerStore, { beforePlay = () => {}, isOutputBlocked = () => false } = {}) {
     const localProgress = ref(0);
     const isBuffering = ref(false);
     const retryCount = ref(0);
     const isErrorState = ref(false);
-    const { info, error, success } = useToast();
     let syncTimer = null;
     let wakeLock = null;
     let bufferingUntil = 0;
     let lastForcedSyncAt = 0;
     let lastRepeatRestartAt = 0;
+    let retryTimer = null;
+    let playRequest = 0;
+    let disposed = false;
 
     // 请求唤醒锁 (防止 WebSocket 断连)
     const requestWakeLock = async () => {
@@ -91,15 +92,21 @@ export function useAudio(audioRef, playerStore) {
 
     // 尝试播放并处理浏览器拦截
     const safePlay = async () => {
-        if (!audioRef.value || !playerStore.nowPlaying) return;
+        if (disposed || !audioRef.value || !playerStore.nowPlaying || playerStore.isPaused) return;
+        const audio = audioRef.value;
+        const request = ++playRequest;
+        const url = playerStore.nowPlaying.music.url;
 
         try {
-            await audioRef.value.play();
+            beforePlay(); // Does not await a gesture-gated AudioContext.resume().
+            await audio.play();
+            if (disposed || request !== playRequest || url !== playerStore.nowPlaying?.music.url) return;
             isErrorState.value = false;
-            playerStore.audioBlocked = false;
+            playerStore.audioBlocked = isOutputBlocked();
             updateMediaSession();
             requestWakeLock();
         } catch (e) {
+            if (disposed || request !== playRequest || url !== playerStore.nowPlaying?.music.url) return;
             // NotAllowedError 是浏览器由于缺乏用户交互而拦截
             if (e.name === 'NotAllowedError') {
                 console.warn("Autoplay blocked. User interaction required.");
@@ -152,6 +159,7 @@ export function useAudio(audioRef, playerStore) {
     watch(() => playerStore.isPaused, (newPaused) => {
         if (!audioRef.value) return;
         if (newPaused) {
+            playRequest++;
             audioRef.value.pause();
             setPlaybackState('paused');
             releaseWakeLock();
@@ -159,10 +167,17 @@ export function useAudio(audioRef, playerStore) {
             safePlay();
             setPlaybackState('playing');
         }
-    });
+    }, { flush: 'post' }); // src/element must be updated before a pause-state play().
 
     // === 3. 监听切歌 ===
-    watch(() => playerStore.nowPlaying?.music?.id, () => {
+    watch(() => playerStore.nowPlaying?.music?.url, () => {
+        playRequest++;
+        clearTimeout(retryTimer);
+        if (!playerStore.nowPlaying && audioRef.value) {
+            audioRef.value.pause();
+            setPlaybackState('none');
+            releaseWakeLock();
+        }
         // 更新媒体中心信息 (锁屏显示)
         if (hasMediaSession() && playerStore.nowPlaying && typeof MediaMetadata !== 'undefined') {
             const music = playerStore.nowPlaying.music;
@@ -201,8 +216,10 @@ export function useAudio(audioRef, playerStore) {
 
         retryCount.value++;
         console.log(`Retry audio (${retryCount.value})...`);
-        setTimeout(() => {
-            if (audioRef.value) {
+        clearTimeout(retryTimer);
+        const url = playerStore.nowPlaying.music.url;
+        retryTimer = setTimeout(() => {
+            if (!disposed && audioRef.value && playerStore.nowPlaying?.music.url === url) {
                 audioRef.value.load();
                 // load 完会触发 canplay，进而触发 checkAutoPlay
             }
@@ -323,6 +340,9 @@ export function useAudio(audioRef, playerStore) {
     });
 
     onUnmounted(() => {
+        disposed = true;
+        playRequest++;
+        clearTimeout(retryTimer);
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('online', handleNetworkChange);
         window.removeEventListener('pageshow', handlePageResume);

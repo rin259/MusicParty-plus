@@ -8,7 +8,8 @@ import {
   elementVolumeIsWritable,
   forgetAudioGraph,
   needsSilentChannel,
-  resumeAudioContext
+  resumeAudioContext,
+  createAudioOutput
 } from './audioGraph.js';
 
 // 这些用例锁住的是 Safari 的四个坑：
@@ -54,6 +55,7 @@ const makeContext = ({ state = 'suspended', failResume = false } = {}) => {
           cancelScheduledValues() {},
           setTargetAtTime(value) { node.gain.value = value; }
         },
+        disconnect() {},
         connect(target) { calls.push(['gain->', target.kind]); }
       };
       return node;
@@ -65,6 +67,7 @@ const makeContext = ({ state = 'suspended', failResume = false } = {}) => {
         fftSize: 2048,
         smoothingTimeConstant: 0,
         frequencyBinCount: 1024,
+        disconnect() {},
         connect() {},
         getByteFrequencyData(array) { array.fill(7); }
       };
@@ -153,7 +156,7 @@ test('mute (volume 0) drives the gain to 0 because Safari ignores element.muted'
   forgetAudioGraph(element);
 });
 
-test('unmute restores gain and clears element.muted', () => {
+test('unmute restores gain without a second native attenuation', () => {
   const element = makeElement();
   const graph = attachAudioGraph(element, makeContext({ state: 'running' }));
 
@@ -162,7 +165,101 @@ test('unmute restores gain and clears element.muted', () => {
 
   assert.ok(Math.abs(graph.gain.gain.value - 0.42) < 1e-6);
   assert.equal(element.muted, false);
+  assert.equal(element.volume, 1);
   forgetAudioGraph(element);
+});
+
+test('Chromium native -> graph handoff keeps 50% at 50%, not 25%', () => {
+  const element = makeElement({ startVolume: 0.5 });
+  const graph = attachAudioGraph(element, makeContext({ state: 'running' }), 0.5);
+  assert.equal(element.volume * graph.gain.gain.value, 0.5);
+  graph.applyVolume(0.3);
+  assert.equal(element.volume * graph.gain.gain.value, 0.3);
+});
+
+test('seeds initial volume before connecting instead of briefly outputting full gain', () => {
+  const element = makeElement();
+  const context = makeContext({ state: 'running' });
+  const createGain = context.createGain;
+  context.createGain = () => {
+    const gain = createGain();
+    gain.connect = () => assert.equal(gain.gain.value, 0.2);
+    return gain;
+  };
+  const graph = attachAudioGraph(element, context, 0.2);
+  assert.equal(graph.gain.gain.value, 0.2);
+});
+
+test('analyser failure must not discard a working gain output', () => {
+  const context = makeContext({ state: 'running' });
+  context.createAnalyser = () => { throw new Error('optional analyser failed'); };
+  const element = makeElement();
+  const graph = attachAudioGraph(element, context, 0.4);
+  assert.ok(graph);
+  assert.equal(graph.analyser, null);
+  graph.applyVolume(0.2);
+  assert.equal(element.volume * graph.gain.gain.value, 0.2);
+});
+
+test('autoplay-capable context attaches and starts spectrum without waiting for a click', () => {
+  const element = { ...makeElement(), pause() {} };
+  let attached = null;
+  const output = createAudioOutput({ element, getVolume: () => 0.5,
+    contextFactory: () => makeContext({ state: 'running' }), onGraph: g => { attached = g; } });
+  output.prepare();
+  assert.ok(attached?.analyser);
+  assert.equal(element.volume * attached.gain.gain.value, 0.5);
+});
+
+test('pending WebKit resume leaves native output alone and attaches on later statechange', () => {
+  const element = makeElement();
+  const context = makeContext();
+  let resumeCalls = 0;
+  context.resume = () => { resumeCalls++; return new Promise(() => {}); };
+  let graph = null;
+  const output = createAudioOutput({ element, getVolume: () => 0.3,
+    contextFactory: () => context, onGraph: g => { graph = g; } });
+  output.prepare();
+  assert.equal(graph, null);
+  assert.equal(element.volume, 0.3);
+  assert.equal(context.calls.includes('source'), false);
+  output.prepare({ gesture: true });
+  assert.equal(resumeCalls, 2, 'gesture retries even with an outstanding resume promise');
+  context.state = 'running';
+  context.onstatechange();
+  assert.ok(graph);
+  assert.equal(element.volume * graph.gain.gain.value, 0.3);
+});
+
+test('late resume after disposal never attaches a closed room element', async () => {
+  const context = makeContext();
+  let resolve;
+  context.resume = () => new Promise(r => { resolve = r; });
+  let attached = false;
+  const output = createAudioOutput({ element: { ...makeElement(), pause() {} },
+    getVolume: () => 0.5, contextFactory: () => context, onGraph: () => { attached = true; } });
+  output.prepare();
+  output.dispose();
+  context.state = 'running';
+  resolve();
+  await Promise.resolve();
+  assert.equal(attached, false);
+  assert.equal(context.onstatechange, null);
+});
+
+test('suspension of attached output signals blocked; unattached suspension does not', () => {
+  const context = makeContext({ state: 'running' });
+  const blocked = [];
+  const output = createAudioOutput({ element: makeElement(), getVolume: () => 0.5,
+    contextFactory: () => context, onBlocked: b => blocked.push(b) });
+  output.prepare();
+  context.state = 'interrupted';
+  context.onstatechange();
+  assert.equal(output.blocked, true);
+  context.state = 'running';
+  context.onstatechange();
+  assert.equal(output.blocked, false);
+  assert.deepEqual(blocked, [false, true, false]);
 });
 
 test('clamps garbage volume values instead of sending NaN to the gain node', () => {

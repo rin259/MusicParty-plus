@@ -8,11 +8,12 @@
       :class="roomStore.entered ? 'h-app overflow-hidden' : 'min-h-app overflow-x-hidden'"
   >
     <!-- 0. 房间选择 / 创建（landing） -->
+    <!-- Keep the same media element/context across room switches, and capture
+         the landing-page join gesture before its asynchronous room request. -->
+    <AudioEngine />
     <RoomLanding v-if="!roomStore.entered" />
 
     <template v-else>
-      <AudioEngine />
-
       <!-- 自动播放被浏览器拦截时，必须在真实点击手势里重新 play()；放这里以便精简模式也能看到 -->
       <button
           v-if="player.audioBlocked"

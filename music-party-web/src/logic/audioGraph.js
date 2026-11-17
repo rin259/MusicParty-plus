@@ -4,9 +4,9 @@
  * 平台差异（都直接造成「时不时没声音 / 音量无效 / 静音无效」）：
  *
  * 1. iOS 上 HTMLMediaElement.volume 是**只读**的：赋值不报错，读回来永远是 1。
- * 2. 只要调用 createMediaElementSource()，元素的输出就交给音频图；
- *    Safari 之后会**完全忽略 element.volume 和 element.muted**（macOS 也一样）。
- *    音量/静音因此必须由 GainNode 负责。
+ * 2. createMediaElementSource() 把输出交给音频图。部分 Safari 版本会忽略
+ *    原生音量，而 Chromium 会继续应用原生音量。统一将原生音量置 1、
+ *    不设置原生静音，只由 GainNode 控制，避免 Chromium 双重衰减。
  * 3. 音频图如果接进一个 suspended 的 AudioContext，就是彻底静音：
  *    元素还在「播放」，但一个字都听不到。iOS 在手势之外创建的 context 就是 suspended。
  *    → 只有确认 context 处于 running 之后才允许接图，否则保持原生出声。
@@ -81,7 +81,7 @@ const defaultFactory = () => {
   return new Ctor();
 };
 
-/** 建一个 AudioContext；必须在用户手势里调用，iOS 才会直接 running。 */
+/** Try immediately; a gesture-gated engine may initially return a suspended context. */
 export const createAudioContext = (factory = defaultFactory) => {
   let context = null;
   try {
@@ -126,7 +126,7 @@ const graphs = new WeakMap();
  *   applyVolume: (value: number) => void,
  * }}
  */
-export const attachAudioGraph = (element, context) => {
+export const attachAudioGraph = (element, context, initialVolume = element?.volume ?? 0.5) => {
   if (!element || !context) return null;
 
   const existing = graphs.get(element);
@@ -137,21 +137,40 @@ export const attachAudioGraph = (element, context) => {
   let gain;
   let analyser = null;
   try {
-    source = context.createMediaElementSource(element);
     gain = context.createGain();
+    // Seed BEFORE connecting. The native volume is neutral once gain owns volume:
+    // setting both to 0.5 makes Chromium output 0.25 (Safari historically ignored native volume).
+    gain.gain.value = clamp01(initialVolume);
+    source = context.createMediaElementSource(element);
     source.connect(gain);
     gain.connect(context.destination);
-
-    // 频谱是可选装饰：分析器建不出来也不能影响出声
+  } catch (error) {
+    // Once created, a MediaElementSource cannot be undone. Preserve an audible
+    // connection if a later node connection failed instead of silently abandoning it.
+    if (source) {
+      try { source.disconnect(); source.connect(context.destination); } catch { /* report below */ }
+    }
+    console.warn('[audio] Output graph setup failed:', error);
+    return null;
+  }
+  // Optional analysis must not discard an otherwise working output graph.
+  try {
     if (typeof context.createAnalyser === 'function') {
       analyser = context.createAnalyser();
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.55;
+      // Keep the analyser on the rendered path, including WebKit implementations
+      // that do not pull an unconnected analysis branch.
+      analyser.connect(context.destination);
+      gain.disconnect();
       gain.connect(analyser);
     }
   } catch {
-    return null;
+    try { analyser?.disconnect(); gain.disconnect(); gain.connect(context.destination); } catch { /* preserve best effort output */ }
+    analyser = null;
   }
+
+  try { element.volume = 1; element.muted = false; } catch { /* iOS volume may be read-only */ }
 
   const graph = {
     context,
@@ -165,10 +184,10 @@ export const attachAudioGraph = (element, context) => {
     },
     applyVolume(value) {
       const level = clamp01(value);
-      // 未接图时 element.volume 可用；接图后 Safari 会忽略它，但设置无害
+      // ONE attenuation stage on every engine. Never multiply native volume by gain.
       try {
-        element.volume = level;
-        element.muted = level === 0;
+        element.volume = 1;
+        element.muted = false;
       } catch {
         /* 某些 WebView 会抛 */
       }
@@ -177,7 +196,9 @@ export const attachAudioGraph = (element, context) => {
         if (typeof gain.gain.cancelScheduledValues === 'function') {
           gain.gain.cancelScheduledValues(now);
         }
-        if (typeof gain.gain.setTargetAtTime === 'function') {
+        if (level === 0) {
+          gain.gain.value = 0; // Manual mute must be immediate, not an asymptotic fade.
+        } else if (typeof gain.gain.setTargetAtTime === 'function') {
           // 15ms 平滑，避免拖动滑块时的爆音（iOS 13+ 的 MediaElementSource 对突变很敏感）
           gain.gain.setTargetAtTime(level, now, 0.015);
         } else {
@@ -197,3 +218,68 @@ export const attachAudioGraph = (element, context) => {
 export const forgetAudioGraph = (element) => {
   if (element) graphs.delete(element);
 };
+
+/**
+ * Shared output lifecycle, independent of Vue and of browser-name sniffing.
+ * prepare() never waits for resume(): WebKit may leave that promise pending
+ * until a future gesture. Native playback must not wait behind it.
+ */
+export function createAudioOutput({ element, getVolume, onGraph = () => {},
+  onBlocked = () => {}, contextFactory = createAudioContext }) {
+  let context = null;
+  let graph = null;
+  let disposed = false;
+  let resumePending = false;
+
+  const applyVolume = () => {
+    const level = clamp01(getVolume());
+    if (graph) graph.applyVolume(level);
+    else {
+      try { element.volume = level; element.muted = level === 0; } catch { /* native fallback */ }
+    }
+  };
+  const attachIfRunning = () => {
+    if (disposed || !context) return;
+    if (!graph && context.state === 'running') {
+      graph = attachAudioGraph(element, context, getVolume());
+      if (graph) onGraph(graph);
+    }
+    // A suspended but UNATTACHED context cannot silence native playback.
+    onBlocked(!!graph && context.state !== 'running');
+  };
+  const prepare = ({ gesture = false } = {}) => {
+    if (disposed) return;
+    applyPlaybackAudioSession();
+    applyVolume();
+    if (!context) {
+      context = contextFactory();
+      if (!context) return;
+      context.onstatechange = attachIfRunning;
+    }
+    attachIfRunning();
+    if (context.state === 'running') return;
+    // A fresh gesture must retry even if an earlier non-gesture resume is pending.
+    if (resumePending && !gesture) return;
+    resumePending = true;
+    try {
+      const result = context.resume(); // Called synchronously inside the gesture.
+      attachIfRunning();
+      Promise.resolve(result).then(attachIfRunning, () => {
+        if (!disposed) onBlocked(!!graph && context.state !== 'running');
+      }).finally(() => { resumePending = false; });
+    } catch {
+      resumePending = false;
+      attachIfRunning();
+    }
+  };
+  return {
+    prepare, applyVolume,
+    get blocked() { return !!graph && context?.state !== 'running'; },
+    dispose() {
+      disposed = true;
+      element.pause();
+      if (context) context.onstatechange = null;
+      try { context?.close?.()?.catch?.(() => {}); } catch { /* already closed */ }
+    }
+  };
+}
