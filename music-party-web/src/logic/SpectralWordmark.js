@@ -31,6 +31,8 @@ export class SpectralWordmark {
         this.prevLow = 0;
         this.animationId = null;
         this._lastSpectrumAt = 0;
+        this._theme = null;
+        this._themeHandler = null;
     }
 
     attach(root) {
@@ -38,13 +40,24 @@ export class SpectralWordmark {
             this.unmount();
             return;
         }
+        if (this.root === root && this.letters.length) {
+            this.remeasure();
+            return;
+        }
+        this.unmount();
         this.root = root;
         this.letters = Array.from(root.querySelectorAll('.spectral-letter'));
         this.level = new Float32Array(this.letters.length);
         this.written = new Array(this.letters.length).fill('');
-        if (!this.animationId && typeof requestAnimationFrame === 'function') {
-            this.start();
+        if (typeof window !== 'undefined') {
+            this._themeHandler = (event) => {
+                this._theme = event?.detail || getVisualTheme();
+                this.written.fill('');
+            };
+            window.addEventListener('music-party:theme-change', this._themeHandler);
+            this._themeHandler();
         }
+        if (!this.animationId && typeof requestAnimationFrame === 'function') this.start();
     }
 
     /** 重新量測字母（字標內容被設定或房間名稱更改時調用，不中斷動態循環） */
@@ -131,6 +144,10 @@ export class SpectralWordmark {
     }
 
     unmount() {
+        if (this._themeHandler && typeof window !== 'undefined') {
+            window.removeEventListener('music-party:theme-change', this._themeHandler);
+            this._themeHandler = null;
+        }
         if (this.animationId && typeof cancelAnimationFrame === 'function') {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;

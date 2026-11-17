@@ -611,11 +611,8 @@ watch(lightsRef, (canvas) => {
 }, { flush: 'post' });
 
 watch(wordRef, (root) => {
-  wordmark.unmount();
-  if (root) {
-    wordmark.attach(root);
-    wordmark.start();
-  }
+  if (!root) wordmark.unmount();
+  else wordmark.attach(root);
 }, { flush: 'post' });
 
 watch([telemetryRef, srRef], ([root, summary]) => {
