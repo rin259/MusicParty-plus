@@ -14,9 +14,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.Collections;
 import java.util.List;
 
@@ -110,22 +108,76 @@ public class RoomPersistenceService {
         }
     }
 
-    private void writeAtomically(File target, byte[] bytes) throws IOException {
-        File parent = target.getParentFile();
-        if (parent != null) Files.createDirectories(parent.toPath());
-        Path temporary = new File(target.getAbsolutePath() + ".tmp").toPath();
-        Files.write(temporary, bytes);
-        try {
-            Files.move(temporary, target.toPath(), StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE);
-        } catch (java.nio.file.AtomicMoveNotSupportedException error) {
-            Files.move(temporary, target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+    private File subscriptionFile(String roomId) {
+        return new File(new File(dataDir(), "room-subscriptions"), roomId + ".json");
+    }
+
+    private File summonFile(String roomId) {
+        return new File(new File(dataDir(), "room-subscriptions"), roomId + ".summon.json");
+    }
+
+    synchronized long loadLastSummon(String roomId) throws IOException {
+        File file = summonFile(roomId);
+        return file.exists() ? objectMapper.readValue(file, Long.TYPE) : 0;
+    }
+
+    synchronized void saveLastSummon(String roomId, long timestamp) throws IOException {
+        writeAtomically(summonFile(roomId), objectMapper.writeValueAsBytes(timestamp));
+    }
+
+    synchronized RoomMailSettings.Update loadMailSettings() throws IOException {
+        File file = new File(dataDir(), "room-mail-settings.json");
+        return file.exists() ? objectMapper.readValue(file, RoomMailSettings.Update.class) : null;
+    }
+
+    synchronized void saveMailSettings(RoomMailSettings.Update overrides) throws IOException {
+        writeAtomically(new File(dataDir(), "room-mail-settings.json"), objectMapper.writeValueAsBytes(overrides));
+    }
+
+    synchronized List<EmailSubscription> loadSubscriptions(String roomId) throws IOException {
+        File file = subscriptionFile(roomId);
+        if (!file.exists()) return new ArrayList<>();
+        return new ArrayList<>(List.of(objectMapper.readValue(file, EmailSubscription[].class)));
+    }
+
+    synchronized void saveSubscriptions(String roomId, List<EmailSubscription> subscriptions) throws IOException {
+        if (subscriptions.isEmpty()) {
+            Files.deleteIfExists(subscriptionFile(roomId).toPath());
+        } else {
+            writeAtomically(subscriptionFile(roomId), objectMapper.writeValueAsBytes(subscriptions));
         }
+    }
+
+    synchronized void deleteSubscriptions(String roomId) {
         try {
-            Files.setPosixFilePermissions(target.toPath(),
-                    EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
-        } catch (UnsupportedOperationException | IOException ignored) {
-            // 非 POSIX 文件系统（Windows 本地开发）忽略
+            Files.deleteIfExists(subscriptionFile(roomId).toPath());
+            Files.deleteIfExists(summonFile(roomId).toPath());
+        } catch (IOException error) {
+            log.warn("Failed to delete email subscriptions for room {}", roomId, error);
+        }
+    }
+
+    record EmailSubscription(String email, String token, long requestedAt, boolean confirmed) {
+        EmailSubscription confirm() {
+            return new EmailSubscription(email, token, requestedAt, true);
+        }
+    }
+
+    private void writeAtomically(File target, byte[] bytes) throws IOException {
+        Path destination = target.toPath().toAbsolutePath();
+        Path parent = destination.getParent();
+        Files.createDirectories(parent);
+        Path temporary = Files.createTempFile(parent, target.getName() + ".", ".tmp");
+        try {
+            Files.write(temporary, bytes);
+            try {
+                Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException error) {
+                Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
         }
     }
 

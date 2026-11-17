@@ -1,5 +1,6 @@
 package org.thornex.musicparty.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -10,6 +11,7 @@ import org.thornex.musicparty.dto.RoomUpdateRequest;
 import org.thornex.musicparty.dto.RoomVerifyRequest;
 import org.thornex.musicparty.exception.ApiRequestException;
 import org.thornex.musicparty.room.Room;
+import org.thornex.musicparty.room.RoomMailSettings;
 import org.thornex.musicparty.room.RoomRegistry;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
@@ -30,10 +32,13 @@ public class RoomController {
 
     private final RoomRegistry roomRegistry;
     private final SimpMessagingTemplate messagingTemplate;
+    private final RoomMailSettings roomMailSettings;
 
-    public RoomController(RoomRegistry roomRegistry, SimpMessagingTemplate messagingTemplate) {
+    public RoomController(RoomRegistry roomRegistry, SimpMessagingTemplate messagingTemplate,
+                          RoomMailSettings roomMailSettings) {
         this.roomRegistry = roomRegistry;
         this.messagingTemplate = messagingTemplate;
+        this.roomMailSettings = roomMailSettings;
     }
 
     private RoomSummary summary(Room room, String deviceId) {
@@ -44,7 +49,9 @@ public class RoomController {
                 room.listed(),
                 roomRegistry.onlineCount(room.id()),
                 room.ownedBy(deviceId),
-                room.isMain()
+                room.isMain(),
+                room.summonCooldownHours(),
+                roomMailSettings.view().summonCooldownHours()
         );
     }
 
@@ -108,6 +115,23 @@ public class RoomController {
     public ResponseEntity<?> update(@PathVariable String id,
                                     @RequestHeader(value = "X-Device-Id", required = false) String deviceId,
                                     @RequestBody RoomUpdateRequest request) {
+        Room room = roomRegistry.get(id);
+        if (room == null) return ResponseEntity.notFound().build();
+        if (!room.ownedBy(deviceId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("message", "只有房主可以修改房间设置"));
+        }
+
+        JsonNode cooldown = request.summonCooldownHours();
+        Integer cooldownHours = null;
+        if (cooldown != null && !cooldown.isNull()) {
+            if (!cooldown.isIntegralNumber() || !cooldown.canConvertToInt()
+                    || !Room.isValidSummonCooldownHours(cooldown.intValue())) {
+                return ResponseEntity.badRequest().body(Map.of("message", "召唤冷却须为 0 到 24 小时的整数"));
+            }
+            cooldownHours = cooldown.intValue();
+        }
+
         String name = request.name() == null ? null : request.name().trim();
         if (name != null) {
             if (name.isEmpty()) throw new ApiRequestException("房间名不能为空");
@@ -122,7 +146,10 @@ public class RoomController {
         } else if (request.password() != null) {
             roomRegistry.setPassword(id, deviceId, normalizePassword(request.password()));
         }
-        Room room = roomRegistry.get(id);
+        if (cooldown != null) {
+            roomRegistry.setSummonCooldownHours(id, deviceId, cooldownHours);
+        }
+        room = roomRegistry.get(id);
         if (room == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(summary(room, deviceId));
     }

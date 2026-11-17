@@ -1,16 +1,19 @@
 <!-- src/components/layout/MainLayout.vue -->
 <script setup>
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
-import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare } from 'lucide-vue-next';
+import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare, Mail, BellRing } from 'lucide-vue-next';
 import UserList from '../UserList.vue';
 import QueueList from '../QueueList.vue';
 import CoverImage from '../CoverImage.vue';
+import RoomMailDialog from '../RoomMailDialog.vue';
 import { useUserStore } from '../../stores/user';
 import { useUiStore } from '../../stores/ui';
 import { usePlayerStore } from '../../stores/player';
 import { useRoomStore } from '../../stores/room';
 import { useChatStore } from '../../stores/chat';
 import { useToast } from '../../composables/useToast';
+import { useAdminStore } from '../../stores/admin';
+import { roomMailApi } from '../../api/rooms';
 
 const emit = defineEmits(['search']);
 const userStore = useUserStore();
@@ -18,7 +21,24 @@ const uiStore = useUiStore();
 const playerStore = usePlayerStore();
 const roomStore = useRoomStore();
 const chatStore = useChatStore();
+const adminStore = useAdminStore();
 const { success } = useToast();
+
+const roomMailEnabled = ref(false);
+const mailDialog = ref(null);
+
+watch([() => roomStore.roomId, () => adminStore.showDashboard], async ([id, dashboardOpen], _, onCleanup) => {
+  if (dashboardOpen) return;
+  let stale = false;
+  onCleanup(() => { stale = true; });
+  roomMailEnabled.value = false;
+  try {
+    const { enabled } = await roomMailApi.status(id);
+    if (!stale) roomMailEnabled.value = enabled;
+  } catch {
+    // Email features remain hidden if the server cannot report their availability.
+  }
+}, { immediate: true });
 
 const switchRoom = () => {
   mobileMenuOpen.value = false;
@@ -119,6 +139,12 @@ const handleSearchClick = () => {
               class="flex min-h-11 items-center gap-1 border border-medical-200 bg-medical-50 px-1.5 font-mono text-[9px] tracking-[0.12em] text-medical-500 transition-colors hover:border-accent hover:text-accent-text"
               title="复制邀请链接"
           ><Share2 class="h-3 w-3" />INVITE</button>
+          <button v-if="roomMailEnabled" type="button" class="hidden min-h-11 shrink-0 items-center gap-1 border border-medical-200 bg-medical-50 px-2 text-xs text-medical-700 hover:border-accent hover:text-accent-text md:inline-flex" @click="mailDialog.open('subscribe')">
+            <Mail class="h-3.5 w-3.5" aria-hidden="true" />订阅
+          </button>
+          <button v-if="roomMailEnabled" type="button" class="hidden min-h-11 shrink-0 items-center gap-1 border border-medical-200 bg-medical-50 px-2 text-xs text-medical-700 hover:border-accent hover:text-accent-text md:inline-flex" @click="mailDialog.open('summon')">
+            <BellRing class="h-3.5 w-3.5" aria-hidden="true" />召唤
+          </button>
         </div>
       </div>
 
@@ -211,6 +237,12 @@ const handleSearchClick = () => {
           <span class="flex items-center gap-2 text-sm font-bold"><Share2 class="w-4 h-4" /> 邀请 / 房间码</span>
           <span class="font-mono text-[10px] text-accent-text truncate max-w-[7rem]">{{ roomStore.roomId }}</span>
         </button>
+        <button v-if="roomMailEnabled" type="button" class="flex min-h-11 items-center gap-2 border border-medical-200 bg-medical-50 p-3 text-sm font-bold text-medical-700 hover:bg-medical-100" @click="mailDialog.open('subscribe')">
+          <Mail class="h-4 w-4" aria-hidden="true" />订阅房间
+        </button>
+        <button v-if="roomMailEnabled" type="button" class="flex min-h-11 items-center gap-2 border border-medical-200 bg-medical-50 p-3 text-sm font-bold text-medical-700 hover:bg-medical-100" @click="mailDialog.open('summon')">
+          <BellRing class="h-4 w-4" aria-hidden="true" />召唤
+        </button>
         <button id="tutorial-rename-mobile" @click="toggleMobileUser" class="w-full min-h-11 flex items-center justify-between p-3 border border-medical-200 bg-medical-50 text-medical-700">
           <span class="flex items-center gap-2 text-sm font-bold"><Users class="w-4 h-4" /> 在线用户</span>
           <span class="font-mono text-xs text-accent-text">{{ userStore.onlineUsers.length }}</span>
@@ -230,6 +262,13 @@ const handleSearchClick = () => {
         </div>
       </aside>
     </Transition>
+
+    <RoomMailDialog
+      ref="mailDialog"
+      :room-id="roomStore.roomId"
+      :room-name="roomStore.currentName"
+      :room-password="roomStore.passwordFor(roomStore.roomId)"
+    />
 
     <!-- 2. 主体内容区 -->
     <div v-if="!uiStore.isLiteMode" class="flex-1 flex overflow-hidden relative">

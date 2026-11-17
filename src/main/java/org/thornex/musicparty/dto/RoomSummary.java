@@ -8,6 +8,8 @@ public record RoomSummary(
         boolean listed,
         int onlineCount,
         boolean owner,
-        boolean mainRoom
+        boolean mainRoom,
+        Integer summonCooldownHours,
+        int defaultSummonCooldownHours
 ) {
 }
