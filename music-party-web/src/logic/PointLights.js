@@ -90,8 +90,12 @@ export function pointLightFalloff(t) {
 
 /** Soft exposure ceiling; crowded strong passages get alpha relief, not smaller spots. */
 export function pointLightOpacity(level, pop, strength, density) {
-    const exposure = strength * 10 * Math.pow(Math.max(0, level + pop * 0.22), 1.3);
-    return 0.62 * (1 - Math.exp(-exposure / 0.62)) / (1 + 0.3 * density);
+    // The previous exposure pass capped a strong band around 0.29 alpha after
+    // the new band integration. Restore the incumbent peak range (~0.65–0.72)
+    // while retaining only a mild density relief. Radius remains untouched.
+    const signal = Math.max(0, level + pop * 0.22);
+    const exposure = 0.94 * Math.pow(signal, 1.15) / (1 + 0.25 * density);
+    return Math.min(0.72, exposure);
 }
 
 export class PointLights {

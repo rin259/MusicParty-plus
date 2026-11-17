@@ -74,11 +74,12 @@ test('exposure stays monotonic and crowd relief changes opacity, not radius', ()
     let prev = 0;
     for (let i = 0; i <= 100; i++) {
         const alpha = pointLightOpacity(i / 100, 0, 0.08, 0.5);
-        assert.ok(alpha >= prev && alpha < 0.62);
+        assert.ok(alpha >= prev && alpha <= 0.72);
         prev = alpha;
     }
     assert.equal(pointLightOpacity(0, 0, 0.08, 1), 0);
     assert.ok(pointLightOpacity(0.8, 0, 0.08, 1) < pointLightOpacity(0.8, 0, 0.08, 0));
+    assert.ok(pointLightOpacity(0.759, 0, 0.08, 0) > 0.6);
 });
 
 test('incumbent broad radius and expansion remain, independent of brightness compression', () => {
