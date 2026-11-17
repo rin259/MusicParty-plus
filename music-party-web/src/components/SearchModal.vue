@@ -67,13 +67,13 @@
               @input="activeIndex = -1"
               @keydown.down.prevent="moveActive(1)"
               @keydown.up.prevent="moveActive(-1)"
-              placeholder="搜索歌曲、歌手，或粘贴链接 / BV 号…"
+              :placeholder="albumSearchMode ? '搜索专辑名称或艺人…' : '搜索歌曲、歌手，或粘贴链接 / BV 号…'"
               aria-label="搜索音乐"
               class="flex-1 min-h-10 border p-2.5 outline-none transition-colors duration-300 font-sans bg-medical-100 border-medical-200 focus:border-accent text-medical-900 placeholder:text-medical-500"
           />
           <button
               v-if="platform === 'netease'"
-              @click="albumSearchMode = !albumSearchMode"
+              @click="toggleAlbumSearch"
               class="flex items-center justify-center min-w-11 min-h-11 px-2.5 py-2 text-xs font-bold transition-colors flex-shrink-0"
               :class="albumSearchMode ? 'bg-accent text-accent-fg' : 'bg-medical-200 text-medical-700 hover:bg-medical-300'"
               title="搜索专辑"
@@ -95,7 +95,10 @@
         <div class="mt-1.5 flex items-center justify-between gap-3 font-mono text-[9px] tracking-[0.12em] text-medical-500 tabular-nums">
           <span class="truncate">
             <template v-if="loading">
-              SEARCHING {{ summary.done }}/{{ summary.sources }} · {{ Math.round(summary.elapsedMs) }}ms
+              {{ albumSearchMode ? 'LOADING ALBUMS…' : `SEARCHING ${summary.done}/${summary.sources} · ${Math.round(summary.elapsedMs)}ms` }}
+            </template>
+            <template v-else-if="albumSearchMode">
+              {{ listMode === 'album' ? `${songs.length} ALBUM TRACKS` : `${albums.length} ALBUMS` }}
             </template>
             <template v-else-if="summary.hits > 0">
               HITS {{ summary.hits }} · MERGED {{ summary.merged }} · {{ summary.done }}/{{ summary.sources }} DONE · {{ Math.round(summary.elapsedMs) }}ms
@@ -213,10 +216,10 @@
           </div>
 
           <div ref="contentScrollRef" @scroll="onContentScroll" class="flex-1 overflow-y-auto p-2 md:p-4">
-            <div v-if="loading && songs.length === 0" class="text-center py-10 font-mono text-accent-text animate-pulse">> LOADING DATA STREAM...</div>
+            <div v-if="loading && songs.length === 0 && albums.length === 0" class="text-center py-10 font-mono text-accent-text animate-pulse">> LOADING DATA STREAM...</div>
 
             <!-- 专辑搜索结果 -->
-            <div v-else-if="albumSearchMode && listMode === 'search' && !currentAlbumId" class="space-y-1">
+            <div v-else-if="listMode === 'album-search'" class="space-y-1">
               <div v-if="albums.length === 0" class="text-center py-10 text-medical-500 text-xs font-mono">NO ALBUMS FOUND / 换个专辑名试试</div>
               <button v-for="album in albums" :key="album.id" @click="handleSelectAlbum(album)" class="w-full min-h-14 flex items-center p-3 border border-transparent transition-all bg-surface-1 hover:border-medical-300 hover:shadow-sm cursor-pointer group text-left">
                 <div class="w-10 h-10 bg-medical-200 flex-shrink-0 overflow-hidden mr-3"><CoverImage :src="album.coverUrl" class="w-full h-full" /></div>
@@ -229,11 +232,11 @@
             </div>
 
             <!-- 专辑内歌曲列表 -->
-            <div v-else-if="albumSearchMode && currentAlbumId">
+            <div v-else-if="listMode === 'album' && currentAlbumId">
               <div class="mb-4 p-4 bg-surface-1 border border-medical-200 shadow-sm">
                 <div class="flex justify-between items-center gap-3">
                   <div class="min-w-0">
-                    <button @click="currentAlbumId = null" class="text-xs text-accent-text hover:underline mb-1 flex items-center gap-1"><ArrowLeft class="w-3 h-3" /> 返回专辑列表</button>
+                    <button @click="backToAlbums" class="text-xs text-accent-text hover:underline mb-1 flex items-center gap-1"><ArrowLeft class="w-3 h-3" /> 返回专辑列表</button>
                     <div class="font-bold text-lg truncate">{{ currentAlbumName }}</div>
                     <div class="text-xs text-medical-500 font-mono">{{ songs.length }} LOADED</div>
                   </div>
@@ -277,7 +280,7 @@
             </div>
 
             <!-- 歌曲列表渲染 -->
-            <div class="space-y-1">
+            <div v-if="listMode === 'search' || listMode === 'playlist'" class="space-y-1">
               <!-- 零态 vs 真·无结果：未查询时显示「能做什么」，只有搜过之后才说「没找到」 -->
               <div v-if="displayedSongs.length === 0 && !loading" class="text-center py-10 px-6">
                 <template v-if="!lastQuery && !playlistKeyword">
@@ -355,7 +358,7 @@
 
             <!-- 加载更多 / 结束 -->
             <div v-if="listMode === 'search' && !albumSearchMode" class="py-4 text-center">
-              <div v-if="loading && songs.length > 0" class="flex justify-center text-accent-text"><Loader2 class="w-6 h-6 animate-spin" /></div>
+              <div v-if="(loading || isLoadingMoreSearch) && songs.length > 0" class="flex justify-center text-accent-text"><Loader2 class="w-6 h-6 animate-spin" /></div>
               <div v-else-if="platform === 'all' && songs.length > 0" class="text-[10px] font-mono tracking-[0.16em] text-medical-500">
                 {{ summary.merged }} MERGED FROM {{ summary.hits }} HITS · 选择单个源可继续翻页
               </div>
@@ -380,6 +383,7 @@ import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
 import { useSearchLogic } from '../composables/useSearchLogic';
 import { usePlaylistLogic } from '../composables/usePlaylistLogic';
+import { useAlbumLogic } from '../composables/useAlbumLogic';
 import { X, Search, ListPlus, Loader2, ArrowLeft, ChevronRight, ExternalLink, Disc, RefreshCw } from 'lucide-vue-next';
 import CoverImage from './CoverImage.vue';
 import SourceBus from './SourceBus.vue';
@@ -426,7 +430,8 @@ const enabledPlatforms = computed(() => ['netease', 'bilibili', 'soundcloud', 'y
 // 1. 搜索逻辑
 const {
   platform, keyword, songs, loading, listMode, hasMore: hasMoreSearch,
-  sources, health, healthLoading, summary, lastQuery, doSearch, loadMore, probeHealth
+  sources, health, healthLoading, summary, lastQuery, doSearch, loadMore, probeHealth,
+  invalidateSearch, isLoadingMore: isLoadingMoreSearch
 } = useSearchLogic();
 
 const supportsPlaylists = computed(() => ['netease', 'bilibili', 'soundcloud'].includes(platform.value));
@@ -553,46 +558,34 @@ const {
   isSearchingUser, isPlaylistsLoading, hasMore, isLoadingMore, bindings,
   searchUser, bindUser, prefetchPlaylists, loadPlaylist, handleScroll, loadRemainingSongs,
   userSearchAttempted, saveCurrentPlaylist, refreshPlaylist, refreshState,
-  setPlaylistScrollTop, takeRestoreScrollTop
+  setPlaylistScrollTop, takeRestoreScrollTop, cancelPlaylistRequests
 } = usePlaylistLogic(platform, songs, listMode, loading);
 
 // 3. 专辑搜索
-const albumSearchMode = ref(false);
-const albums = ref([]);
-const currentAlbumId = ref(null);
-const currentAlbumName = ref('');
-
-const searchAlbums = async () => {
-  if (!keyword.value.trim()) return;
-  loading.value = true;
-  albums.value = [];
-  currentAlbumId.value = null;
-  try {
-    const data = await musicApi.searchAlbums(platform.value, keyword.value);
-    albums.value = data || [];
-  } catch (e) {
-    console.error('Album search error:', e);
-  } finally {
-    loading.value = false;
-  }
-};
-
-const handleSelectAlbum = async (album) => {
-  currentAlbumId.value = album.id;
-  currentAlbumName.value = album.name;
-  loading.value = true;
+const { albumSearchMode, albums, currentAlbumId, currentAlbumName,
+  searchAlbums, selectAlbum, backToAlbums, reset: resetAlbums
+} = useAlbumLogic(platform, songs, listMode, loading, { error: toastError });
+const toggleAlbumSearch = () => {
+  flushScrollPosition();
+  saveCurrentPlaylist();
+  invalidateSearch();
+  cancelPlaylistRequests();
+  resetAlbums();
+  albumSearchMode.value = !albumSearchMode.value;
+  currentPlaylistId.value = null;
   songs.value = [];
-  try {
-    const data = await musicApi.getAlbumSongs(platform.value, album.id);
-    songs.value = data || [];
-  } catch (e) {
-    console.error('Get album songs error:', e);
-  } finally {
-    loading.value = false;
-  }
+  activeIndex.value = -1;
+  listMode.value = albumSearchMode.value ? 'album-search' : 'search';
+  mobileView.value = 'songs';
+};
+const handleSelectAlbum = async (album) => {
+  activeIndex.value = -1;
+  await selectAlbum(album);
+  mobileView.value = 'songs';
 };
 
 const handleImportAlbum = () => {
+  if (listMode.value !== 'album' || !currentAlbumId.value || loading.value) return;
   if (userStore.isGuest) return promptNameThen(() => handleImportAlbum());
   player.enqueueAlbum(platform.value, currentAlbumId.value);
 };
@@ -609,6 +602,7 @@ const savedScrollPositions = ref(loadScrollPositions());
 let playlistSearchTimer = null;
 
 const displayedSongs = computed(() => {
+  if (listMode.value === 'album-search') return [];
   const query = playlistKeyword.value.trim().toLocaleLowerCase();
   if (listMode.value !== 'playlist' || platform.value !== 'netease' || !query) {
     return songs.value;
@@ -672,19 +666,7 @@ const onEnter = (event) => {
     handleAddClick(displayedSongs.value[activeIndex.value]);
     return;
   }
-  submitSearch();
-};
-
-const submitSearch = async () => {
-  const raw = (keyword.value || '').trim();
-  if (!raw) return;
-  activeIndex.value = -1;
-
-  if (looksLikeLink(raw)) {
-    await resolveAndEnqueue(raw);
-    return;
-  }
-  await doSearch();
+  handleSearchAction();
 };
 
 const resolveAndEnqueue = async (raw) => {
@@ -780,14 +762,27 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('beforeunload', onBeforeUnload);
   window.removeEventListener('pagehide', onBeforeUnload);
+  clearTimeout(scrollPersistTimer);
+  clearTimeout(playlistSearchTimer);
+  cancelAnimationFrame(scrollRestoreFrame);
 });
 
 const handleSearchAction = async () => {
+  if (!keyword.value.trim()) return;
+  flushScrollPosition();
+  saveCurrentPlaylist();
+  cancelPlaylistRequests();
+  currentPlaylistId.value = null;
+  activeIndex.value = -1;
+  playlistKeyword.value = '';
   rememberQuery(keyword.value);
   if (albumSearchMode.value && platform.value === 'netease') {
-    await searchAlbums();
+    invalidateSearch();
+    await searchAlbums(keyword.value);
   } else {
-    await submitSearch();
+    const raw = keyword.value.trim();
+    if (looksLikeLink(raw)) await resolveAndEnqueue(raw);
+    else await doSearch();
   }
   mobileView.value = 'songs';
 };
@@ -808,30 +803,44 @@ const importJob = computed(() => {
 });
 
 // === 交互胶水 ===
+let scrollRestoreRun = 0;
+let scrollRestoreFrame = 0;
+let restoringScroll = false;
 const applyScrollTopRobust = (targetTop) => {
   const target = Math.max(0, Math.round(targetTop || 0));
   if (!contentScrollRef.value) return;
+  cancelAnimationFrame(scrollRestoreFrame);
+  const run = ++scrollRestoreRun;
+  const key = scrollKey();
+  restoringScroll = true;
   contentScrollRef.value.scrollTop = target;
-  if (target === 0) return;
 
   // 关键：DOM 异步布局（图片、子组件展开）可能导致首帧 scrollHeight 不足而被截断
   // 在接下来的几帧反复确认并补齐，直到 scrollTop 真正到位
   let frames = 0;
   const verify = () => {
     const el = contentScrollRef.value;
-    if (!el || frames++ > 8) return;
+    if (!el || run !== scrollRestoreRun || key !== scrollKey() || frames++ > 8) {
+      if (run === scrollRestoreRun) restoringScroll = false;
+      return;
+    }
     if (Math.abs(el.scrollTop - target) > 2 && el.scrollHeight - el.clientHeight >= target) {
       el.scrollTop = target;
     }
-    requestAnimationFrame(verify);
+    scrollRestoreFrame = requestAnimationFrame(verify);
   };
-  requestAnimationFrame(verify);
+  scrollRestoreFrame = requestAnimationFrame(verify);
 };
 
 const handleSelectPlaylist = async (pid) => {
+  invalidateSearch();
+  resetAlbums();
+  albumSearchMode.value = false;
   saveScrollPosition();
   playlistKeyword.value = '';
-  await loadPlaylist(pid);
+  const selectedPlatform = platform.value;
+  const loaded = await loadPlaylist(pid);
+  if (!loaded || platform.value !== selectedPlatform || currentPlaylistId.value !== pid || listMode.value !== 'playlist') return;
   mobileView.value = 'songs';
   rememberActiveView();
   // 命中缓存时，列表内容已经就位，按缓存里的滚动位置稳妥还原
@@ -845,6 +854,7 @@ const handleSelectPlaylist = async (pid) => {
 };
 
 const handleImportPlaylist = () => {
+  if (listMode.value !== 'playlist' || !currentPlaylistId.value) return;
   if (userStore.isGuest) return promptNameThen(() => handleImportPlaylist());
   player.enqueuePlaylist(platform.value, currentPlaylistId.value);
 };
@@ -886,7 +896,7 @@ function loadScrollPositions() {
   }
 }
 
-const scrollKey = () => `${platform.value}:${listMode.value}:${currentPlaylistId.value || 'results'}`;
+const scrollKey = () => `${platform.value}:${listMode.value}:${currentAlbumId.value || currentPlaylistId.value || 'results'}`;
 
 let scrollPersistTimer = null;
 const persistScrollPositions = () => {
@@ -921,6 +931,7 @@ const restoreScrollPosition = async () => {
 };
 
 const onContentScroll = (event) => {
+  if (restoringScroll) return; // restoration must not paginate or overwrite the saved position
   handleScroll(event);
   saveScrollPosition();
   if (listMode.value === 'playlist') {
@@ -942,6 +953,7 @@ const closeModal = () => {
 };
 
 const switchPlatform = (nextPlatform) => {
+  if (nextPlatform === platform.value) return;
   if (!isPlatformEnabled(nextPlatform) && nextPlatform !== 'all') return;
   flushScrollPosition();
   saveCurrentPlaylist();
@@ -956,6 +968,8 @@ watch(listMode, (mode) => {
 });
 
 watch(platform, () => {
+  invalidateSearch();
+  resetAlbums();
   songs.value = [];
   albums.value = [];
   currentAlbumId.value = null;
@@ -967,14 +981,17 @@ watch(platform, () => {
   if (props.isOpen) restoreScrollPosition();
   // 已搜过词时，切源立即用同一关键词重搜（用户的预期是「换个源再看」）
   if (props.isOpen && keyword.value.trim() && !albumSearchMode.value) {
-    doSearch();
+    handleSearchAction();
   }
 });
 
 watch(playlistKeyword, (value) => {
   if (playlistSearchTimer) clearTimeout(playlistSearchTimer);
   if (platform.value !== 'netease' || listMode.value !== 'playlist' || !value.trim()) return;
-  playlistSearchTimer = setTimeout(() => loadRemainingSongs(), 250);
+  const pid = currentPlaylistId.value;
+  playlistSearchTimer = setTimeout(() => {
+    if (platform.value === 'netease' && listMode.value === 'playlist' && currentPlaylistId.value === pid) loadRemainingSongs();
+  }, 250);
 });
 
 watch(() => props.isOpen, async (val) => {
@@ -986,6 +1003,8 @@ watch(() => props.isOpen, async (val) => {
     // 预取歌单列表：SoundCloud 冷启动约 1.5s，用户点开再切过去就不用等
     prefetchPlaylists();
   } else {
+    cancelAnimationFrame(scrollRestoreFrame);
+    restoringScroll = false;
     saveScrollPosition();
     rememberActiveView();
   }

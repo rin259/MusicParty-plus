@@ -1,8 +1,9 @@
-import { computed, ref } from 'vue';
-import { useToast } from './useToast';
+import { computed, ref, watch, onScopeDispose } from 'vue';
+import { useToast } from './useToast.js';
 import { musicApi } from '../api/music.js';
 import { usePlayerStore } from '../stores/player.js';
 import { mergeResults, PLATFORMS } from '../logic/searchMerge.js';
+import { appendUniqueSongs } from '../logic/listPaging.js';
 
 const PAGE_SIZE = 30;
 const CACHE_TTL_MS = 60_000;
@@ -26,9 +27,9 @@ const emptySource = () => ({
  * - 结果按「标题+主艺人」归并，来源保留在 _sources；
  * - 60s 结果缓存，来回切源不重复打上游。
  */
-export function useSearchLogic() {
-    const { error } = useToast();
-    const playerStore = usePlayerStore();
+export function useSearchLogic({ api = musicApi, player = null, notify = null } = {}) {
+    const { error } = notify || useToast();
+    const playerStore = player || usePlayerStore();
 
     const platform = ref('all');
     const keyword = ref('');
@@ -47,6 +48,19 @@ export function useSearchLogic() {
     let seq = 0;
     let slowTimer = null;
     const cache = new Map();
+    const inFlight = new Map();
+    const isLoadingMore = ref(false);
+
+    const invalidateSearch = () => {
+        seq++;
+        clearTimeout(slowTimer);
+        slowTimer = null;
+        loading.value = false;
+        isLoadingMore.value = false;
+        hasMore.value = false;
+    };
+    watch([platform, listMode], invalidateSearch, { flush: 'sync' });
+    onScopeDispose(invalidateSearch);
 
     const enabledPlatforms = computed(() => PLATFORMS.filter((p) => isEnabled(p)));
 
@@ -88,11 +102,17 @@ export function useSearchLogic() {
         if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
             return { data: cached.data, fromCache: true };
         }
-        const data = await musicApi.search(sourcePlatform, query, pageOffset, limit, {
+        if (inFlight.has(key)) return inFlight.get(key);
+        const request = api.search(sourcePlatform, query, pageOffset, limit, {
             timeout: HARD_TIMEOUT_MS
+        }).then(data => {
+            cache.set(key, { at: Date.now(), data });
+            if (cache.size > 120) cache.delete(cache.keys().next().value);
+            return { data, fromCache: false };
         });
-        cache.set(key, { at: Date.now(), data });
-        return { data, fromCache: false };
+        inFlight.set(key, request);
+        try { return await request; }
+        finally { if (inFlight.get(key) === request) inFlight.delete(key); }
     }
 
     async function searchOne(sourcePlatform, query, runSeq, startedAt) {
@@ -105,7 +125,7 @@ export function useSearchLogic() {
         try {
             const { data, fromCache } = await fetchPage(sourcePlatform, query, 0, PAGE_SIZE);
             if (runSeq !== seq) return;
-            const list = Array.isArray(data) ? data : [];
+            const list = appendUniqueSongs([], data, sourcePlatform).items;
             batches.value[sourcePlatform] = list;
             sources.value[sourcePlatform] = {
                 state: 'ok',
@@ -132,6 +152,8 @@ export function useSearchLogic() {
     const doSearch = async () => {
         const query = keyword.value.trim();
         if (!query) return;
+        const sourcePlatform = platform.value;
+        invalidateSearch();
 
         lastQuery.value = query;
         listMode.value = 'search';
@@ -159,8 +181,8 @@ export function useSearchLogic() {
             }, SOFT_SLOW_MS);
 
             await Promise.allSettled(targets.map((p) => searchOne(p, query, runSeq, startedAt)));
-            clearTimeout(slowTimer);
             if (runSeq === seq) {
+                clearTimeout(slowTimer);
                 loading.value = false;
                 hasMore.value = false;
                 recompute(Math.round(performance.now() - startedAt));
@@ -172,13 +194,14 @@ export function useSearchLogic() {
         resetSources();
         batches.value = { [platform.value]: [] };
         try {
-            const { data, fromCache } = await fetchPage(platform.value, query, 0, PAGE_SIZE);
+            const { data, fromCache } = await fetchPage(sourcePlatform, query, 0, PAGE_SIZE);
             if (runSeq !== seq) return;
-            const list = Array.isArray(data) ? data : [];
+            const raw = Array.isArray(data) ? data : [];
+            const list = appendUniqueSongs([], raw, sourcePlatform).items;
             songs.value = list;
-            batches.value[platform.value] = list;
-            hasMore.value = list.length >= PAGE_SIZE;
-            sources.value[platform.value] = {
+            batches.value[sourcePlatform] = list;
+            hasMore.value = raw.length >= PAGE_SIZE && list.length > 0;
+            sources.value[sourcePlatform] = {
                 state: 'ok',
                 latencyMs: Math.round(performance.now() - startedAt),
                 count: list.length,
@@ -196,7 +219,7 @@ export function useSearchLogic() {
         } catch (e) {
             if (runSeq !== seq) return;
             const timedOut = e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '');
-            sources.value[platform.value] = {
+            sources.value[sourcePlatform] = {
                 ...emptySource(),
                 state: timedOut ? 'timeout' : 'error',
                 latencyMs: Math.round(performance.now() - startedAt),
@@ -214,29 +237,37 @@ export function useSearchLogic() {
     }
 
     const loadMore = async () => {
-        if (platform.value === 'all' || loading.value || !hasMore.value) return;
+        if (platform.value === 'all' || listMode.value !== 'search' || loading.value || isLoadingMore.value || !hasMore.value) return;
         const query = lastQuery.value;
         if (!query) return;
         const runSeq = seq;
+        const sourcePlatform = platform.value;
         const nextOffset = offset.value + PAGE_SIZE;
+        isLoadingMore.value = true;
         try {
-            const { data } = await fetchPage(platform.value, query, nextOffset, PAGE_SIZE);
+            const { data } = await fetchPage(sourcePlatform, query, nextOffset, PAGE_SIZE);
             if (runSeq !== seq) return;
             const list = Array.isArray(data) ? data : [];
             if (list.length === 0) {
                 hasMore.value = false;
                 return;
             }
-            songs.value = [...songs.value, ...list];
-            batches.value[platform.value] = songs.value;
+            const { items, fresh } = appendUniqueSongs(songs.value, list, sourcePlatform);
+            songs.value = items;
+            batches.value[sourcePlatform] = items;
             offset.value = nextOffset;
-            hasMore.value = list.length >= PAGE_SIZE;
-            sources.value[platform.value] = {
-                ...sources.value[platform.value],
+            hasMore.value = list.length >= PAGE_SIZE && fresh.length > 0;
+            sources.value[sourcePlatform] = {
+                ...sources.value[sourcePlatform],
                 count: songs.value.length
             };
+            summary.value = { ...summary.value, hits: items.length, merged: items.length };
         } catch (e) {
+            if (runSeq !== seq) return;
             console.error('[loadMore]', e);
+            error('加载搜索结果失败，请稍后重试');
+        } finally {
+            if (runSeq === seq) isLoadingMore.value = false;
         }
     };
 
@@ -244,7 +275,7 @@ export function useSearchLogic() {
     const probeHealth = async () => {
         healthLoading.value = true;
         try {
-            const list = await musicApi.sourcesHealth({ timeout: 12_000 });
+            const list = await api.sourcesHealth({ timeout: 12_000 });
             const next = {};
             for (const item of list || []) next[item.platform] = item;
             health.value = next;
@@ -268,6 +299,8 @@ export function useSearchLogic() {
         summary,
         lastQuery,
         doSearch,
+        invalidateSearch,
+        isLoadingMore,
         loadMore,
         probeHealth
     };

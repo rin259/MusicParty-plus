@@ -1,9 +1,10 @@
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onScopeDispose } from 'vue';
 import { useUserStore } from '../stores/user.js';
 import { usePlayerStore } from '../stores/player.js';
-import { musicApi } from '../api/music.js';
+import { musicApi as defaultApi } from '../api/music.js';
 import { useDebounceFn } from '@vueuse/core';
-import { useToast } from './useToast';
+import { useToast } from './useToast.js';
+import { appendUniqueSongs, playlistPageInfo } from '../logic/listPaging.js';
 import {
     readPlaylistCache,
     writePlaylistCache,
@@ -12,10 +13,12 @@ import {
     setUserPlaylistsCache
 } from '../logic/playlistCache.js';
 
-export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef) {
-    const userStore = useUserStore();
-    const playerStore = usePlayerStore();
-    const { error } = useToast();
+export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef,
+    { api = defaultApi, user = null, player = null, notify = null } = {}) {
+    const musicApi = api;
+    const userStore = user || useUserStore();
+    const playerStore = player || usePlayerStore();
+    const { error } = notify || useToast();
 
     // State
     const playlists = ref([]);
@@ -38,11 +41,13 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         viewportScrollTop = top;
         // 关键：滚动时防抖持久化，保证刷新标签页（F5）或异常关闭时滚动位置不丢
         if (currentPlaylistId.value && listModeRef.value === 'playlist') {
+            const plat = platformRef.value;
+            const pid = currentPlaylistId.value;
             if (updateScrollTimer) clearTimeout(updateScrollTimer);
             updateScrollTimer = setTimeout(() => {
                 updateScrollTimer = null;
-                if (currentPlaylistId.value) {
-                    updatePlaylistScrollTop(platformRef.value, currentPlaylistId.value, top);
+                if (currentPlaylistId.value === pid && platformRef.value === plat && listModeRef.value === 'playlist') {
+                    updatePlaylistScrollTop(plat, pid, top);
                 }
             }, 250);
         }
@@ -58,6 +63,23 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     const hasMore = ref(true);
     const isLoadingMore = ref(false);
     const limit = computed(() => platformRef.value === 'bilibili' ? 20 : 50);
+    let generation = 0;
+    let pageRequest = null;
+    let bulkLoading = false;
+    const context = () => ({ generation, platform: platformRef.value, pid: currentPlaylistId.value, mode: listModeRef.value });
+    const isCurrent = c => c.generation === generation && c.platform === platformRef.value
+        && c.pid === currentPlaylistId.value && c.mode === listModeRef.value && c.mode === 'playlist';
+    const cancelPlaylistRequests = () => {
+        generation++;
+        pageRequest = null;
+        bulkLoading = false;
+        clearTimeout(updateScrollTimer);
+        isLoadingMore.value = false;
+        loadingRef.value = false;
+        refreshState.value = { active: false, done: 0, target: 0 };
+    };
+    watch([platformRef, currentPlaylistId, listModeRef], cancelPlaylistRequests, { flush: 'sync' });
+    onScopeDispose(cancelPlaylistRequests);
 
     const bindings = computed(() => userStore.bindings);
 
@@ -97,13 +119,13 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         if (!cached) {
             // 进程内存没有，从 localStorage 恢复，使刷新标签页也能瞬间显示
             const persistent = getUserPlaylistsCache(platform, uid);
-            if (persistent && persistent.length) {
+            if (persistent) {
                 cached = persistent;
                 playlistsCache.set(key, cached);
                 playlistsCacheAt.set(key, Date.now() - (PLAYLISTS_FRESH_MS / 2));
             }
         }
-        if (cached) playlists.value = cached;
+        playlists.value = cached || [];
         if (cached && Date.now() - (playlistsCacheAt.get(key) || 0) < PLAYLISTS_FRESH_MS) {
             // 一分钟内刚取过：直接用缓存，不再发请求
             isPlaylistsLoading.value = false;
@@ -140,6 +162,12 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
             if (!platform || !uid) return;
             const key = `${platform}:${uid}`;
             if (playlistsCache.has(key)) return;
+            const persistent = getUserPlaylistsCache(platform, uid);
+            if (persistent) {
+                playlistsCache.set(key, persistent);
+                playlistsCacheAt.set(key, Date.now());
+                return;
+            }
             requestPlaylists(platform, uid)
                 .then((data) => {
                     if (!Array.isArray(data)) return;
@@ -154,14 +182,18 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
     // 搜索用户 (用于绑定)
     const searchUser = async () => {
         if (!searchUserKeyword.value) return;
+        const source = platformRef.value;
+        const query = searchUserKeyword.value;
         isSearchingUser.value = true;
         userSearchAttempted.value = false;
         userSearchResults.value = [];
         try {
-            const data = await musicApi.searchUser(platformRef.value, searchUserKeyword.value);
+            const data = await musicApi.searchUser(source, query);
+            if (source !== platformRef.value || query !== searchUserKeyword.value) return;
             userSearchResults.value = data || [];
             userSearchAttempted.value = true;
         } catch (e) {
+            if (source !== platformRef.value || query !== searchUserKeyword.value) return;
             console.error(e);
             if (e.response?.data?.message) {
                 error(e.response.data.message);
@@ -169,7 +201,7 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
                 error('User Search Failed');
             }
         } finally {
-            isSearchingUser.value = false;
+            if (source === platformRef.value) isSearchingUser.value = false;
         }
     };
 
@@ -186,62 +218,41 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
 
     // 分页获取歌单歌曲 (核心复杂逻辑)
     const fetchSongsPage = async () => {
-        if (!currentPlaylistId.value) return;
+        if (!currentPlaylistId.value || listModeRef.value !== 'playlist' || refreshState.value.active) return;
+        if (pageRequest) return pageRequest;
+        const c = context();
+        const startOffset = offset.value;
+        const pageLimit = limit.value;
+        const request = (async () => {
         try {
-            const startOffset = offset.value;
             const response = await musicApi.getPlaylistSongsPage(
-                platformRef.value,
-                currentPlaylistId.value,
+                c.platform,
+                c.pid,
                 startOffset,
-                limit.value
+                pageLimit
             );
-            const rawSongs = response.data || [];
-
-            // 服务端会返回「下一页的偏移」与「是否还有」：
-            // 因为部分曲目在区域不可用时会被丢弃，短页不等于到底。
-            const nextOffsetHeader = Number(response.headers?.['x-playlist-next-offset']);
-            const hasMoreHeader = response.headers?.['x-playlist-has-more'];
-
-            if (Number.isFinite(nextOffsetHeader)) {
-                offset.value = nextOffsetHeader;
-            } else {
-                offset.value = startOffset + rawSongs.length;
-            }
-
-            if (hasMoreHeader === 'true') hasMore.value = true;
-            else if (hasMoreHeader === 'false') hasMore.value = false;
-            else if (platformRef.value === 'bilibili') hasMore.value = rawSongs.length > 0;
-            else hasMore.value = rawSongs.length >= limit.value;
-
-            const validSongs = rawSongs.filter(s => s.id !== 'INVALID_SKIP');
-            // 只追加没见过的曲目：服务端若回绕/重复分页，用户会看到同一批歌被反复接在列表后面
-            const known = new Set(songsRef.value.map(s => `${s.platform}:${s.id}`));
-            const fresh = validSongs.filter(s => !known.has(`${s.platform}:${s.id}`));
-            songsRef.value.push(...fresh);
-
-            // 整页都是已加载过的曲目 = 分页回绕/失效；必须收尾，否则会无限循环下去
-            if (validSongs.length > 0 && fresh.length === 0) {
-                console.warn('[playlist] 服务端返回了整页重复曲目，停止翻页', currentPlaylistId.value);
-                hasMore.value = false;
-            }
-
-            // 贪婪加载：如果有效数据太少，自动加载下一页（offset 已由服务端给出）
-            if (hasMore.value && rawSongs.length > 0 && fresh.length < 10) {
-                setTimeout(fetchSongsPage, 50);
-            }
-
-            // 兜底
-            if (rawSongs.length === 0) isLoadingMore.value = false;
+            if (!isCurrent(c)) return;
+            const page = playlistPageInfo(response, startOffset, pageLimit);
+            const { items, fresh, valid } = appendUniqueSongs(songsRef.value, page.raw, c.platform);
+            offset.value = page.nextOffset;
+            hasMore.value = page.hasMore && !(valid > 0 && fresh.length === 0);
+            songsRef.value = items;
             // 增量拉取后同步缓存；但空结果绝不覆盖——失败的加载不能把已有数据刷掉
             if (songsRef.value.length > 0) saveCurrentPlaylist();
 
         } catch (e) {
+            if (!isCurrent(c)) return;
             console.error("Fetch songs failed", e);
             // 失败时不再静默：给出可见反馈，并且不要一路滚到底还显示「还有更多」
             const detail = e?.response?.data?.message || e?.message || '未知错误';
             error('加载歌单失败（' + detail + '）');
-            hasMore.value = false;
+            // A transport failure is not end-of-list; retain cursor for explicit retry.
+            return false;
         }
+        })();
+        pageRequest = request;
+        try { return await request; }
+        finally { if (pageRequest === request) pageRequest = null; }
     };
 
     /** 把当前歌单的曲目、分页状态与滚动位置写进缓存（切走/关闭时调用） */
@@ -272,6 +283,10 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
             error('正在刷新中，请稍候');
             return;
         }
+        if (listModeRef.value !== 'playlist') return;
+        cancelPlaylistRequests(); // invalidate an older pagination response before refreshing
+        const c = context();
+        const pageLimit = limit.value;
         // 历史遗留的 loading 标志可能卡住（滚动加载被打断等），刷新时复位，避免「点了没反应」
         isLoadingMore.value = false;
         loadingRef.value = false;
@@ -288,22 +303,26 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
             // 旧条件 fetched.length < target 在 target=0 时直接跳过循环，按钮点了等于没点。
             // 关键：page === 0 传入 refresh=true，穿透后端的 5 分钟缓存，让 REFRESH LIST 真正更新源站数据
             for (let page = 0; page < 40 && serverHasMore && (page === 0 || fetched.length < target); page++) {
-                const res = await musicApi.getPlaylistSongsPage(plat, pid, nextHint, limit.value, page === 0);
+                const res = await musicApi.getPlaylistSongsPage(plat, pid, nextHint, pageLimit, page === 0);
                 // 刷新期间切了平台/歌单：迟到的响应不能覆盖新界面的数据
-                if (platformRef.value !== plat || currentPlaylistId.value !== pid) return;
-                const raw = res.data || [];
+                if (!isCurrent(c)) return;
+                const info = playlistPageInfo(res, nextHint, pageLimit);
+                const raw = info.raw;
                 console.info('[refresh]', pid, 'offset', nextHint, '->', raw.length);
 
-                const nextHeader = Number(res.headers?.['x-playlist-next-offset']);
-                const moreHeader = res.headers?.['x-playlist-has-more'];
-                nextHint = Number.isFinite(nextHeader) ? nextHeader : nextHint + raw.length;
-                serverHasMore = moreHeader === 'true' ? true
-                    : moreHeader === 'false' ? false
-                        : raw.length >= limit.value;
-
-                fetched.push(...raw.filter(s => s.id !== 'INVALID_SKIP'));
+                nextHint = info.nextOffset;
+                serverHasMore = info.hasMore;
+                const { fresh, valid } = appendUniqueSongs(fetched, raw, plat);
+                if (valid > 0 && !fresh.length) throw new Error('源返回重复页，已停止刷新');
+                if (res.headers?.['x-playlist-has-more'] === 'true' && !info.hasMore) {
+                    throw new Error('源分页游标未前进，已停止刷新');
+                }
+                fetched.push(...fresh);
                 refreshState.value.done = fetched.length;
                 if (raw.length === 0) break;
+            }
+            if (serverHasMore && fetched.length < target) {
+                throw new Error('刷新未覆盖已加载范围，已停止并保留原列表');
             }
 
             // 服务端一页都没给时：原本就没有内容 -> 视为空歌单；原本有内容 -> 保留并提示
@@ -318,14 +337,16 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
             hasMore.value = serverHasMore;
             saveCurrentPlaylist();
         } catch (e) {
-            console.warn('[refresh] failed', pid, offset, e);
-            if (platformRef.value === plat && currentPlaylistId.value === pid) {
+            console.warn('[refresh] failed', pid, offset.value, e);
+            if (isCurrent(c)) {
                 const detail = e?.response?.data?.message || e?.message || '未知错误';
                 error('刷新歌单失败（' + detail + '），已保留原数据');
             }
         } finally {
-            isLoadingMore.value = false;
-            refreshState.value = { active: false, done: refreshState.value.done, target: refreshState.value.target };
+            if (isCurrent(c)) {
+                isLoadingMore.value = false;
+                refreshState.value = { active: false, done: refreshState.value.done, target: refreshState.value.target };
+            }
         }
     };
 
@@ -336,21 +357,22 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
 
         listModeRef.value = 'playlist';
         currentPlaylistId.value = pid;
+        cancelPlaylistRequests(); // same-playlist reselect also starts a new generation
+        const c = context();
 
         const cached = readPlaylistCache(platform, pid);
         // 0 首的条目是失败加载的残留，绝不能当命中——否则点击歌单会毫无反应
         if (cached && (cached.songs || []).length > 0) {
-            songsRef.value = cached.songs || [];
+            songsRef.value = appendUniqueSongs([], cached.songs, platform).items;
             // offset 是「下一页的 id 偏移」，可能大于已显示条数（有曲目不可用），
             // 所以优先用缓存里保存的值
             offset.value = Number.isFinite(cached.offset) ? cached.offset : songsRef.value.length;
-            // 缓存里的 hasMore 可能是历史遗留的错误状态（后端修好前写入的 false），
-            // 恢复时一律按「可能还有更多」处理：真到底了，翻页会拿到 0 条再收尾。
-            hasMore.value = true;
-            loadingRef.value = false;
+            // Respect completed pages: reopening a cached list must not probe its tail again.
+            hasMore.value = cached.hasMore !== false;
+            if (isCurrent(c)) loadingRef.value = false;
             viewportScrollTop = cached.scrollTop || 0;
             pendingRestoreScrollTop = cached.scrollTop || 0;
-            return;
+            return true;
         }
 
         songsRef.value = [];
@@ -363,38 +385,38 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
 
         try {
             await fetchSongsPage();
+            return isCurrent(c);
         } finally {
-            loadingRef.value = false;
+            if (isCurrent(c)) loadingRef.value = false;
         }
     };
 
     // 滚动加载
-    const handleScroll = useDebounceFn(async (e) => {
-        if (listModeRef.value !== 'playlist') return;
-        const el = e.target;
-        const bottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-
-        if (bottom < 100 && hasMore.value && !isLoadingMore.value && !loadingRef.value) {
-            isLoadingMore.value = true;
-            try {
-                await fetchSongsPage();
-            } finally {
-                isLoadingMore.value = false;
-            }
-        }
+    const loadMoreSongs = async () => {
+        if (listModeRef.value !== 'playlist' || bulkLoading || refreshState.value.active
+            || !hasMore.value || isLoadingMore.value || loadingRef.value) return;
+        isLoadingMore.value = true;
+        const c = context();
+        try { return await fetchSongsPage(); }
+        finally { if (isCurrent(c)) isLoadingMore.value = false; }
+    };
+    const debouncedScroll = useDebounceFn((c, el) => {
+        if (isCurrent(c) && el.scrollHeight - el.scrollTop - el.clientHeight < 100) return loadMoreSongs();
     }, 200);
+    const handleScroll = (event) => debouncedScroll(context(), event.target);
 
     const loadRemainingSongs = async () => {
         if (!currentPlaylistId.value || isLoadingMore.value || loadingRef.value) return;
-
+        const c = context();
+        bulkLoading = true;
         isLoadingMore.value = true;
         try {
             // 保险丝：极端情况下（服务端一直说还有）也不会无限循环
-            for (let guard = 0; guard < 100 && hasMore.value; guard++) {
-                await fetchSongsPage();
+            for (let guard = 0; guard < 100 && isCurrent(c) && hasMore.value; guard++) {
+                if (await fetchSongsPage() === false) break;
             }
         } finally {
-            isLoadingMore.value = false;
+            if (isCurrent(c)) { isLoadingMore.value = false; bulkLoading = false; }
         }
     };
 
@@ -410,6 +432,9 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         hasMore.value = true;
         isLoadingMore.value = false;
         refreshState.value = { active: false, done: 0, target: 0 };
+        isSearchingUser.value = false;
+        userSearchResults.value = [];
+        userSearchAttempted.value = false;
     });
 
     // 绑定是原地改对象属性（bindings.value[platform] = id），ref 本身不变，
@@ -439,6 +464,8 @@ export function usePlaylistLogic(platformRef, songsRef, listModeRef, loadingRef)
         takeRestoreScrollTop,
         loadPlaylist,
         handleScroll,
-        loadRemainingSongs
+        loadRemainingSongs,
+        cancelPlaylistRequests,
+        loadMoreSongs
     };
 }
