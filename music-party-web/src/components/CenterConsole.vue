@@ -132,10 +132,6 @@
           height="1200"
           class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
       ></canvas>
-
-      <!-- 旋转圈圈 (CSS动画) -->
-      <div class="absolute inset-0 w-[320px] h-[320px] m-auto border border-medical-200 rounded-[24%] animate-[spin_10s_linear_infinite] opacity-30 border-dashed"></div>
-      <div class="absolute inset-0 w-[340px] h-[340px] m-auto border border-medical-200 rounded-[24%] animate-[spin_15s_linear_infinite_reverse] opacity-20"></div>
     </div>
 
     <!-- LAYER 2: 信息层 (歌词 & 日志) -->
