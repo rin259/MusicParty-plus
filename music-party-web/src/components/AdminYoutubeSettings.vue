@@ -16,7 +16,7 @@ const inputClass = 'w-full min-w-0 min-h-11 border border-medical-200 bg-medical
 const dirty = computed(() => cookies.value.trim().length > 0);
 const updatedLabel = computed(() => {
   if (!status.value?.updatedAt) return '';
-  return new Date(status.value.updatedAt).toLocaleString();
+  return new Date(status.value.updatedAt).toLocaleString('zh-CN', { hour12: false });
 });
 
 async function load() {
