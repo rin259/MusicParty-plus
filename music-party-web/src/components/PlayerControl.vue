@@ -46,8 +46,8 @@
 
         <!-- 时间显示 -->
         <div class="hidden md:block font-mono text-xs text-medical-500 flex-shrink-0 ml-2">
-           <span v-if="player.isLoading" class="text-accent-text animate-pulse">SYNCING SERVER...</span>
-           <span v-if="player.isBuffering" class="animate-pulse text-accent-text">BUFFERING...</span>
+           <span v-if="player.isLoading" class="inline-flex items-center gap-1.5 text-accent-text"><SignalLight active tick />SYNCING SERVER...</span>
+           <span v-else-if="player.isBuffering" class="inline-flex items-center gap-1.5 text-accent-text"><SignalLight active tick />BUFFERING...</span>
            <span v-else>{{ formatDuration(displayProgress) }} / {{ formatDuration(nowPlaying?.music.duration || 0) }}</span>
         </div>
       </div>
@@ -104,14 +104,17 @@
       <!-- 移动端简易控制 -->
       <div class="flex md:hidden items-center justify-between gap-1.5 mt-1.5 min-w-0">
         <div class="min-w-0 truncate font-mono text-[11px] text-medical-500 tabular-nums whitespace-nowrap">
-          <span v-if="player.isLoading" class="text-accent-text animate-pulse">SYNCING...</span>
-          <span v-else-if="player.isBuffering" class="text-accent-text animate-pulse">BUFFERING...</span>
+          <span v-if="player.isLoading" class="inline-flex items-center gap-1.5 text-accent-text"><SignalLight active tick />SYNCING...</span>
+          <span v-else-if="player.isBuffering" class="inline-flex items-center gap-1.5 text-accent-text"><SignalLight active tick />BUFFERING...</span>
           <span v-else>{{ formatDuration(displayProgress) }} / {{ formatDuration(nowPlaying?.music.duration || 0) }}</span>
         </div>
         <div class="flex gap-1.5 flex-shrink-0">
-        <button id="tutorial-download-mobile" @click="downloadCurrentMusic" class="hidden min-[360px]:flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 rounded-sm text-medical-500 active:bg-medical-200" aria-label="下载当前歌曲">
-          <Download class="w-4 h-4" />
-        </button>
+        <span class="relative hidden min-[360px]:inline-flex flex-shrink-0">
+          <button id="tutorial-download-mobile" @click="downloadCurrentMusic" :disabled="downloading" :aria-busy="downloading" class="flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 rounded-sm text-medical-500 active:bg-medical-200 disabled:cursor-wait disabled:opacity-70" :aria-label="downloading ? downloadLabel : '下载当前歌曲'">
+            <Download class="w-4 h-4" />
+          </button>
+          <SignalRail v-if="downloading" :ratio="downloadRatio" class="absolute inset-x-1 bottom-1" />
+        </span>
         <button
             id="tutorial-random-mobile"
             @click="player.cyclePlayMode"
@@ -154,9 +157,12 @@
       <!-- 播放控制 -->
       <div class="flex items-center gap-2 border-r border-medical-200 pr-4">
         <!-- 新增：下载按钮 (放在 Shuffle 旁边或者 Next 后面) -->
-        <button id="tutorial-download" @click="downloadCurrentMusic" class="flex items-center justify-center w-11 h-11 text-medical-500 hover:text-accent-text transition-colors" title="下载当前歌曲" aria-label="下载当前歌曲">
-          <Download class="w-5 h-5" />
-        </button>
+        <span class="relative inline-flex flex-shrink-0">
+          <button id="tutorial-download" @click="downloadCurrentMusic" :disabled="downloading" :aria-busy="downloading" class="flex items-center justify-center w-11 h-11 text-medical-500 hover:text-accent-text transition-colors disabled:cursor-wait disabled:text-accent-text" :title="downloading ? downloadLabel : '下载当前歌曲'" :aria-label="downloading ? downloadLabel : '下载当前歌曲'">
+            <Download class="w-5 h-5" />
+          </button>
+          <SignalRail v-if="downloading" :ratio="downloadRatio" class="absolute inset-x-2 bottom-2" />
+        </span>
 
         <button id="tutorial-random" @click="player.cyclePlayMode" :disabled="player.isPlayModeLocked" :class="['flex items-center justify-center w-11 h-11 text-medical-500', player.isPlayModeLocked ? 'opacity-50 cursor-not-allowed' : '']" :title="modeTitle" :aria-label="modeTitle">
             <ListOrdered v-if="player.playMode === 'SEQUENTIAL'" class="w-5 h-5" />
@@ -233,6 +239,8 @@ import { useUserStore } from '../stores/user';
 import { formatDuration } from '../utils/format';
 import { Download, ListOrdered, Repeat1, Repeat, Shuffle, SkipForward, Play, Pause, Volume2, Volume1, VolumeX, ExternalLink, Zap, Lock } from 'lucide-vue-next';
 import CoverImage from './CoverImage.vue';
+import SignalLight from './SignalLight.vue';
+import SignalRail from './SignalRail.vue';
 import { useToast } from '../composables/useToast';
 import { positionFromPointer } from '../logic/audioSync';
 import { TextDecode } from '../logic/Glitch.js';
@@ -243,6 +251,11 @@ const progressTrackRef = ref(null);
 const isSeeking = ref(false);
 const seekPreview = ref(0);
 const { info, error } = useToast();
+const downloading = ref(false);
+const downloadRatio = ref(null);
+const downloadLabel = computed(() => downloadRatio.value === null
+  ? '正在下载当前歌曲'
+  : `正在下载当前歌曲 ${Math.round(downloadRatio.value * 100)}%`);
 
 const titleRef = ref(null);
 const titleDecode = new TextDecode();
@@ -365,13 +378,32 @@ const toggleMute = () => {
 
 // --- 下载逻辑 ---
 const downloadCurrentMusic = async () => {
-  if (!nowPlaying.value) return;
+  if (!nowPlaying.value || downloading.value) return;
   const music = nowPlaying.value.music;
-  info(`Starting download: ${music.name}...`);
+  downloading.value = true;
+  downloadRatio.value = null;
   try {
     const response = await fetch(music.url);
     if (!response.ok) throw new Error('Network error');
-    const blob = await response.blob();
+    const total = Number(response.headers.get('content-length')) || 0;
+    let blob;
+    if (!response.body || !total) {
+      blob = await response.blob();
+    } else {
+      // Real byte progress: the only number worth animating on this surface.
+      const reader = response.body.getReader();
+      const chunks = [];
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.byteLength;
+        downloadRatio.value = Math.min(1, received / total);
+      }
+      blob = new Blob(chunks, { type: response.headers.get('content-type') || 'audio/mpeg' });
+    }
+    downloadRatio.value = 1;
     const blobUrl = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = blobUrl;
@@ -380,9 +412,13 @@ const downloadCurrentMusic = async () => {
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(blobUrl);
+    info(`Downloaded: ${music.name}`);
   } catch (e) {
     window.open(music.url, '_blank');
     error('Blob download failed, opening new tab.');
+  } finally {
+    downloading.value = false;
+    downloadRatio.value = null;
   }
 };
 

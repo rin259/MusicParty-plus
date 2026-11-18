@@ -1,6 +1,6 @@
 <template>
   <div
-      class="group relative flex items-center gap-2 p-2 bg-surface-1 border border-medical-200 hover:border-medical-300 transition-all mb-2 h-14"
+      class="group relative flex items-center gap-2 p-2 bg-surface-1 border border-medical-200 hover:border-medical-300 transition-colors mb-2 h-14"
   >
     <!-- 序号 -->
     <div v-if="index !== undefined" class="w-6 text-center font-mono text-xs text-medical-500">{{ String(index + 1).padStart(2, '0') }}</div>
@@ -15,11 +15,10 @@
           <span class="flex-shrink-0 font-mono text-[9px] tabular-nums text-medical-500">{{ durationLabel }}</span>
         </div>
 
-        <!-- 下载中状态：显示解析/下载阶段 -->
-        <div v-else-if="item.status === 'DOWNLOADING' || item.status === 'PENDING'" class="flex items-center gap-1.5 text-xs font-mono font-bold text-accent-text">
-          <Loader2 class="w-3 h-3 animate-spin" />
-          <span class="text-[10px] tracking-[0.12em]">{{ item.status === 'PENDING' ? 'WAITING' : 'RESOLVING' }}</span>
-          <span class="pipeline" aria-hidden="true"><i class="on"></i><i :class="{ on: item.status === 'DOWNLOADING' }"></i><i></i></span>
+        <div v-else-if="item.status === 'DOWNLOADING' || item.status === 'PENDING'" class="flex min-w-0 items-center gap-1.5 font-mono font-bold" :class="preparing ? 'text-accent-text' : 'text-medical-500'">
+          <SignalLight :active="preparing" :tick="preparing" />
+          <span class="truncate text-[10px] tracking-[0.12em]">{{ preparing ? 'PREPARING' : 'WAITING' }}</span>
+          <SignalRail :active="preparing" class="w-[26px] shrink-0 max-[359px]:hidden" />
         </div>
 
         <!-- 失败状态 -->
@@ -48,8 +47,10 @@
 import { computed } from 'vue';
 import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
-import { Trash2, ArrowUpToLine, Loader2 } from 'lucide-vue-next';
+import { Trash2, ArrowUpToLine } from 'lucide-vue-next';
 import { formatDuration, PLATFORM_LABEL } from '../logic/searchMerge.js';
+import SignalLight from './SignalLight.vue';
+import SignalRail from './SignalRail.vue';
 
 const props = defineProps({
   item: {
@@ -64,6 +65,7 @@ const props = defineProps({
 
 const player = usePlayerStore();
 const userStore = useUserStore();
+const preparing = computed(() => props.item.status === 'DOWNLOADING');
 
 const platformLabel = computed(() => PLATFORM_LABEL[props.item.music.platform] || props.item.music.platform || '—');
 const durationLabel = computed(() => {
@@ -78,8 +80,4 @@ const durationLabel = computed(() => {
   .queue-actions { opacity: 1 !important; }
 }
 
-/* 三段式解析进度：等待 / 解析 / 就绪 */
-.pipeline { display: inline-flex; gap: 2px; }
-.pipeline i { width: 4px; height: 4px; background: rgb(var(--medical-300)); }
-.pipeline i.on { background: rgb(var(--accent)); }
 </style>

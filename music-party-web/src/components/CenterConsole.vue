@@ -251,10 +251,13 @@
             @mouseleave="!isMobile && (isHovering = false)"
             @click="handleCoverClick"
         >
-          <!-- Loading 状态 -->
-          <div v-if="player.isLoading" class="absolute inset-0 z-50 bg-scrim/55 backdrop-blur-sm flex flex-col items-center justify-center text-white">
-            <div class="w-12 h-12 border-4 border-white/30 border-t-white animate-spin mb-4"></div>
-            <span class="font-mono text-xs animate-pulse tracking-widest">FETCHING_AUDIO...</span>
+          <!-- 取流中：保留封面，只在底边显示状态灯与细刻度，避免整块遮罩 -->
+          <div v-if="player.isLoading" class="absolute inset-x-0 bottom-0 z-50 bg-scrim/80 px-2 pb-1.5 pt-1 text-white">
+            <div class="flex items-center gap-1.5 font-mono text-[9px] tracking-[0.16em]">
+              <SignalLight active tick />
+              <span class="truncate">FETCHING_AUDIO...</span>
+            </div>
+            <SignalRail active variant="sweep" class="mt-1" />
           </div>
 
           <!-- [MODIFIED START] 交互遮罩层：全息HUD风格 -->
@@ -354,6 +357,8 @@ import { AudioTelemetry } from '../logic/AudioTelemetry.js';
 import { PointLights } from '../logic/PointLights.js';
 import { useUiStore } from '../stores/ui';
 import CoverImage from './CoverImage.vue';
+import SignalLight from './SignalLight.vue';
+import SignalRail from './SignalRail.vue';
 import { formatDuration, PLATFORM_LABEL } from '../logic/searchMerge.js';
 import { Activity, Zap } from 'lucide-vue-next';
 

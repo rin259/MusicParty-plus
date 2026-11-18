@@ -6,7 +6,9 @@
         <div class="mt-0.5 font-mono text-[9px] tracking-[0.14em] text-medical-500 tabular-nums">
           READY {{ readyCount }}
           <span class="mx-1 text-medical-300">|</span>
-          RESOLVING {{ resolvingCount }}
+          WAITING {{ waitingCount }}
+          <span class="mx-1 text-medical-300">|</span>
+          PREPARING {{ preparingCount }}
           <span v-if="failedCount" ref="failedChip" class="ml-1 text-danger">| FAILED {{ failedCount }}</span>
         </div>
         <!-- 队列可解释性：顺序规则 + 接下来几首还要多久。公平性若不可见，就等于没做。 -->
@@ -111,9 +113,10 @@ const player = usePlayerStore();
 const queue = computed(() => player.queue);
 const userStore = useUserStore();
 
-// 队列的真实解析状态：READY / RESOLVING / FAILED（用于头部微观测）
+// WAITING includes the prefetch tail and queued/retrying items, not active work.
 const readyCount = computed(() => queue.value.filter((item) => !item.status || item.status === 'READY').length);
-const resolvingCount = computed(() => queue.value.filter((item) => item.status === 'PENDING' || item.status === 'DOWNLOADING').length);
+const waitingCount = computed(() => queue.value.filter((item) => item.status === 'PENDING').length);
+const preparingCount = computed(() => queue.value.filter((item) => item.status === 'DOWNLOADING').length);
 const failedCount = computed(() => queue.value.filter((item) => item.status === 'FAILED').length);
 
 // G2：失败计数增加时，把 FAILED 这个词坏一个字符——失败本身就是「数据损坏」的语义。

@@ -161,7 +161,7 @@
                   <span class="text-xs font-bold truncate flex-1 text-medical-900">{{ user.name }}</span>
                 </button>
               </div>
-              <div v-if="isSearchingUser" class="text-center py-2"><Loader2 class="w-4 h-4 animate-spin mx-auto text-accent-text"/></div>
+              <div v-if="isSearchingUser" class="flex items-center justify-center gap-1.5 py-2"><SignalLight active tick /><span class="font-mono text-[10px] text-accent-text">SEARCHING_USERS</span></div>
             </div>
 
             <!-- 已绑定：歌单列表 -->
@@ -185,14 +185,15 @@
                     :disabled="refreshState.active"
                     class="w-full min-h-11 flex items-center justify-center gap-2 border border-medical-200 bg-surface-1 font-mono text-[10px] tracking-[0.12em] text-medical-600 hover:border-accent hover:text-accent-text transition-colors disabled:opacity-60"
                 >
-                  <Loader2 v-if="refreshState.active" class="w-3.5 h-3.5 animate-spin text-accent-text" />
+                  <SignalLight v-if="refreshState.active" active tick />
                   <RefreshCw v-else class="w-3.5 h-3.5" />
                   <span>{{ refreshState.active ? (refreshState.target ? `REFRESH ${refreshState.done}/${refreshState.target}` : 'REFRESHING...') : 'REFRESH LIST' }}</span>
                 </button>
               </div>
 
-              <div v-if="isPlaylistsLoading && !playlists.length" class="flex justify-center py-8">
-                <Loader2 class="w-6 h-6 animate-spin text-accent-text" />
+              <div v-if="isPlaylistsLoading && !playlists.length" class="px-2 py-4 font-mono text-[9px] tracking-[0.14em] text-medical-500">
+                <div class="flex items-center gap-1.5"><SignalLight active tick /><span class="text-accent-text">LOADING PLAYLISTS</span></div>
+                <SignalRail active variant="sweep" class="mt-1.5" />
               </div>
 
               <button v-for="pl in playlists" :key="pl.id" @click="handleSelectPlaylist(pl.id)" class="w-full min-h-14 flex items-center gap-3 p-2 hover:bg-medical-100 cursor-pointer group transition-colors text-left">
@@ -217,7 +218,13 @@
           </div>
 
           <div ref="contentScrollRef" @scroll="onContentScroll" class="flex-1 overflow-y-auto p-2 md:p-4">
-            <div v-if="loading && songs.length === 0 && albums.length === 0" class="text-center py-10 font-mono text-accent-text animate-pulse">> LOADING DATA STREAM...</div>
+            <div v-if="loading && songs.length === 0 && albums.length === 0" class="py-10 text-center font-mono text-[10px] tracking-[0.14em]">
+              <div class="flex items-center justify-center gap-1.5 text-accent-text">
+                <SignalLight active tick />
+                <span>> LOADING DATA STREAM...</span>
+              </div>
+              <SignalRail active variant="sweep" class="mx-auto mt-2 w-40" />
+            </div>
 
             <!-- 专辑搜索结果 -->
             <div v-else-if="listMode === 'album-search'" class="space-y-1">
@@ -359,7 +366,7 @@
 
             <!-- 加载更多 / 结束 -->
             <div v-if="listMode === 'search' && !albumSearchMode" class="py-4 text-center">
-              <div v-if="(loading || isLoadingMoreSearch) && songs.length > 0" class="flex justify-center text-accent-text"><Loader2 class="w-6 h-6 animate-spin" /></div>
+              <div v-if="(loading || isLoadingMoreSearch) && songs.length > 0" class="flex items-center justify-center gap-1.5 font-mono text-[9px] tracking-[0.14em] text-accent-text"><SignalLight active tick />LOADING MORE</div>
               <div v-else-if="platform === 'all' && songs.length > 0" class="text-[10px] font-mono tracking-[0.16em] text-medical-500">
                 {{ summary.merged }} MERGED FROM {{ summary.hits }} HITS · 选择单个源可继续翻页
               </div>
@@ -368,7 +375,7 @@
 
             <!-- 加载更多 -->
             <div v-if="listMode === 'playlist' && !loading" class="py-4 text-center">
-              <div v-if="isLoadingMore" class="flex justify-center text-accent-text"><Loader2 class="w-6 h-6 animate-spin" /></div>
+              <div v-if="isLoadingMore" class="flex items-center justify-center gap-1.5 font-mono text-[9px] tracking-[0.14em] text-accent-text"><SignalLight active tick />LOADING MORE</div>
               <div v-else-if="!hasMore && songs.length > 0" class="text-xs font-mono text-medical-500">-- END OF PLAYLIST --</div>
             </div>
           </div>
@@ -385,8 +392,10 @@ import { useUserStore } from '../stores/user';
 import { useSearchLogic } from '../composables/useSearchLogic';
 import { usePlaylistLogic } from '../composables/usePlaylistLogic';
 import { useAlbumLogic } from '../composables/useAlbumLogic';
-import { X, Search, ListPlus, Loader2, ArrowLeft, ChevronRight, ExternalLink, Disc, RefreshCw } from 'lucide-vue-next';
+import { X, Search, ListPlus, ArrowLeft, ChevronRight, ExternalLink, Disc, RefreshCw } from 'lucide-vue-next';
 import CoverImage from './CoverImage.vue';
+import SignalLight from './SignalLight.vue';
+import SignalRail from './SignalRail.vue';
 import SourceBus from './SourceBus.vue';
 import AddButton from './search/AddButton.vue';
 import ImportMeter from './search/ImportMeter.vue';

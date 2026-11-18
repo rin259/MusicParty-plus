@@ -8,7 +8,7 @@
       :aria-label="title"
       @click.stop="$emit('add')"
   >
-    <Loader2 v-if="submitting" class="h-5 w-5 animate-spin" />
+    <SignalLight v-if="submitting" active tick class="scale-[1.6]" />
     <Check v-else-if="done" class="h-5 w-5" />
     <RotateCcw v-else-if="failed" class="h-5 w-5" />
     <PlusCircle v-else class="h-5 w-5" />
@@ -17,7 +17,8 @@
 
 <script setup>
 import { computed } from 'vue';
-import { Check, Loader2, PlusCircle, RotateCcw } from 'lucide-vue-next';
+import { Check, PlusCircle, RotateCcw } from 'lucide-vue-next';
+import SignalLight from '../SignalLight.vue';
 
 const props = defineProps({
   song: { type: Object, required: true },

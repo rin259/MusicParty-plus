@@ -44,6 +44,7 @@
         <!-- 时延标尺：0–6s。细刻度叠层，填充为平滑 scaleX，不逐帧重排。 -->
         <span class="relative mt-1.5 block h-[3px] overflow-hidden bg-medical-200/80">
           <i class="bus-fill" :class="fillClass(id)" :style="{ transform: `scaleX(${ratio(id)})` }"></i>
+          <i v-if="stateOf(id).state === 'loading'" class="bus-sweep" aria-hidden="true"></i>
           <span class="bus-ticks" aria-hidden="true"></span>
         </span>
 
@@ -196,12 +197,25 @@ function titleFor(id) {
               box-shadow 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .bus-dot.is-ok { background: rgb(var(--accent)); }
-.bus-dot.is-loading { background: rgb(var(--accent)); animation: bus-blink 1.1s steps(1, end) infinite; }
+.bus-dot.is-loading { background: rgb(var(--accent)); }
+
+/* 灯条只在等待真实响应时走两轮，随后停下；不用无限闪。 */
+.bus-sweep {
+  position: absolute;
+  inset: 0;
+  width: 22%;
+  background: rgb(var(--accent) / 0.72);
+  animation: bus-sweep 820ms 120ms cubic-bezier(.22, 1, .36, 1) 2 both;
+}
+
+@keyframes bus-sweep {
+  0% { transform: translateX(-100%); opacity: 0; }
+  20%, 72% { opacity: 1; }
+  100% { transform: translateX(460%); opacity: 0; }
+}
 .bus-dot.is-error, .bus-dot.is-timeout { background: rgb(var(--danger)); }
 .bus-dot.is-disabled { background: transparent; box-shadow: inset 0 0 0 1px rgb(var(--medical-300)); }
 .bus-dot.is-idle { background: rgb(var(--medical-300)); }
-
-@keyframes bus-blink { 50% { opacity: 0.2; } }
 
 .bus-fill {
   position: absolute;
