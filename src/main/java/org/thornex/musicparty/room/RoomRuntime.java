@@ -43,6 +43,7 @@ public final class RoomRuntime {
     }
 
     public void shutdown() {
+        player.shutdown();
         users.shutdown();
     }
 }

@@ -37,6 +37,7 @@ public class RoomEventBridge {
     private final RoomRegistry registry;
     private final SimpMessagingTemplate messagingTemplate;
     private final LiveStreamService liveStreamService;
+    private final org.thornex.musicparty.service.LocalCacheService localCacheService;
 
     private String base(String roomId) {
         return "/topic/r/" + roomId;
@@ -79,7 +80,9 @@ public class RoomEventBridge {
     /** 下载状态是全局的（共享缓存），每个房间自己看有没有相关队列项。 */
     @EventListener
     public void onDownloadStatus(DownloadStatusEvent event) {
-        for (RoomRuntime runtime : registry.runtimes()) {
+        for (String roomId : localCacheService.interestedRooms(event.getMusicId())) {
+            RoomRuntime runtime = registry.runtimeQuietly(roomId);
+            if (runtime == null) continue;
             try {
                 runtime.player().handleDownloadEvent(event);
             } catch (RuntimeException error) {

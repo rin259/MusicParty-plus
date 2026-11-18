@@ -37,7 +37,36 @@ public class MusicQueueManager {
         return (music.platform() == null ? "" : music.platform()) + ":" + music.id();
     }
 
-    public enum AddFailure { QUEUE_FULL, DUPLICATE }
+    public enum AddFailure { QUEUE_FULL, DUPLICATE, USER_LIMIT }
+
+    private record Reservation(String user, String ticket) {}
+    private final Map<String, Reservation> reservations = new HashMap<>();
+    private long admissionEpoch;
+    public synchronized long admissionEpoch() { return admissionEpoch; }
+    public synchronized AddResult addImported(long epoch, Music music, UserSummary user, QueueItemStatus status) {
+        if (epoch != admissionEpoch) return new AddResult(null, AddFailure.USER_LIMIT);
+        return add(music, user, status);
+    }
+    public synchronized AddFailure reserve(String key, String user, String ticket) {
+        if (reservations.containsKey(key) || queue.stream().anyMatch(i -> musicKey(i.music()).equals(key))) return AddFailure.DUPLICATE;
+        if (queue.size() + reservations.size() >= appProperties.getQueue().getMaxSize()) return AddFailure.QUEUE_FULL;
+        if (userCount(user) >= appProperties.getQueue().getMaxUserSongs()) return AddFailure.USER_LIMIT;
+        reservations.put(key, new Reservation(user, ticket));
+        return null;
+    }
+    public synchronized void releaseReservation(String key, String ticket) {
+        Reservation reservation = reservations.get(key);
+        if (reservation != null && reservation.ticket().equals(ticket)) reservations.remove(key);
+    }
+    public synchronized void clearReservations() { reservations.clear(); }
+    private long userCount(String user) {
+        return queue.stream().filter(i -> i.enqueuedBy().token().equals(user)).count()
+                + reservations.values().stream().filter(r -> user.equals(r.user())).count();
+    }
+    public synchronized AddResult commitReserved(String key, String ticket, Music music, UserSummary user, QueueItemStatus status) {
+        if (!reservations.remove(key, new Reservation(user.token(), ticket))) return new AddResult(null, AddFailure.USER_LIMIT);
+        return add(music, user, status);
+    }
 
     public record AddResult(MusicQueueItem item, AddFailure failure) {
         public boolean ok() { return item != null; }
@@ -48,12 +77,13 @@ public class MusicQueueManager {
      * 返回失败原因（队列满 / 重复）而不是静默 null —— 调用方必须据此给出反馈。
      */
     public synchronized AddResult add(Music music, UserSummary enqueuedBy, QueueItemStatus initialStatus) {
-        if (queue.size() >= appProperties.getQueue().getMaxSize()) {
+        if (queue.size() + reservations.size() >= appProperties.getQueue().getMaxSize()) {
             return new AddResult(null, AddFailure.QUEUE_FULL);
         }
-        if (isMusicInQueue(music)) {
+        if (isMusicInQueue(music) || reservations.containsKey(musicKey(music))) {
             return new AddResult(null, AddFailure.DUPLICATE);
         }
+        if (userCount(enqueuedBy.token()) >= appProperties.getQueue().getMaxUserSongs()) return new AddResult(null, AddFailure.USER_LIMIT);
 
         MusicQueueItem newItem = new MusicQueueItem(
                 UUID.randomUUID().toString(),
@@ -191,6 +221,7 @@ public class MusicQueueManager {
      * @return 移除的数量
      */
     public synchronized int removeByUser(String userToken) {
+        reservations.values().removeIf(r -> r.user().equals(userToken));
         List<MusicQueueItem> toRemove = queue.stream()
                 .filter(item -> item.enqueuedBy().token().equals(userToken))
                 .toList();
@@ -395,6 +426,8 @@ public class MusicQueueManager {
      * 清空队列和历史记录
      */
     public synchronized void clearAll() {
+        admissionEpoch++;
+        reservations.clear();
         queue.clear();
         playHistory.clear();
         loopList.clear();
@@ -402,6 +435,8 @@ public class MusicQueueManager {
     }
 
     public synchronized void clearPendingQueue() {
+        admissionEpoch++;
+        reservations.clear();
         queue.clear();
         loopList.clear();
     }
@@ -420,6 +455,8 @@ public class MusicQueueManager {
      * 从持久化存储恢复队列和历史记录
      */
     public synchronized void restore(List<MusicQueueItem> loadedQueue, List<Music> loadedHistory) {
+        admissionEpoch++;
+        reservations.clear();
         // Clear current
         queue.clear();
         playHistory.clear();

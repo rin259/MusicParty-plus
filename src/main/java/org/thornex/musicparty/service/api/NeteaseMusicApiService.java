@@ -271,6 +271,12 @@ public class NeteaseMusicApiService implements IMusicApiService {
     }
 
     @Override
+    public Mono<Music> getMusicMetadata(String musicId) {
+        ensureConfigured();
+        return getMusicDetails(musicId);
+    }
+
+    @Override
     public Mono<PlayableMusic> getPlayableMusic(String musicId) {
         ensureConfigured();
         return getMusicDetails(musicId)
@@ -297,6 +303,7 @@ public class NeteaseMusicApiService implements IMusicApiService {
         String cacheId = cacheId(musicId);
         CacheStatus status = localCacheService.getStatus(cacheId);
         if (status == CacheStatus.COMPLETED || status == CacheStatus.PENDING || status == CacheStatus.DOWNLOADING) {
+            localCacheService.promoteDownload(cacheId, priority);
             return;
         }
 

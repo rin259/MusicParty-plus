@@ -44,6 +44,8 @@ public class YtDlpResolver {
     private final long downloadTimeoutSeconds;
     private final int downloadConcurrency;
     private final ObjectMapper objectMapper;
+    private final java.util.concurrent.Semaphore metadataProcesses = new java.util.concurrent.Semaphore(2, true);
+    private final java.util.concurrent.Semaphore downloadProcesses;
     private static final String BUVID3 = java.util.UUID.randomUUID().toString().toUpperCase() + "infoc";
 
     public YtDlpResolver(AppProperties appProperties, ObjectMapper objectMapper) {
@@ -53,6 +55,8 @@ public class YtDlpResolver {
         this.downloadTimeoutSeconds = appProperties.getYtDlp().getDownloadTimeoutSeconds();
         this.downloadConcurrency = Math.clamp(appProperties.getYtDlp().getDownloadConcurrency(), 1, 64);
         this.objectMapper = objectMapper;
+        this.downloadProcesses = new java.util.concurrent.Semaphore(
+                Math.max(1, appProperties.getPreparation().getYtDlpConcurrency()), true);
     }
 
     public Mono<String> resolveBilibiliAudioUrl(String bvid, String sessdata) {
@@ -364,20 +368,28 @@ public class YtDlpResolver {
     }
 
     private String runCommand(List<String> command, String action, long actionTimeoutSeconds) throws Exception {
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        FutureTask<String> outputReader = new FutureTask<>(() ->
-                new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim());
-        Thread.ofVirtual().name("yt-dlp-output-reader").start(outputReader);
-
-        if (!process.waitFor(actionTimeoutSeconds, TimeUnit.SECONDS)) {
-            stopProcess(process);
-            throw new IllegalStateException("yt-dlp timed out during " + action);
+        java.util.concurrent.Semaphore permits = "audio download".equals(action) ? downloadProcesses : metadataProcesses;
+        if (!permits.tryAcquire(5, TimeUnit.SECONDS)) throw new IllegalStateException("yt-dlp busy during " + action);
+        Process process = null;
+        FutureTask<String> outputReader = null;
+        try {
+            process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            Process child = process;
+            outputReader = new FutureTask<>(() -> new String(child.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim());
+            Thread.ofVirtual().name("yt-dlp-output-reader").start(outputReader);
+            if (!process.waitFor(actionTimeoutSeconds, TimeUnit.SECONDS)) throw new IllegalStateException("yt-dlp timed out during " + action);
+            String output = outputReader.get(5, TimeUnit.SECONDS);
+            if (process.exitValue() != 0) throw new IllegalStateException("yt-dlp failed during " + action + ": " + output);
+            return output;
+        } finally {
+            if (process != null && process.isAlive()) {
+                // Also on Reactor cancellation / interrupted waitFor, not only on its own timeout.
+                process.descendants().forEach(handle -> handle.destroyForcibly());
+                process.destroyForcibly();
+            }
+            if (outputReader != null) outputReader.cancel(true);
+            permits.release();
         }
-        String output = outputReader.get(5, TimeUnit.SECONDS);
-        if (process.exitValue() != 0) {
-            throw new IllegalStateException("yt-dlp failed during " + action + ": " + output);
-        }
-        return output;
     }
 
     private void stopProcess(Process process) throws InterruptedException {

@@ -1,57 +1,40 @@
 package org.thornex.musicparty.service;
 
 import org.junit.jupiter.api.Test;
-import reactor.core.publisher.Mono;
 
-import java.util.concurrent.PriorityBlockingQueue;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.thornex.musicparty.service.LocalCacheService.DownloadPriority.*;
 
 class LocalCacheServicePriorityTest {
+    @Test void urgentDownloadsJumpAheadOfBackgroundPrefetch() {
+        var scheduler = new PreparationScheduler<String>(4, 2, 2, 32, () -> 0L);
+        scheduler.submit("background-1", "background-1", BACKGROUND);
+        scheduler.submit("normal-1", "normal-1", NORMAL);
+        scheduler.submit("urgent-1", "urgent-1", URGENT);
+        scheduler.submit("background-2", "background-2", BACKGROUND);
 
-    private static LocalCacheService.DownloadTask task(String id, LocalCacheService.DownloadPriority priority, long seq) {
-        return new LocalCacheService.DownloadTask(id, Mono.empty(), priority, seq);
+        assertThat(drain(scheduler)).containsExactly("urgent-1", "normal-1", "background-1", "background-2");
     }
 
-    @Test
-    void urgentDownloadsJumpAheadOfBackgroundPrefetch() {
-        PriorityBlockingQueue<LocalCacheService.DownloadTask> queue = new PriorityBlockingQueue<>();
-        queue.add(task("background-1", LocalCacheService.DownloadPriority.BACKGROUND, 1));
-        queue.add(task("normal-1", LocalCacheService.DownloadPriority.NORMAL, 2));
-        queue.add(task("urgent-1", LocalCacheService.DownloadPriority.URGENT, 3));
-        queue.add(task("background-2", LocalCacheService.DownloadPriority.BACKGROUND, 4));
+    @Test void samePriorityStaysFifoForTheSameUser() {
+        var scheduler = new PreparationScheduler<String>(4, 2, 2, 32, () -> 0L);
+        var ids = List.of("normal-1", "normal-2", "normal-3");
+        scheduler.replace("room", ids.stream()
+                .map(id -> new PreparationScheduler.Demand(id, "room", "alice", NORMAL)).toList());
+        ids.forEach(id -> scheduler.submit(id, id, NORMAL));
 
-        assertThat(pollIds(queue, 4))
-                .containsExactly("urgent-1", "normal-1", "background-1", "background-2");
+        assertThat(drain(scheduler)).containsExactlyElementsOf(ids);
     }
 
-    @Test
-    void samePriorityStaysFifo() {
-        PriorityBlockingQueue<LocalCacheService.DownloadTask> queue = new PriorityBlockingQueue<>();
-        queue.add(task("normal-1", LocalCacheService.DownloadPriority.NORMAL, 1));
-        queue.add(task("normal-2", LocalCacheService.DownloadPriority.NORMAL, 2));
-        queue.add(task("normal-3", LocalCacheService.DownloadPriority.NORMAL, 3));
-
-        assertThat(pollIds(queue, 3))
-                .containsExactly("normal-1", "normal-2", "normal-3");
-    }
-
-    private static java.util.List<String> pollIds(PriorityBlockingQueue<LocalCacheService.DownloadTask> queue, int n) {
-        java.util.List<String> ids = new java.util.ArrayList<>();
-        for (int i = 0; i < n; i++) {
-            LocalCacheService.DownloadTask task = queue.poll();
-            if (task != null) ids.add(task.musicId());
+    private static List<String> drain(PreparationScheduler<String> scheduler) {
+        List<String> ids = new ArrayList<>();
+        for (var next = scheduler.poll(); next != null; next = scheduler.poll()) {
+            ids.add(next.id());
+            scheduler.complete(next.id(), 0);
         }
         return ids;
-    }
-
-    @Test
-    void priorityWinsOverSequenceNumber() {
-        PriorityBlockingQueue<LocalCacheService.DownloadTask> queue = new PriorityBlockingQueue<>();
-        queue.add(task("background-early", LocalCacheService.DownloadPriority.BACKGROUND, 0));
-        queue.add(task("urgent-late", LocalCacheService.DownloadPriority.URGENT, 99));
-
-        assertThat(queue.poll().musicId()).isEqualTo("urgent-late");
-        assertThat(queue.poll().musicId()).isEqualTo("background-early");
     }
 }

@@ -217,6 +217,7 @@ public class BilibiliMusicApiService implements IMusicApiService {
         // 检查缓存状态，如果已经下载或正在下载，直接返回
         CacheStatus status = localCacheService.getStatus(bvid);
         if (status == CacheStatus.COMPLETED || status == CacheStatus.PENDING || status == CacheStatus.DOWNLOADING) {
+            localCacheService.promoteDownload(bvid, priority);
             return;
         }
 
@@ -236,6 +237,12 @@ public class BilibiliMusicApiService implements IMusicApiService {
 
         // 提交异步下载任务 (.m4a 是 B站 dash 音频的常用格式)
         localCacheService.submitDownload(bvid, urlProvider, headers, ".m4a", priority);
+    }
+
+    @Override
+    public Mono<Music> getMusicMetadata(String bvid) {
+        ensureConfigured();
+        return BilibiliApiUtils.getVideoDetails(bvid, webClient, baseUrl, sessdata);
     }
 
     @Override

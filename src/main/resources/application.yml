@@ -61,6 +61,19 @@ app:
       max-message-length: ${CHAT_MAX_LENGTH:200}
     cache:
       max-size: ${CACHE_MAX_SIZE:1GB}
+    preparation:
+      concurrency: ${PREPARATION_CONCURRENCY:4}
+      per-source-concurrency: ${PREPARATION_PER_SOURCE_CONCURRENCY:2}
+      yt-dlp-concurrency: ${PREPARATION_YT_DLP_CONCURRENCY:2}
+      max-pending: ${PREPARATION_MAX_PENDING:512}
+      metadata-concurrency: ${PREPARATION_METADATA_CONCURRENCY:8}
+      window-size: ${PREPARATION_WINDOW_SIZE:12}
+      per-user-window: ${PREPARATION_PER_USER_WINDOW:2}
+      resolve-timeout-seconds: ${PREPARATION_RESOLVE_TIMEOUT_SECONDS:35}
+      transfer-timeout-seconds: ${PREPARATION_TRANSFER_TIMEOUT_SECONDS:45}
+      task-timeout-seconds: ${PREPARATION_TASK_TIMEOUT_SECONDS:240}
+      broadcast-interval-ms: ${PREPARATION_BROADCAST_INTERVAL_MS:200}
+      direct-source-cooldown-ms: ${PREPARATION_DIRECT_COOLDOWN_MS:1200}
     yt-dlp:
       enabled: ${YT_DLP_ENABLED:true}
       path: ${YT_DLP_PATH:yt-dlp}

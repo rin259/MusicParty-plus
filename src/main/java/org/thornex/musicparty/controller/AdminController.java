@@ -24,8 +24,9 @@ public class AdminController {
     private final BilibiliMusicApiService bilibiliMusicApiService;
     private final LiveStreamService liveStreamService;
     private final RuntimeConfigService runtimeConfigService;
+    private final org.thornex.musicparty.service.LocalCacheService localCacheService;
 
-    public AdminController(RoomRegistry roomRegistry, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService, RuntimeConfigService runtimeConfigService) {
+    public AdminController(RoomRegistry roomRegistry, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService, RuntimeConfigService runtimeConfigService, org.thornex.musicparty.service.LocalCacheService localCacheService) {
         this.roomRegistry = roomRegistry;
         this.adminPassword = appProperties.getAdminPassword();
         this.authController = authController;
@@ -33,6 +34,13 @@ public class AdminController {
         this.bilibiliMusicApiService = bilibiliMusicApiService;
         this.liveStreamService = liveStreamService;
         this.runtimeConfigService = runtimeConfigService;
+        this.localCacheService = localCacheService;
+    }
+
+    @GetMapping("/preparation")
+    public ResponseEntity<?> preparation(@RequestHeader("X-Admin-Password") String password) {
+        if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        return ResponseEntity.ok(localCacheService.preparationStats());
     }
 
     private boolean isValid(String password) {

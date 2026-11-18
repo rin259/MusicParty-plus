@@ -104,7 +104,10 @@ abstract class YtDlpMusicApiService implements IMusicApiService {
     protected void submitPrefetch(String musicId, Mono<LocalCacheService.DownloadSource> sourceProvider,
                                   DownloadPriority priority) {
         CacheStatus status = localCacheService.getStatus(cacheId(musicId));
-        if (status == CacheStatus.COMPLETED || status == CacheStatus.PENDING || status == CacheStatus.DOWNLOADING) return;
+        if (status == CacheStatus.COMPLETED || status == CacheStatus.PENDING || status == CacheStatus.DOWNLOADING) {
+            localCacheService.promoteDownload(cacheId(musicId), priority);
+            return;
+        }
         localCacheService.submitDownload(cacheId(musicId), sourceProvider, priority);
     }
 
@@ -112,6 +115,11 @@ abstract class YtDlpMusicApiService implements IMusicApiService {
     protected void rememberMetadata(YtDlpResolver.TrackMetadata track) {
         if (track == null || track.id() == null || track.id().isBlank()) return;
         metadataById.put(track.id(), track);
+    }
+
+    @Override
+    public Mono<Music> getMusicMetadata(String musicId) {
+        return getMetadata(musicId).map(this::toMusic);
     }
 
     @Override

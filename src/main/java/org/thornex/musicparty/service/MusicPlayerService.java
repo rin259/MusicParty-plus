@@ -86,6 +86,13 @@ public class MusicPlayerService {
     private static final long IDLE_RESET_TIMEOUT_MS = Duration.ofHours(2).toMillis();
 
     private final AtomicLong playHeadVersion = new AtomicLong(0);
+    private final AtomicBoolean queueDirty = new AtomicBoolean();
+    private final AtomicBoolean stateDirty = new AtomicBoolean();
+    private final AtomicBoolean windowDirty = new AtomicBoolean(true);
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final Set<String> changedDownloads = ConcurrentHashMap.newKeySet();
+    private volatile long lastQueueBroadcast;
+    private final Object preparationWindowLock = new Object();
 
     public MusicPlayerService(List<IMusicApiService> apiServices, UserService userService,
                               LocalCacheService localCacheService,
@@ -122,6 +129,10 @@ public class MusicPlayerService {
 
     /** 由 RoomTicker 每秒遍历所有房间调用（不要在此方法上加 @Scheduled）。 */
     public void tick() {
+        if (closed.get()) return;
+        // Reconcile even without local download events: another room may free a
+        // pending slot after this room's admission was rejected at the global cap.
+        refreshPreparationWindow();
         if (isPaused.get()) {
             return;
         }
@@ -230,7 +241,13 @@ public class MusicPlayerService {
 
             try {
                 IMusicApiService service = getApiService(nextItem.music().platform());
-                service.getPlayableMusic(nextItem.music().id())
+                String cachedUrl = localCacheService.getLocalUrl(cacheIdFor(nextItem.music()));
+                Music metadata = nextItem.music();
+                reactor.core.publisher.Mono<PlayableMusic> playable = cachedUrl == null
+                        ? service.getPlayableMusic(metadata.id())
+                        : reactor.core.publisher.Mono.just(new PlayableMusic(metadata.id(), metadata.name(), metadata.artists(),
+                                metadata.duration(), metadata.platform(), cachedUrl, metadata.coverUrl(), false));
+                playable
                         .timeout(Duration.ofSeconds(10))
                         .subscribe(
                                 playableMusic -> {
@@ -522,6 +539,7 @@ public class MusicPlayerService {
     }
 
     public void enqueue(EnqueueRequest request, String sessionId) {
+        if (closed.get()) return;
         Optional<User> userOpt = userService.getUser(sessionId);
         if (userOpt.isEmpty()) return;
         User enqueuer = userOpt.get();
@@ -544,9 +562,22 @@ public class MusicPlayerService {
             return;
         }
 
+        String reservation = request.platform() + ":" + request.musicId();
+        String ticket = UUID.randomUUID().toString();
+        MusicQueueManager.AddFailure rejected = queueManager.reserve(reservation, enqueuer.getToken(), ticket);
+        if (rejected != null) {
+            sendEnqueueResult(sessionId, requestId, request.platform(), request.musicId(),
+                    rejected == MusicQueueManager.AddFailure.DUPLICATE ? EnqueueResult.DUPLICATE
+                            : rejected == MusicQueueManager.AddFailure.QUEUE_FULL ? EnqueueResult.QUEUE_FULL : EnqueueResult.LIMIT,
+                    "添加失败: 重复歌曲、队列已满或个人配额已用尽");
+            return;
+        }
         IMusicApiService service = getApiService(request.platform());
-        service.getPlayableMusic(request.musicId())
+        localCacheService.lookupMetadata(service, request.musicId())
+                .switchIfEmpty(reactor.core.publisher.Mono.error(new ApiRequestException("未返回歌曲信息")))
+                .doFinally(signal -> queueManager.releaseReservation(reservation, ticket))
                 .subscribe(playableMusic -> {
+                            if (closed.get()) return;
                             if ("bilibili".equalsIgnoreCase(request.platform())
                                     && playableMusic.duration() > MAX_BILIBILI_TRACK_MS) {
                                 sendEnqueueResult(sessionId, requestId, request.platform(), request.musicId(),
@@ -558,19 +589,17 @@ public class MusicPlayerService {
                                     playableMusic.duration(), playableMusic.platform(), playableMusic.coverUrl());
 
                             QueueItemStatus initialStatus = usesLocalCache(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
-                            if (usesLocalCache(request.platform())) {
-                                service.prefetchMusic(music.id(), DownloadPriority.URGENT);
-                            }
-
-                            MusicQueueManager.AddResult added = queueManager.add(music,
+                            MusicQueueManager.AddResult added = queueManager.commitReserved(reservation, ticket, music,
                                     new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()),
                                     initialStatus);
 
                             if (!added.ok()) {
                                 String status = added.failure() == MusicQueueManager.AddFailure.QUEUE_FULL
-                                        ? EnqueueResult.QUEUE_FULL : EnqueueResult.DUPLICATE;
+                                        ? EnqueueResult.QUEUE_FULL : added.failure() == MusicQueueManager.AddFailure.USER_LIMIT
+                                        ? EnqueueResult.LIMIT : EnqueueResult.DUPLICATE;
                                 String message = added.failure() == MusicQueueManager.AddFailure.QUEUE_FULL
-                                        ? "添加失败: 队列已满" : "这首歌已在队列中";
+                                        ? "添加失败: 队列已满" : added.failure() == MusicQueueManager.AddFailure.USER_LIMIT
+                                        ? "添加已取消或个人配额已用尽" : "这首歌已在队列中";
                                 sendEnqueueResult(sessionId, requestId, request.platform(), request.musicId(), status, message);
                                 return;
                             }
@@ -616,6 +645,7 @@ public class MusicPlayerService {
     }
 
     public void enqueuePlaylist(EnqueuePlaylistRequest request, String sessionId) {
+        if (closed.get()) return;
         Optional<User> userOpt = userService.getUser(sessionId);
         if (userOpt.isEmpty()) return;
         User enqueuer = userOpt.get();
@@ -642,10 +672,12 @@ public class MusicPlayerService {
 
         int remainingQuota = (int) (maxUserSongs - currentCount);
         int importLimit = Math.min(appProperties.getPlayer().getMaxPlaylistImportSize(), remainingQuota);
+        long admissionEpoch = queueManager.admissionEpoch();
 
         IMusicApiService service = getApiService(request.platform());
         service.getPlaylistMusics(request.playlistId(), 0, importLimit)
                 .subscribe(musics -> {
+                    if (closed.get()) return;
                     int total = musics.size();
                     int done = 0;
                     int added = 0;
@@ -653,10 +685,7 @@ public class MusicPlayerService {
                     QueueItemStatus initialStatus = usesLocalCache(request.platform()) ? QueueItemStatus.PENDING : QueueItemStatus.READY;
 
                     for (Music music : musics) {
-                        if (usesLocalCache(request.platform())) {
-                            service.prefetchMusic(music.id());
-                        }
-                        MusicQueueManager.AddResult result = queueManager.add(music,
+                        MusicQueueManager.AddResult result = queueManager.addImported(admissionEpoch, music,
                                 new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()),
                                 initialStatus);
                         if (result.ok()) {
@@ -686,6 +715,7 @@ public class MusicPlayerService {
     }
 
     public void enqueueAlbum(EnqueuePlaylistRequest request, String sessionId) {
+        if (closed.get()) return;
         Optional<User> userOpt = userService.getUser(sessionId);
         if (userOpt.isEmpty()) return;
         User enqueuer = userOpt.get();
@@ -712,10 +742,12 @@ public class MusicPlayerService {
 
         int remainingQuota = (int) (maxUserSongs - currentCount);
         int importLimit = Math.min(appProperties.getPlayer().getMaxPlaylistImportSize(), remainingQuota);
+        long admissionEpoch = queueManager.admissionEpoch();
 
         IMusicApiService service = getApiService(request.platform());
         service.getAlbumMusics(request.playlistId())
                 .subscribe(musics -> {
+                    if (closed.get()) return;
                     int total = Math.min(musics.size(), importLimit);
                     int done = 0;
                     int added = 0;
@@ -724,10 +756,7 @@ public class MusicPlayerService {
 
                     for (Music music : musics) {
                         if (done >= importLimit) break;
-                        if (usesLocalCache(request.platform())) {
-                            service.prefetchMusic(music.id());
-                        }
-                        MusicQueueManager.AddResult result = queueManager.add(music,
+                        MusicQueueManager.AddResult result = queueManager.addImported(admissionEpoch, music,
                                 new UserSummary(enqueuer.getToken(), enqueuer.getSessionId(), enqueuer.getName(), enqueuer.isGuest()),
                                 initialStatus);
                         if (result.ok()) {
@@ -1069,38 +1098,36 @@ public class MusicPlayerService {
     }
 
     public void prefetchRestoredQueue() {
-        for (MusicQueueItem item : queueManager.getQueueSnapshot()) {
-            if (!usesLocalCache(item.music().platform())) {
-                continue;
-            }
-            try {
-                getApiService(item.music().platform()).prefetchMusic(item.music().id(), DownloadPriority.BACKGROUND);
-            } catch (RuntimeException error) {
-                log.warn("Unable to prefetch restored {} track {}", item.music().platform(), item.music().id(), error);
-            }
-        }
+        refreshPreparationWindow();
         broadcastQueueUpdate();
     }
 
     /** 由 RoomEventBridge 分发（下载事件是全局的，每个房间各自判断是否相关）。 */
     public void handleDownloadEvent(DownloadStatusEvent event) {
+        // Application events are synchronous. Never acquire the player lock or
+        // call upstream work from a scheduler admission/completion callback.
+        changedDownloads.add(event.getMusicId());
+        queueDirty.set(true);
+    }
+
+    private void processDownloadChange(String musicId) {
         Optional<MusicQueueItem> queueItem = queueManager.getQueueSnapshot().stream()
-                .filter(item -> cacheIdFor(item.music()).equals(event.getMusicId()))
+                .filter(item -> cacheIdFor(item.music()).equals(musicId))
                 .findFirst();
 
         if (queueItem.isPresent()) {
-            log.debug("Download status changed for {}, updating queue UI.", event.getMusicId());
+            log.debug("Download status changed for {}, updating queue UI.", musicId);
             broadcastQueueUpdate();
-            boolean failed = localCacheService.getStatus(event.getMusicId()) == CacheStatus.FAILED;
+            boolean failed = localCacheService.getStatus(musicId) == CacheStatus.FAILED;
             if (failed) {
                 eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR,
                         PlayerAction.ERROR_LOAD, "SYSTEM", queueItem.get().music().name()));
             }
             PlayableMusic current = currentMusic.get();
-            if (failed && current != null && cacheIdFor(current).equals(event.getMusicId())) {
+            if (failed && current != null && cacheIdFor(current).equals(musicId)) {
                 // 当前曲目取源失败：立即换下一首。旧逻辑仅在「无曲目」时前进，
                 // 于是当前曲失败会把播放器永久留在「获取源」状态。
-                log.warn("Current track {} failed to load; advancing to next.", event.getMusicId());
+                log.warn("Current track {} failed to load; advancing to next.", musicId);
                 playNextInQueue();
                 return;
             }
@@ -1145,7 +1172,6 @@ public class MusicPlayerService {
 
                 Music replacement = match.get();
                 if (!queueManager.replaceMusic(failedItem.queueId(), replacement)) return;
-                getApiService(replacement.platform()).prefetchMusic(replacement.id(), DownloadPriority.URGENT);
                 log.info("Failover {} -> {}:{} ({})", failed.name(), replacement.platform(),
                         replacement.id(), replacement.name());
                 broadcastQueueUpdate();
@@ -1294,11 +1320,81 @@ public class MusicPlayerService {
     // --- Broadcasting and Helper Methods ---
 
     public void broadcastQueueUpdate() {
-        eventPublisher.publishEvent(new QueueUpdateEvent(this, getQueueWithUpdatedStatus()));
+        queueDirty.set(true);
+        windowDirty.set(true);
+    }
+
+    /** Flushed by one shared short-period ticker, never one timer/thread per room. */
+    public void flushQueueUpdate() {
+        if (closed.get()) return;
+        for (String id : changedDownloads.toArray(String[]::new)) {
+            if (changedDownloads.remove(id)) processDownloadChange(id);
+        }
+        if (windowDirty.getAndSet(false)) refreshPreparationWindow();
+        long now = System.currentTimeMillis();
+        if (now - lastQueueBroadcast < Math.max(50, appProperties.getPreparation().getBroadcastIntervalMs())) return;
+        if (stateDirty.getAndSet(false)) {
+            queueDirty.set(false);
+            lastQueueBroadcast = now;
+            eventPublisher.publishEvent(new PlayerStateEvent(this, getCurrentPlayerState()));
+        } else if (queueDirty.compareAndSet(true, false)) {
+            lastQueueBroadcast = now;
+            eventPublisher.publishEvent(new QueueUpdateEvent(this, getQueueWithUpdatedStatus()));
+        }
+    }
+
+    public void releasePreparationWindow() {
+        synchronized (preparationWindowLock) { localCacheService.updatePreparationWindow(roomId, List.of()); }
+    }
+
+    public void shutdown() {
+        closed.set(true);
+        changedDownloads.clear();
+        releasePreparationWindow();
+        queueManager.clearReservations();
+    }
+
+    private void refreshPreparationWindow() {
+        synchronized (preparationWindowLock) {
+            if (closed.get() || (userService.getOnlineUserSummaries().isEmpty() && !isStreamActive.get())) {
+                localCacheService.updatePreparationWindow(roomId, List.of());
+                return;
+            }
+            List<LocalCacheService.PreparationRequest> requests = new ArrayList<>();
+            Map<String, Integer> userCounts = new HashMap<>();
+            int limit = Math.max(2, appProperties.getPreparation().getWindowSize());
+            int perUser = Math.max(1, appProperties.getPreparation().getPerUserWindow());
+            boolean onlyActiveUsers = playMode.get() == PlayMode.SHUFFLE && !allowOfflineShuffle.get();
+            Set<String> activeUsers = onlyActiveUsers ? userService.getRecentlyActiveUserTokens() : Set.of();
+            // Queue is already round-robin by user. Bound work, including READY
+            // entries, so a full cache window doesn't start downloading the entire tail.
+            for (MusicQueueItem item : queueManager.getQueueSnapshot()) {
+                if (requests.size() >= limit) break;
+                if (!usesLocalCache(item.music().platform())) continue;
+                if (localCacheService.getStatus(cacheIdFor(item.music())) == CacheStatus.FAILED) continue;
+                if (onlyActiveUsers && !activeUsers.contains(item.enqueuedBy().token())) continue;
+                String user = item.enqueuedBy().token();
+                int n = userCounts.getOrDefault(user, 0);
+                if (n >= perUser && item.priority() != org.thornex.musicparty.enums.Priority.GLOBAL_TOP) continue;
+                userCounts.put(user, n + 1);
+                DownloadPriority priority = n == 0 || item.priority() == org.thornex.musicparty.enums.Priority.GLOBAL_TOP
+                        ? DownloadPriority.URGENT : DownloadPriority.NORMAL;
+                Music music = item.music();
+                requests.add(new LocalCacheService.PreparationRequest(cacheIdFor(music), user, priority,
+                        () -> getApiService(music.platform()).prefetchMusic(music.id(), priority)));
+            }
+            PlayableMusic current = currentMusic.get();
+            if (current != null && usesLocalCache(current.platform())) {
+                requests.add(new LocalCacheService.PreparationRequest(cacheIdFor(current),
+                        Optional.ofNullable(currentEnqueuerId.get()).orElse("SYSTEM"), DownloadPriority.URGENT,
+                        () -> getApiService(current.platform()).prefetchMusic(current.id(), DownloadPriority.URGENT)));
+            }
+            localCacheService.updatePreparationWindow(roomId, requests);
+        }
     }
 
     public void broadcastFullPlayerState() {
-        eventPublisher.publishEvent(new PlayerStateEvent(this, getCurrentPlayerState()));
+        stateDirty.set(true);
     }
 
     public void broadcastOnlineUsers() {

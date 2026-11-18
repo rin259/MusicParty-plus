@@ -27,6 +27,28 @@ public class AppProperties {
     private CacheConfig cache = new CacheConfig();
     private AuthConfig auth = new AuthConfig();
     private RoomsConfig rooms = new RoomsConfig();
+    private PreparationConfig preparation = new PreparationConfig();
+
+    @Data
+    public static class PreparationConfig {
+        private int concurrency = 4;
+        private int perSourceConcurrency = 2;
+        private int ytDlpConcurrency = 2;
+        private int maxPending = 512;
+        private int metadataConcurrency = 8;
+        private int windowSize = 12;
+        private int perUserWindow = 2;
+        private long resolveTimeoutSeconds = 35;
+        private long transferTimeoutSeconds = 45;
+        private long taskTimeoutSeconds = 240;
+        private long broadcastIntervalMs = 200;
+        /**
+         * 直链源（网易云 / B 站）每次释放下载槽后的同源间隔。
+         * 旧实现串行且固定 3s，批量导入时同源后一首白白等 3s；现在由
+         * per-source 并发闸门控速，只需一个很短的礼貌间隔，避免同源瞬间连发。
+         */
+        private long directSourceCooldownMs = 1200;
+    }
 
     @Data
     public static class RoomsConfig {

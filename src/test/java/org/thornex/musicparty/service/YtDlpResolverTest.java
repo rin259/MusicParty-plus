@@ -39,6 +39,24 @@ class YtDlpResolverTest {
     }
 
     @Test
+    void cancellingReactiveRequestTerminatesChildProcessAndReleasesItsPermit() throws Exception {
+        Path pid = temporaryDirectory.resolve("pid");
+        Path executable = writeExecutable("#!/bin/sh\necho $$ > " + pid + "\nexec sleep 30\n");
+        var resolver = newResolver(executable, 30);
+        var request = resolver.searchYoutubeMusic("test", 1).subscribe();
+        try {
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (!Files.exists(pid) && System.nanoTime() < deadline) Thread.sleep(10);
+            assertThat(Files.exists(pid)).isTrue();
+            long processId = Long.parseLong(Files.readString(pid).trim());
+            request.dispose();
+            deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(3);
+            while (ProcessHandle.of(processId).map(ProcessHandle::isAlive).orElse(false) && System.nanoTime() < deadline) Thread.sleep(10);
+            assertThat(ProcessHandle.of(processId).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+        } finally { request.dispose(); }
+    }
+
+    @Test
     void rejectsDrmProtectedSoundCloudAudioDuringValidation() throws Exception {
         Path executable = writeExecutable("#!/bin/sh\nprintf '%s\\n' 'ERROR: [soundcloud] 1953196147: This video is DRM protected'\nexit 1\n");
         YtDlpResolver resolver = newResolver(executable, 2);

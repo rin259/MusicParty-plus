@@ -14,6 +14,10 @@ public interface IMusicApiService {
     String getPlatformName();
     Mono<List<Music>> searchMusic(String keyword);
     Mono<PlayableMusic> getPlayableMusic(String musicId);
+    /** Admission must not resolve stream URLs, validate/download audio, or start prefetch. */
+    default Mono<Music> getMusicMetadata(String musicId) {
+        return Mono.error(new UnsupportedOperationException("Metadata lookup is not supported"));
+    }
     Mono<List<Playlist>> getUserPlaylists(String userId);
     Mono<List<Music>> getPlaylistMusics(String playlistId, int offset, int limit);
     Mono<List<UserSearchResult>> searchUsers(String keyword);

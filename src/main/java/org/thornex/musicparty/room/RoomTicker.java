@@ -28,6 +28,14 @@ public class RoomTicker {
         }
     }
 
+    @Scheduled(fixedDelay = 100)
+    public void flushQueueUpdates() {
+        for (RoomRuntime runtime : registry.runtimes()) {
+            try { runtime.player().flushQueueUpdate(); }
+            catch (RuntimeException error) { log.warn("Room {} queue flush failed", runtime.roomId(), error); }
+        }
+    }
+
     @Scheduled(fixedRate = 600_000)
     public void housekeeping() {
         registry.housekeeping();
