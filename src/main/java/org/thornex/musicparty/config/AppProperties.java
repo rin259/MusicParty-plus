@@ -121,6 +121,11 @@ public class AppProperties {
          * 留空则读 data/yt-cookies.txt（容器内即 /app/data/yt-cookies.txt）。
          */
         private String cookiesFile = "";
+        /**
+         * YouTube 的签名/n-challenge 需要 JavaScript 运行时（yt-dlp EJS）。
+         * 镜像内置 bun；显式传入，避免依赖 PATH 探测。
+         */
+        private String jsRuntime = "bun:/usr/local/bin/bun";
     }
 
     @Data

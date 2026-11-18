@@ -39,10 +39,12 @@ class YtDlpResolverTest {
 
         YtDlpResolver resolver = newResolver(executable, 5, cookies);
         resolver.searchYoutubeMusic("test", 1).block(Duration.ofSeconds(4));
-        assertThat(Files.readString(args)).contains("--cookies").contains(cookies.toString());
+        assertThat(Files.readString(args))
+                .contains("--cookies").contains(cookies.toString())
+                .contains("--js-runtimes").contains("bun:/usr/local/bin/bun");
 
         resolver.searchSoundCloud("test", 1).block(Duration.ofSeconds(4));
-        assertThat(Files.readString(args)).doesNotContain("--cookies");
+        assertThat(Files.readString(args)).doesNotContain("--cookies").doesNotContain("--js-runtimes");
     }
 
     @Test

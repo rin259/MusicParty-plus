@@ -14,6 +14,26 @@ const notice = ref('');
 const testResult = ref(null);
 const inputClass = 'w-full min-w-0 min-h-11 border border-medical-200 bg-medical-50 px-2.5 py-1.5 font-mono text-xs text-medical-900 outline-none focus:border-accent placeholder:text-medical-500 disabled:opacity-60';
 const dirty = computed(() => cookies.value.trim().length > 0);
+
+// A whole-browser export can be megabytes; send only the domains yt-dlp needs.
+function filterCookies(text) {
+  const kept = [];
+  for (const line of text.replace(/\r\n/g, '\n').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const bare = trimmed.startsWith('#HttpOnly_') ? trimmed.slice('#HttpOnly_'.length) : trimmed;
+    if (bare.startsWith('#')) {
+      if (bare.toLowerCase().includes('netscape http cookie file')) kept.push(trimmed);
+      continue;
+    }
+    const domain = bare.split('\t', 1)[0].toLowerCase();
+    if (domain.endsWith('youtube.com') || domain.endsWith('google.com') || domain.endsWith('googlevideo.com')) {
+      kept.push(trimmed);
+    }
+  }
+  return kept.join('\n');
+}
+const cookieCount = computed(() => filterCookies(cookies.value).split('\n').filter((line) => line && !line.startsWith('#')).length);
 const updatedLabel = computed(() => {
   if (!status.value?.updatedAt) return '';
   return new Date(status.value.updatedAt).toLocaleString('zh-CN', { hour12: false });
@@ -37,8 +57,14 @@ async function save() {
   error.value = '';
   notice.value = '';
   testResult.value = null;
+  const filtered = filterCookies(cookies.value);
+  if (!filtered.includes('\t')) {
+    error.value = '没有找到 youtube.com 或 google.com 的 cookie，请确认导出的是 YouTube 登录态。';
+    saving.value = false;
+    return;
+  }
   try {
-    status.value = await adminApi.saveYoutubeCookies(props.adminPassword, cookies.value);
+    status.value = await adminApi.saveYoutubeCookies(props.adminPassword, filtered);
     cookies.value = '';
     notice.value = 'YouTube cookies 已保存，下一首立即生效';
   } catch (cause) {
@@ -108,7 +134,10 @@ onMounted(load);
         <CircleDot class="h-3 w-3" aria-hidden="true" /> 已配置 · {{ updatedLabel }}
       </p>
       <div>
-        <label for="admin-youtube-cookies" class="mb-1 block text-xs font-bold text-medical-600">cookies.txt 内容</label>
+        <div class="mb-1 flex items-baseline justify-between gap-2">
+          <label for="admin-youtube-cookies" class="block text-xs font-bold text-medical-600">cookies.txt 内容</label>
+          <span v-if="cookieCount" class="font-mono text-[10px] text-medical-500">YOUTUBE/GOOGLE {{ cookieCount }}</span>
+        </div>
         <textarea
             id="admin-youtube-cookies"
             v-model="cookies"

@@ -46,6 +46,21 @@ docker logs music-party-app 2>&1 | grep 'youtube cookies'
 随后在房间内点一首 YouTube 歌曲，`GET /api/admin/preparation` 的 `recentTasks`
 应显示该任务从 `resolve-source` 走到 `ready`。
 
+## 还需要 JavaScript 运行时
+
+YouTube 会给媒体地址签名，并用人机挑战保护可用格式。缺少 JS 运行时时
+yt-dlp 只能看到 storyboard 图片，表现为：
+
+```
+Requested format is not available
+```
+
+镜像内置 `bun`，并且只对 YouTube/YT Music 的调用追加
+`--js-runtimes bun:/usr/local/bin/bun`（可用 `YT_DLP_JS_RUNTIME` 覆盖）。
+
+音频优先选择 `bestaudio[ext=m4a]/bestaudio`：m4a 能被 Safari 直接解码，
+Opus/WebM 在部分浏览器上无法播放。
+
 ## 行为说明
 
 - cookies 只会附加到 YouTube / YT Music 的 yt-dlp 调用，SoundCloud 与 B 站路径不受影响。

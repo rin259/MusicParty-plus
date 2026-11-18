@@ -101,6 +101,7 @@ app:
       download-cooldown-ms: ${YT_DLP_DOWNLOAD_COOLDOWN_MS:1000}
       # YouTube 机器人校验需要登录 cookies；留空则使用 data/yt-cookies.txt
       cookies-file: ${YT_DLP_COOKIES_FILE:}
+      js-runtime: ${YT_DLP_JS_RUNTIME:bun:/usr/local/bin/bun}
     auth:
       rate-limit:
         enabled: ${AUTH_RATE_LIMIT_ENABLED:true}

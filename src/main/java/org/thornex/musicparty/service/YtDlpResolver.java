@@ -45,6 +45,7 @@ public class YtDlpResolver {
     private final long downloadTimeoutSeconds;
     private final int downloadConcurrency;
     private final String cookiesFile;
+    private final String jsRuntime;
     private final ObjectMapper objectMapper;
     private final java.util.concurrent.Semaphore metadataProcesses = new java.util.concurrent.Semaphore(2, true);
     private final java.util.concurrent.Semaphore downloadProcesses;
@@ -57,6 +58,7 @@ public class YtDlpResolver {
         this.downloadTimeoutSeconds = appProperties.getYtDlp().getDownloadTimeoutSeconds();
         this.downloadConcurrency = Math.clamp(appProperties.getYtDlp().getDownloadConcurrency(), 1, 64);
         this.cookiesFile = appProperties.getYtDlp().getCookiesFile();
+        this.jsRuntime = appProperties.getYtDlp().getJsRuntime();
         this.objectMapper = objectMapper;
         this.downloadProcesses = new java.util.concurrent.Semaphore(
                 Math.max(1, appProperties.getPreparation().getYtDlpConcurrency()), true);
@@ -285,11 +287,16 @@ public class YtDlpResolver {
      */
     private List<String> withYoutubeCookies(List<String> command, String target) {
         if (!isYoutubeTarget(target)) return command;
-        Path cookies = youtubeCookiesFile();
-        if (cookies == null) return command;
         List<String> prepared = new ArrayList<>(command);
-        prepared.add(1, cookies.toString());
-        prepared.add(1, "--cookies");
+        Path cookies = youtubeCookiesFile();
+        if (cookies != null) {
+            prepared.add(1, cookies.toString());
+            prepared.add(1, "--cookies");
+        }
+        if (jsRuntime != null && !jsRuntime.isBlank()) {
+            prepared.add(1, jsRuntime);
+            prepared.add(1, "--js-runtimes");
+        }
         return prepared;
     }
 
@@ -389,7 +396,9 @@ public class YtDlpResolver {
         String outputTemplate = outputDirectory.resolve(fileStem + ".%(ext)s").toAbsolutePath().toString();
         List<String> command = List.of(
                 executable, "--no-playlist", "--no-warnings", "--no-progress", "--no-simulate",
-                "--format", "bestaudio", "--retries", "5", "--fragment-retries", "10",
+                // Prefer AAC/m4a: the container serves the file straight to the browser and
+                // Safari cannot decode Opus-in-WebM. Fall back to any audio stream.
+                "--format", "bestaudio[ext=m4a]/bestaudio", "--retries", "5", "--fragment-retries", "10",
                 "--file-access-retries", "3", "--socket-timeout", "30", "--continue",
                 // SoundCloud 的 bestaudio 是 HLS（96k aac）：不并发分片时单曲要 ~20s，
                 // 4 路并发实测 ~8s 且批量时不会触发 CDN 限流；非 HLS 源会忽略这个参数。

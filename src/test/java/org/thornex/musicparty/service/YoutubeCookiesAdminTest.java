@@ -42,12 +42,30 @@ class YoutubeCookiesAdminTest {
         assertThat(status.toString()).doesNotContain("abcdef");
     }
 
+    @Test void keepsOnlyYouTubeAndGoogleLinesFromAWholeBrowserExport() throws Exception {
+        StringBuilder export = new StringBuilder("# Netscape HTTP Cookie File\n");
+        for (int i = 0; i < 6000; i++) export.append(".example").append(i).append(".com\tTRUE\t/\tFALSE\t0\tSESSION\tvalue").append(i).append("\n");
+        export.append(".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabcdef\n");
+        export.append("#HttpOnly_.google.com\tTRUE\t/\tTRUE\t0\tSAPISID\tabcdef\n");
+        assertThat(export.length()).isGreaterThan(200_000);
+
+        var status = admin().save(export.toString());
+        assertThat(status.configured()).isTrue();
+        String stored = Files.readString(directory.resolve("yt-cookies.txt"));
+        assertThat(stored).contains(".youtube.com").contains(".google.com").doesNotContain(".example0.com");
+        assertThat(stored.lines().count()).isLessThan(10);
+    }
+
+    @Test void rejectsExportsWithoutYouTubeOrGoogleCookies() {
+        assertThatThrownBy(() -> admin().save("# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tTRUE\t0\tSID\tx"))
+                .hasMessageContaining("youtube.com");
+    }
+
     @Test void rejectsInputThatIsNotAYouTubeCookieExport() {
         YoutubeCookiesAdmin admin = admin();
         assertThatThrownBy(() -> admin.save("   ")).hasMessageContaining("cookies.txt");
         assertThatThrownBy(() -> admin.save("hello world")).hasMessageContaining("Netscape");
-        assertThatThrownBy(() -> admin.save("# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tTRUE\t0\tSID\tx"))
-                .hasMessageContaining("youtube.com");
+        assertThatThrownBy(() -> admin.save("x".repeat(4_000_001))).hasMessageContaining("4MB");
         assertThatThrownBy(() -> admin.save("# random\n.youtube.com\tTRUE\t/\tTRUE\t0\tOTHER\tx"))
                 .hasMessageContaining("SID");
     }

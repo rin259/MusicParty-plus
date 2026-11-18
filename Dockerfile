@@ -55,6 +55,15 @@ ARG YTDLP_VERSION=2026.08.19
 ADD https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_musllinux /usr/local/bin/yt-dlp
 RUN chmod 0755 /usr/local/bin/yt-dlp
 
+# YouTube signs its media URLs and gates formats behind a JS challenge. Without
+# a runtime yt-dlp only sees storyboard images and reports "Requested format is
+# not available". Bun is used purely as that JS runtime (EJS challenge solver).
+ARG BUN_VERSION=1.4.4
+ADD https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64-musl.zip /tmp/bun.zip
+RUN busybox unzip -o /tmp/bun.zip -d /tmp/bun \
+    && mv /tmp/bun/bun-linux-x64-musl/bun /usr/local/bin/bun \
+    && chmod 0755 /usr/local/bin/bun && rm -rf /tmp/bun /tmp/bun.zip
+
 # 复制构建好的 JAR 包
 COPY --from=backend-builder /app/backend/target/*.jar app.jar
 
