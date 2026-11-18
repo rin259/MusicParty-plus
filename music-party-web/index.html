@@ -2,13 +2,31 @@
 <html lang="zh-CN">
   <head>
     <script>
+      // Synchronous pre-paint restore; the shared runtime validates/rebuilds it before mounting.
       (() => {
-        const stored = localStorage.getItem('mp_theme');
-        const theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        document.documentElement.classList.toggle('dark', theme === 'dark');
-        document.documentElement.dataset.theme = theme;
+        try {
+          const root = document.documentElement;
+          const raw = localStorage.getItem('mp_appearance_v1');
+          const pref = raw ? JSON.parse(raw) : {};
+          const requested = pref.mode || localStorage.getItem('mp_theme');
+          const mode = requested === 'light' || requested === 'dark' ? requested
+            : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          root.classList.toggle('dark', mode === 'dark');
+          root.dataset.theme = mode;
+          root.style.colorScheme = mode;
+          const cached = JSON.parse(localStorage.getItem('mp_appearance_boot_v1') || 'null');
+          if (cached && cached.preference === raw) {
+            for (const [key, rgb] of Object.entries(cached[mode] || {})) {
+              if (/^(medical-(50|[1-9]00)|surface-(1|2|strong)|accent(-hover|-fg|-text|-glow|-on-strong)?|ink(-fg)?|scrim|(danger|success|warn)(-fg|-bg|-border)?)$/.test(key)
+                && Array.isArray(rgb) && rgb.length === 3 && rgb.every(c => Number.isInteger(c) && c >= 0 && c <= 255)) {
+                root.style.setProperty('--' + key, rgb.join(' '));
+              }
+            }
+          }
+        } catch { /* Restricted/corrupt storage falls back to the CSS defaults. */ }
       })();
     </script>
+    <script type="module" src="/src/themeBootstrap.js"></script>
     <meta charset="UTF-8" />
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />

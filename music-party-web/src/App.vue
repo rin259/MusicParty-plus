@@ -2,6 +2,7 @@
 <template>
   <!-- 全局 Toast 挂载点 -->
   <ToastNotification />
+  <ThemeSettings />
 
   <RoomMailLink
       v-if="emailAction === 'confirm' || emailAction === 'unsubscribe'"
@@ -26,7 +27,7 @@
           type="button"
           @click="resumeAudio"
           class="fixed left-1/2 z-[75] flex min-h-11 -translate-x-1/2 items-center gap-2 border border-accent bg-accent px-4 font-mono text-[11px] font-bold text-accent-fg shadow-2xl"
-          :class="uiStore.isLiteMode
+          :class="(uiStore.isLiteMode || wallpaper.active)
               ? 'bottom-[max(1.5rem,env(safe-area-inset-bottom))]'
               : 'bottom-[calc(env(safe-area-inset-bottom)+9rem)] md:bottom-28'"
           aria-label="点击开启声音"
@@ -47,8 +48,8 @@
       <!-- 全局弹窗 -->
       <SearchModal :isOpen="showSearch" @close="showSearch = false" />
       <NamePromptModal />
-      <ChatOverlay v-if="hasStarted && !uiStore.isLiteMode" />
-      <TutorialOverlay v-if="hasStarted && !uiStore.isLiteMode" />
+      <ChatOverlay v-if="hasStarted && (!uiStore.isLiteMode || wallpaper.active)" />
+      <TutorialOverlay v-if="hasStarted && !uiStore.isLiteMode && !wallpaper.active" />
       <AdminAuthModal />
       <AdminDashboard />
     </template>
@@ -65,6 +66,7 @@ import { useUiStore } from './stores/ui';
 import { useAdminStore } from './stores/admin';
 import { useChatStore } from './stores/chat';
 import { useRoomStore } from './stores/room';
+import { useWallpaperStore } from './stores/wallpaper.js';
 import { setPageScrollable } from './utils/viewport';
 
 // Components
@@ -82,18 +84,37 @@ import TutorialOverlay from './components/TutorialOverlay.vue';
 import AdminAuthModal from './components/AdminAuthModal.vue';
 import AdminDashboard from './components/AdminDashboard.vue';
 import RoomMailLink from './components/RoomMailLink.vue';
+import ThemeSettings from './components/ThemeSettings.vue';
+import { useAppearanceStore } from './stores/appearance';
 
 const emailLink = new URLSearchParams(window.location.hash.slice(1));
 const emailAction = emailLink.get('roomSubscription');
 const player = usePlayerStore();
 const userStore = useUserStore();
 const uiStore = useUiStore();
+const wallpaper = useWallpaperStore();
 const adminStore = useAdminStore();
 const hasStarted = ref(false);
 const showSearch = ref(false);
 const showRoomSwitcher = ref(false);
 const chatStore = useChatStore();
 const roomStore = useRoomStore();
+const appearanceStore = useAppearanceStore();
+watch(() => [uiStore.appearanceSource, player.nowPlaying?.music?.coverUrl], async ([source, cover], _, onCleanup) => {
+  const controller = new AbortController();
+  onCleanup(() => controller.abort());
+  uiStore.setMonetAccent(null);
+  if (source !== 'monet' || !cover) return;
+  try {
+    const { extractCoverColor } = await import('./logic/monet.js');
+    if (controller.signal.aborted) return;
+    const color = await extractCoverColor(cover, { signal: controller.signal });
+    if (!controller.signal.aborted) uiStore.setMonetAccent(color);
+  } catch {
+    // Offline/stale chunk failures must not break the app or its audio engine.
+    if (!controller.signal.aborted) uiStore.setMonetAccent(null);
+  }
+}, { immediate: true });
 
 // landing 用文档级滚动（body 默认 overflow:hidden 会裁掉长页面）；
 // 进入房间后恢复锁定，避免主界面被页面滚动带着跑。
@@ -108,18 +129,19 @@ onUnmounted(() => {
 
 // 键盘可达性(antislop R-32)：Escape 自上而下关闭最上层浮层
 useEventListener(window, 'keydown', (e) => {
-  if (e.key !== 'Escape' || showRoomSwitcher.value) return;
+  if (e.key !== 'Escape' || showRoomSwitcher.value || appearanceStore.isOpen) return;
   if (adminStore.showAuthModal) { adminStore.showAuthModal = false; return; }
   if (userStore.showNameModal) { userStore.showNameModal = false; return; }
   if (adminStore.showDashboard) { adminStore.showDashboard = false; return; }
   if (showSearch.value) { showSearch.value = false; return; }
-  if (chatStore.isOpen) chatStore.toggleChat();
+  if (chatStore.isOpen) { chatStore.toggleChat(); return; }
+  if (wallpaper.active && roomStore.entered) wallpaper.active = false;
 });
 
 // Cmd/Ctrl+K：随处唤起搜索（房间内、无更高层浮层时）
 useEventListener(window, 'keydown', (e) => {
   if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'k') return;
-  if (!hasStarted.value || showRoomSwitcher.value || adminStore.showAuthModal || adminStore.showDashboard || userStore.showNameModal) return;
+  if (!hasStarted.value || appearanceStore.isOpen || showRoomSwitcher.value || adminStore.showAuthModal || adminStore.showDashboard || userStore.showNameModal) return;
   e.preventDefault();
   showSearch.value = true;
 });
@@ -134,6 +156,7 @@ watch(() => roomStore.entered ? roomStore.roomId : null, async (id, previousId) 
     showSearch.value = false;
   }
 
+  if (id && wallpaper.fromLauncher) wallpaper.active = true;
   hasStarted.value = !!id;
   if (id) player.connect();
   else showRoomSwitcher.value = false;

@@ -1,7 +1,7 @@
 <!-- src/components/layout/MainLayout.vue -->
 <script setup>
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
-import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare, Mail, BellRing, ArrowLeftRight } from 'lucide-vue-next';
+import { computed, nextTick, ref, onMounted, onUnmounted, watch } from 'vue';
+import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare, Mail, BellRing, ArrowLeftRight, Palette, Image as ImageIcon } from 'lucide-vue-next';
 import UserList from '../UserList.vue';
 import QueueList from '../QueueList.vue';
 import CoverImage from '../CoverImage.vue';
@@ -14,6 +14,10 @@ import { useChatStore } from '../../stores/chat';
 import { useToast } from '../../composables/useToast';
 import { useAdminStore } from '../../stores/admin';
 import { roomMailApi } from '../../api/rooms';
+import { useAppearanceStore } from '../../stores/appearance';
+import { useWallpaperStore } from '../../stores/wallpaper.js';
+import { useWallpaperEdges } from '../../composables/useWallpaperEdges.js';
+import { WALLPAPER_EDGES } from '../../logic/wallpaper.js';
 
 const emit = defineEmits(['search', 'switch-room']);
 const userStore = useUserStore();
@@ -22,7 +26,29 @@ const playerStore = usePlayerStore();
 const roomStore = useRoomStore();
 const chatStore = useChatStore();
 const adminStore = useAdminStore();
+const appearanceStore = useAppearanceStore();
 const { success } = useToast();
+const wallpaper = useWallpaperStore();
+const showLite = computed(() => uiStore.isLiteMode && !wallpaper.active);
+const layout = ref(null);
+const wallpaperButton = ref(null);
+const panels = { top: ref(null), right: ref(null), bottom: ref(null), left: ref(null) };
+const { top: topPanel, right: rightPanel, bottom: bottomPanel, left: leftPanel } = panels;
+const { shown, handlePointer, leave, focusOut } = useWallpaperEdges(wallpaper, layout, panels);
+const offsets = computed(() => Object.fromEntries(WALLPAPER_EDGES.map(edge => [
+  '--wallpaper-' + edge,
+  `min(${wallpaper.settings.deadZone.edges[edge]}px, ${edge === 'top' || edge === 'bottom' ? '25dvh' : '25vw'})`
+])));
+const edgeHidden = edge => wallpaper.active && !shown[edge];
+
+async function toggleWallpaper(event) {
+  const shouldRestoreFocus = event.detail === 0;
+  wallpaper.active = !wallpaper.active;
+  await nextTick();
+  if (!shouldRestoreFocus) return;
+  if (wallpaper.active) layout.value?.focus({ preventScroll: true });
+  else if (wallpaperButton.value?.getClientRects().length) wallpaperButton.value.focus({ preventScroll: true });
+}
 
 const roomMailEnabled = ref(false);
 const mailDialog = ref(null);
@@ -110,6 +136,11 @@ onUnmounted(() => {
   uiStore.mobileOverlayOpen = false;
 });
 
+watch(() => wallpaper.active, () => {
+  mobileMenuOpen.value = mobileQueueOpen.value = mobileUserOpen.value = false;
+  closeChat();
+});
+
 const handleSearchClick = () => {
   mobileMenuOpen.value = false;
   emit('search');
@@ -117,10 +148,27 @@ const handleSearchClick = () => {
 </script>
 
 <template>
-  <div class="h-app w-full flex flex-col relative overflow-hidden bg-medical-50">
+  <div
+      ref="layout"
+      class="h-app w-full flex flex-col relative overflow-hidden bg-medical-50"
+      :class="{ 'wallpaper-layout': wallpaper.active }"
+      :style="wallpaper.active ? offsets : undefined"
+      tabindex="-1"
+      @pointermove="event => event.pointerType !== 'touch' && handlePointer(event)"
+      @pointerdown.capture="event => event.pointerType === 'touch' && handlePointer(event)"
+      @pointerleave="leave"
+      @focusout="focusOut"
+  >
+    <button v-if="wallpaper.active" type="button" class="wallpaper-keyboard-exit" @click="toggleWallpaper">退出壁纸模式</button>
     <!-- 1. 顶部栏 Header -->
-    <header v-if="!uiStore.isLiteMode" class="min-h-14 pt-[env(safe-area-inset-top)] bg-surface-1 border-b border-medical-200 flex justify-between items-center gap-3 px-3 md:px-6 flex-shrink-0 relative z-50">
-      <div class="flex min-w-0 items-center gap-2">
+    <header
+        v-if="!showLite"
+        ref="topPanel"
+        data-wallpaper-edge="top"
+        :class="{ 'wallpaper-edge-hidden': edgeHidden('top') }"
+        :inert="edgeHidden('top')"
+        class="min-h-14 pt-[env(safe-area-inset-top)] bg-surface-1 border-b border-medical-200 flex justify-between items-center gap-3 px-3 md:px-6 flex-shrink-0 relative z-50">
+      <div class="room-header-identity flex min-w-0 items-center gap-2">
         <div class="w-2.5 h-2.5 md:w-3 md:h-3 bg-accent flex-shrink-0"></div>
         <div class="min-w-0 flex flex-col justify-center">
           <h1 class="font-bold text-sm md:text-xl tracking-tighter text-medical-900 whitespace-nowrap m-0 leading-tight">MUSIC PARTY</h1>
@@ -160,9 +208,23 @@ const handleSearchClick = () => {
         </div>
       </div>
 
-      <div class="hidden md:flex items-center gap-4">
+      <div class="hidden md:flex items-center gap-2 lg:gap-4">
+        <button
+            ref="wallpaperButton"
+            type="button"
+            @click="toggleWallpaper"
+            class="flex h-11 w-11 items-center justify-center rounded-sm border border-medical-200 bg-medical-50 text-medical-600 hover:bg-medical-100"
+            :aria-label="wallpaper.active ? '退出壁纸模式' : '进入壁纸模式'"
+            :title="wallpaper.active ? '退出壁纸模式' : '壁纸模式'"
+        >
+          <ImageIcon class="h-4 w-4" aria-hidden="true" />
+        </button>
+        <button v-if="wallpaper.active" type="button" @click="chatStore.toggleChat" class="flex h-11 w-11 items-center justify-center rounded-sm border border-medical-200 bg-medical-50 text-medical-600 hover:bg-medical-100" :aria-expanded="chatStore.isOpen" aria-label="聊天">
+          <MessageSquare class="h-4 w-4" aria-hidden="true" />
+        </button>
         <!-- 精简模式按钮 -->
         <button
+            v-if="!wallpaper.active"
             @click="uiStore.toggleLiteMode"
             class="flex items-center justify-center w-11 h-11 border border-medical-200 bg-medical-50 hover:bg-medical-100 text-medical-600 transition-all rounded-sm"
             title="精简模式"
@@ -180,6 +242,9 @@ const handleSearchClick = () => {
           <Sun v-if="uiStore.theme === 'dark'" class="w-4 h-4" />
           <Moon v-else class="w-4 h-4" />
         </button>
+        <button @click="appearanceStore.open" class="flex items-center justify-center w-11 h-11 border border-medical-200 bg-medical-50 hover:bg-medical-100 text-medical-600 transition-all rounded-sm" title="自定义主题" aria-label="自定义主题">
+          <Palette class="w-4 h-4" />
+        </button>
 
         <button id="tutorial-search" @click="handleSearchClick" class="flex items-center justify-center h-11 px-4 border border-accent bg-accent hover:bg-accent-hover font-bold text-sm text-accent-fg transition-all rounded-sm gap-2">
           <Search class="w-4 h-4" />
@@ -187,7 +252,7 @@ const handleSearchClick = () => {
         </button>
       </div>
 
-      <div class="flex md:hidden items-center gap-2 flex-shrink-0">
+      <div class="room-header-compact flex md:hidden items-center gap-2 flex-shrink-0">
         <!-- 移动端聊天入口放在头部：不再用浮动 launcher，避免它压在歌词/曲目卡片和播放器上 -->
         <button
             id="tutorial-chat-mobile"
@@ -222,10 +287,10 @@ const handleSearchClick = () => {
     </header>
 
     <!-- 移动端菜单：放在 header 之外，避免被 header 的 z-50 堆叠上下文压在播放条下面 -->
-    <div v-if="!uiStore.isLiteMode && mobileMenuOpen" class="md:hidden fixed inset-0 z-[60] bg-scrim/55" @click="mobileMenuOpen = false"></div>
+    <div v-if="!showLite && mobileMenuOpen" class="md:hidden fixed inset-0 z-[60] bg-scrim/55" @click="mobileMenuOpen = false"></div>
     <Transition name="drawer">
       <aside
-          v-if="!uiStore.isLiteMode && mobileMenuOpen"
+          v-if="!showLite && mobileMenuOpen"
           id="mobile-menu"
           role="dialog"
           aria-modal="true"
@@ -270,9 +335,13 @@ const handleSearchClick = () => {
             <Sun v-if="uiStore.theme === 'dark'" class="w-4 h-4" /><Moon v-else class="w-4 h-4" />
             <span class="text-xs font-bold">主题</span>
           </button>
-          <button @click="uiStore.toggleLiteMode" class="flex items-center justify-center gap-2 min-h-11 p-3 border border-medical-200 text-medical-600">
+          <button v-if="!wallpaper.active" @click="uiStore.toggleLiteMode" class="flex items-center justify-center gap-2 min-h-11 p-3 border border-medical-200 text-medical-600">
             <Minimize2 class="w-4 h-4" /><span class="text-xs font-bold">精简</span>
           </button>
+          <button type="button" @click="toggleWallpaper" class="flex h-11 w-11 items-center justify-center rounded-sm border border-medical-200 bg-medical-50 text-medical-600 hover:bg-medical-100" :aria-label="wallpaper.active ? '退出壁纸模式' : '进入壁纸模式'" :title="wallpaper.active ? '退出壁纸模式' : '壁纸模式'">
+            <ImageIcon class="h-4 w-4" aria-hidden="true" />
+          </button>
+          <button @click="appearanceStore.open" class="col-span-2 flex items-center justify-center gap-2 min-h-11 p-3 border border-accent/40 bg-accent/5 text-accent-text"><Palette class="w-4 h-4" /><span class="text-xs font-bold">自定义主题</span></button>
         </div>
       </aside>
     </Transition>
@@ -285,16 +354,18 @@ const handleSearchClick = () => {
     />
 
     <!-- 2. 主体内容区 -->
-    <div v-if="!uiStore.isLiteMode" class="flex-1 flex overflow-hidden relative">
-      <aside class="w-64 bg-medical-50 border-r border-medical-200 hidden md:block overflow-y-auto">
-        <UserList />
+    <div v-if="!showLite" class="flex-1 flex overflow-hidden relative">
+      <aside ref="leftPanel" data-wallpaper-edge="left" aria-label="在线用户" :class="{ 'wallpaper-edge-hidden': edgeHidden('left') }" :inert="edgeHidden('left')" class="w-64 bg-medical-50 border-r border-medical-200 hidden md:block">
+        <div class="h-full overflow-y-auto">
+          <UserList />
+        </div>
       </aside>
 
       <main class="flex-1 bg-medical-100/30 relative flex flex-col overflow-hidden z-10">
         <slot></slot>
       </main>
 
-      <aside class="w-80 bg-surface-1 border-l border-medical-200 hidden md:block overflow-hidden">
+      <aside ref="rightPanel" data-wallpaper-edge="right" aria-label="播放队列" :class="{ 'wallpaper-edge-hidden': edgeHidden('right') }" :inert="edgeHidden('right')" class="w-80 bg-surface-1 border-l border-medical-200 hidden md:block overflow-hidden">
         <QueueList />
       </aside>
 
@@ -397,6 +468,12 @@ const handleSearchClick = () => {
           <span class="text-xs tracking-widest uppercase">切换房间 · {{ roomStore.currentName }}</span>
         </button>
 
+        <button type="button" @click="appearanceStore.open" class="flex w-full min-h-11 items-center justify-center gap-2 border border-medical-200 text-xs font-bold text-medical-600 hover:border-accent hover:text-accent-text"><Palette class="h-4 w-4" />自定义主题</button>
+
+        <button type="button" @click="toggleWallpaper" class="flex h-11 w-11 items-center justify-center rounded-sm border border-medical-200 bg-medical-50 text-medical-600 hover:bg-medical-100" aria-label="进入壁纸模式" title="壁纸模式">
+          <ImageIcon class="h-4 w-4" aria-hidden="true" />
+        </button>
+
         <!-- 退出动作（次级） -->
         <button
             @click="uiStore.toggleLiteMode"
@@ -408,11 +485,106 @@ const handleSearchClick = () => {
       </div>
     </div>
 
-    <slot v-if="!uiStore.isLiteMode" name="player"></slot>
+    <div v-if="!showLite" ref="bottomPanel" data-wallpaper-edge="bottom" :class="{ 'wallpaper-edge-hidden': edgeHidden('bottom') }" :inert="edgeHidden('bottom')" class="shrink-0">
+      <slot name="player"></slot>
+    </div>
   </div>
 </template>
 
 <style scoped>
+:global(html:has(.wallpaper-layout)) { scrollbar-gutter: auto; }
+.wallpaper-layout:focus { outline: none; }
+.wallpaper-layout [data-wallpaper-edge] {
+  position: absolute;
+  z-index: 48;
+  opacity: 1;
+  transition: transform 220ms cubic-bezier(.2,.75,.25,1), opacity 170ms ease-out, visibility 0s;
+}
+.wallpaper-layout [data-wallpaper-edge="top"],
+.wallpaper-layout [data-wallpaper-edge="bottom"] {
+  left: var(--wallpaper-left);
+  right: var(--wallpaper-right);
+  z-index: 50;
+  container: wallpaper-bar / inline-size;
+}
+.wallpaper-layout [data-wallpaper-edge="top"] {
+  top: var(--wallpaper-top);
+  --edge-x: 0;
+  --edge-y: -1;
+  flex-wrap: wrap;
+  row-gap: .25rem;
+}
+.wallpaper-layout [data-wallpaper-edge="bottom"] { bottom: var(--wallpaper-bottom); --edge-x: 0; --edge-y: 1; }
+.wallpaper-layout aside[data-wallpaper-edge] {
+  display: block;
+  top: var(--wallpaper-top);
+  bottom: var(--wallpaper-bottom);
+  max-width: min(72%, calc(100% - var(--wallpaper-left) - var(--wallpaper-right)));
+}
+.wallpaper-layout [data-wallpaper-edge="left"] { left: var(--wallpaper-left); --edge-x: -1; --edge-y: 0; }
+.wallpaper-layout [data-wallpaper-edge="right"] { right: var(--wallpaper-right); --edge-x: 1; --edge-y: 0; overflow: visible; }
+
+/* The bars keep their inset content boxes. Their backgrounds reach the physical edges. */
+.wallpaper-layout {
+  --wallpaper-fill-top: calc(-1 * var(--wallpaper-top));
+  --wallpaper-fill-right: calc(-1 * var(--wallpaper-right));
+  --wallpaper-fill-bottom: calc(-1 * var(--wallpaper-bottom));
+  --wallpaper-fill-left: calc(-1 * var(--wallpaper-left));
+}
+.wallpaper-layout [data-wallpaper-edge]::before,
+.wallpaper-layout [data-wallpaper-edge="right"] :deep(.queue-list-heading::after) {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  background-color: inherit;
+  pointer-events: none;
+}
+.wallpaper-layout [data-wallpaper-edge="top"]::before {
+  inset: var(--wallpaper-fill-top) var(--wallpaper-fill-right) -1px var(--wallpaper-fill-left);
+  border-bottom: inherit;
+}
+.wallpaper-layout [data-wallpaper-edge="bottom"] { background-color: rgb(var(--surface-1)); }
+.wallpaper-layout [data-wallpaper-edge="bottom"]::before {
+  inset: 0 var(--wallpaper-fill-right) var(--wallpaper-fill-bottom) var(--wallpaper-fill-left);
+  border-top: 1px solid rgb(var(--medical-200));
+}
+.wallpaper-layout [data-wallpaper-edge="bottom"] :deep(.player-bar) { box-shadow: none !important; }
+.wallpaper-layout [data-wallpaper-edge="left"]::before {
+  inset: var(--wallpaper-fill-top) -1px var(--wallpaper-fill-bottom) var(--wallpaper-fill-left);
+  border-right: inherit;
+}
+.wallpaper-layout [data-wallpaper-edge="right"]::before {
+  inset: var(--wallpaper-fill-top) var(--wallpaper-fill-right) var(--wallpaper-fill-bottom) -1px;
+  border-left: inherit;
+}
+.wallpaper-layout [data-wallpaper-edge="right"] :deep(.queue-list-heading) {
+  position: relative;
+  isolation: isolate;
+}
+.wallpaper-layout [data-wallpaper-edge="right"] :deep(.queue-list-heading::after) {
+  inset: var(--wallpaper-fill-top) var(--wallpaper-fill-right) -1px 0;
+  border-bottom: inherit;
+}
+.wallpaper-layout .wallpaper-edge-hidden {
+  visibility: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(calc(var(--edge-x) * 100%), calc(var(--edge-y) * 100%));
+  transition-delay: 0s, 0s, 220ms;
+}
+.wallpaper-keyboard-exit {
+  position: absolute;
+  z-index: 51;
+  top: .75rem;
+  left: .75rem;
+  min-height: 2.75rem;
+  padding-inline: .75rem;
+  font-weight: 700;
+  color: rgb(var(--medical-900));
+  background: rgb(var(--surface-1));
+}
+.wallpaper-keyboard-exit:not(:focus-visible) { clip-path: inset(50%); pointer-events: none; }
+
 .room-header-action {
   @apply min-h-11 shrink-0 items-center gap-1 border border-medical-200 bg-medical-50 px-1.5 font-mono text-[9px] tracking-[0.12em] text-medical-500 transition-colors hover:border-accent hover:text-accent-text;
 }
@@ -425,6 +597,14 @@ const handleSearchClick = () => {
 .room-header-action-label > :first-child { opacity: calc(1 - var(--room-header-label-zh, 0)); }
 .room-header-action-label > :last-child { opacity: var(--room-header-label-zh, 0); }
 .room-header-action:focus-visible { --room-header-label-zh: 1; }
+
+@container wallpaper-bar (max-width: 40rem) {
+  .room-header-action-label { display: none; }
+}
+@container wallpaper-bar (max-width: 14rem) {
+  .room-header-identity { display: none; }
+  .room-header-compact { width: 100%; justify-content: space-between; gap: 0; }
+}
 
 @media (hover: hover) {
   .room-header-action:hover { --room-header-label-zh: 1; }

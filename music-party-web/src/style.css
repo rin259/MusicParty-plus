@@ -31,6 +31,8 @@
   --accent-text: 194 65 12;
   /* accent 填充上的文字：深墨色，6.0:1（白字仅 2.8:1，不达标） */
   --accent-fg: 24 18 12;
+  --accent-glow: 251 171 115;
+  --accent-on-strong: 249 115 22;
 
   --surface-1: 255 255 255;
   --surface-2: 243 244 246;
@@ -41,6 +43,7 @@
   --ink-fg: 255 255 255;
 
   --danger: 185 28 28;
+  --danger-fg: 255 255 255;
   --danger-bg: 254 242 242;
   --danger-border: 254 202 202;
   --success: 21 128 61;
@@ -189,7 +192,7 @@ html.theme-transition *::after {
 
 /* 键盘可达性：Tab 导航焦点环（鼠标点击不触发） */
 :focus-visible {
-  outline: 2px solid rgb(var(--accent));
+  outline: 2px solid rgb(var(--accent-text));
   outline-offset: 2px;
 }
 

@@ -1,11 +1,11 @@
 <template>
-  <div class="min-h-24 md:h-24 bg-surface-1 border-t border-medical-200 flex items-center px-3 md:px-8 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:py-0 md:pb-0 relative z-50 shadow-lg">
+  <div class="player-bar min-h-24 md:h-24 bg-surface-1 border-t border-medical-200 flex items-center px-3 md:px-8 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:py-0 md:pb-0 relative z-50 shadow-lg">
     <!-- 封面 -->
     <button
         id="tutorial-source"
         type="button"
         @click="openSourcePage"
-        class="w-14 h-14 md:w-20 md:h-20 mt-0 shadow-lg border-2 border-surface-1 chamfer-br flex-shrink-0 relative z-10 bg-surface-strong cursor-pointer group overflow-hidden"
+        class="player-bar-cover w-14 h-14 md:w-20 md:h-20 mt-0 shadow-lg border-2 border-surface-1 chamfer-br flex-shrink-0 relative z-10 bg-surface-strong cursor-pointer group overflow-hidden"
         title="打开歌曲源页面"
         aria-label="打开歌曲源页面"
     >
@@ -18,7 +18,7 @@
     </button>
 
     <!-- 中间：信息与进度 -->
-    <div class="flex-1 ml-3 mr-0 md:mr-8 flex flex-col justify-center min-w-0">
+    <div class="player-bar-track flex-1 ml-3 mr-0 md:mr-8 flex flex-col justify-center min-w-0">
       <div class="flex justify-between items-end mb-1">
         <div class="overflow-hidden w-full">
           <!-- 标题显示逻辑与样式 -->
@@ -92,7 +92,7 @@
           <div
               v-if="!player.isErrorState"
               class="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 rotate-45 transition-all duration-150 bg-accent group-hover/progress:scale-150"
-              :class="isSeeking ? 'scale-150 shadow-[0_0_8px_rgba(249,115,22,0.65)]' : ''"
+              :class="isSeeking ? 'scale-150 shadow-[0_0_8px_rgb(var(--accent)/0.65)]' : ''"
           ></div>
         </div>
         <div v-if="isSeeking" class="absolute bottom-full mb-1 -translate-x-1/2 rounded-sm bg-scrim px-2 py-1 font-mono text-[11px] text-white shadow-lg" :style="{ left: progressPercent + '%' }">
@@ -102,14 +102,14 @@
       </div>
       
       <!-- 移动端简易控制 -->
-      <div class="flex md:hidden items-center justify-between gap-1.5 mt-1.5 min-w-0">
+      <div class="player-bar-mobile flex md:hidden items-center justify-between gap-1.5 mt-1.5 min-w-0">
         <div class="min-w-0 truncate font-mono text-[11px] text-medical-500 tabular-nums whitespace-nowrap">
           <span v-if="player.isLoading" class="text-accent-text animate-pulse">SYNCING...</span>
           <span v-else-if="player.isBuffering" class="text-accent-text animate-pulse">BUFFERING...</span>
           <span v-else>{{ formatDuration(displayProgress) }} / {{ formatDuration(nowPlaying?.music.duration || 0) }}</span>
         </div>
         <div class="flex gap-1.5 flex-shrink-0">
-        <button id="tutorial-download-mobile" @click="downloadCurrentMusic" class="hidden min-[360px]:flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 rounded-sm text-medical-500 active:bg-medical-200" aria-label="下载当前歌曲">
+        <button id="tutorial-download-mobile" @click="downloadCurrentMusic" class="player-bar-mobile-download hidden min-[360px]:flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 rounded-sm text-medical-500 active:bg-medical-200" aria-label="下载当前歌曲">
           <Download class="w-4 h-4" />
         </button>
         <button
@@ -149,7 +149,7 @@
     </div>
 
     <!-- PC端：右侧控制区 -->
-    <div class="hidden md:flex items-center gap-6 flex-shrink-0">
+    <div class="player-bar-desktop hidden md:flex items-center gap-6 flex-shrink-0">
       
       <!-- 播放控制 -->
       <div class="flex items-center gap-2 border-r border-medical-200 pr-4">
@@ -406,3 +406,17 @@ const openSourcePage = () => {
   window.open(direct || fallback, '_blank', 'noopener');
 };
 </script>
+
+<style scoped>
+@container wallpaper-bar (max-width: 44rem) {
+  .player-bar { flex-wrap: wrap; height: auto; row-gap: .25rem; padding-block: .5rem; }
+  .player-bar-desktop { flex-basis: 100%; flex-wrap: wrap; justify-content: space-between; gap: .5rem; }
+}
+@container wallpaper-bar (max-width: 17rem) {
+  .player-bar { padding-inline: .5rem; }
+  .player-bar-cover { display: none; }
+  .player-bar-track { margin-inline: 0; }
+  .player-bar-mobile { flex-wrap: wrap; }
+  .player-bar-mobile-download { display: none; }
+}
+</style>
