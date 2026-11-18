@@ -1,7 +1,7 @@
 <!-- src/components/layout/MainLayout.vue -->
 <script setup>
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
-import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare, Palette, Mail, BellRing } from 'lucide-vue-next';
+import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare, Palette, Mail, BellRing, ArrowLeftRight } from 'lucide-vue-next';
 import UserList from '../UserList.vue';
 import QueueList from '../QueueList.vue';
 import CoverImage from '../CoverImage.vue';
@@ -132,20 +132,28 @@ const handleSearchClick = () => {
           <button
               type="button"
               @click="switchRoom"
-              class="inline-flex min-h-11 items-center font-mono text-[9px] tracking-[0.12em] px-1.5 border border-medical-200 bg-medical-50 text-medical-500 hover:border-accent hover:text-accent-text transition-colors"
-              title="切换房间"
-          >SWITCH</button>
+              class="room-header-action inline-flex"
+              aria-label="SWITCH 换房"
+          >
+            <ArrowLeftRight class="h-3 w-3" aria-hidden="true" />
+            <span class="room-header-action-label" aria-hidden="true"><span>SWITCH</span><span>换房</span></span>
+          </button>
           <button
               type="button"
               @click="invite"
-              class="flex min-h-11 items-center gap-1 border border-medical-200 bg-medical-50 px-1.5 font-mono text-[9px] tracking-[0.12em] text-medical-500 transition-colors hover:border-accent hover:text-accent-text"
-              title="复制邀请链接"
-          ><Share2 class="h-3 w-3" />INVITE</button>
-          <button v-if="roomMailEnabled" type="button" class="hidden min-h-11 shrink-0 items-center gap-1 border border-medical-200 bg-medical-50 px-2 text-xs text-medical-700 hover:border-accent hover:text-accent-text md:inline-flex" @click="mailDialog.open('subscribe')">
-            <Mail class="h-3.5 w-3.5" aria-hidden="true" />订阅
+              class="room-header-action inline-flex"
+              aria-label="INVITE 邀请"
+          >
+            <Share2 class="h-3 w-3" aria-hidden="true" />
+            <span class="room-header-action-label" aria-hidden="true"><span>INVITE</span><span>邀请</span></span>
           </button>
-          <button v-if="roomMailEnabled" type="button" class="hidden min-h-11 shrink-0 items-center gap-1 border border-medical-200 bg-medical-50 px-2 text-xs text-medical-700 hover:border-accent hover:text-accent-text md:inline-flex" @click="mailDialog.open('summon')">
-            <BellRing class="h-3.5 w-3.5" aria-hidden="true" />召唤
+          <button v-if="roomMailEnabled" type="button" class="room-header-action hidden md:inline-flex" aria-label="SUB 订阅" @click="mailDialog.open('subscribe')">
+            <Mail class="h-3 w-3" aria-hidden="true" />
+            <span class="room-header-action-label" aria-hidden="true"><span>SUB</span><span>订阅</span></span>
+          </button>
+          <button v-if="roomMailEnabled" type="button" class="room-header-action hidden md:inline-flex" aria-label="CALL 召唤" @click="mailDialog.open('summon')">
+            <BellRing class="h-3 w-3" aria-hidden="true" />
+            <span class="room-header-action-label" aria-hidden="true"><span>CALL</span><span>召唤</span></span>
           </button>
         </div>
       </div>
@@ -406,6 +414,23 @@ const handleSearchClick = () => {
 </template>
 
 <style scoped>
+.room-header-action {
+  @apply min-h-11 shrink-0 items-center gap-1 border border-medical-200 bg-medical-50 px-1.5 font-mono text-[9px] tracking-[0.12em] text-medical-500 transition-colors hover:border-accent hover:text-accent-text;
+}
+
+.room-header-action-label {
+  @apply grid whitespace-nowrap text-center;
+}
+
+.room-header-action-label > span { grid-area: 1 / 1; }
+.room-header-action-label > :first-child { opacity: calc(1 - var(--room-header-label-zh, 0)); }
+.room-header-action-label > :last-child { opacity: var(--room-header-label-zh, 0); }
+.room-header-action:focus-visible { --room-header-label-zh: 1; }
+
+@media (hover: hover) {
+  .room-header-action:hover { --room-header-label-zh: 1; }
+}
+
 .slide-fade-enter-active, .slide-fade-leave-active { transition: all 0.3s ease; }
 .slide-fade-enter-from, .slide-fade-leave-to { transform: translateY(10px); opacity: 0; }
 .drawer-enter-active, .drawer-leave-active { transition: transform 0.25s ease, opacity 0.25s ease; }
