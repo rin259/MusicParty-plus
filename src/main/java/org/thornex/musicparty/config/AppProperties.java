@@ -132,6 +132,17 @@ public class AppProperties {
          * token 鏈視為盜用並強制登出。故 YouTube 的 yt-dlp 調用默認串行化（1 路）。
          */
         private int youtubeConcurrency = 1;
+        /**
+         * YouTube 取流用的 player client。機房 IP 上預設的 web client 對媒體請求回
+         * 403（GVS 需要 PO Token），而 web_safari 走 HLS、目前不需要 GVS PO Token，
+         * 實測可正常下載。留空則沿用 yt-dlp 預設。
+         */
+        private String youtubePlayerClient = "web_safari";
+        /**
+         * YouTube 無法提供純音頻流時的兜底格式。web_safari 只有帶畫面的 m3u8，
+         * 故取最低清晰度再抽成 m4a，避免為一首歌下載數十 MB。
+         */
+        private String youtubeFallbackFormat = "best[height<=360]";
     }
 
     @Data

@@ -46,6 +46,8 @@ public class YtDlpResolver {
     private final int downloadConcurrency;
     private final String cookiesFile;
     private final String jsRuntime;
+    private final String youtubePlayerClient;
+    private final String youtubeFallbackFormat;
     private final ObjectMapper objectMapper;
     private final java.util.concurrent.Semaphore metadataProcesses = new java.util.concurrent.Semaphore(2, true);
     /**
@@ -67,6 +69,8 @@ public class YtDlpResolver {
         this.downloadConcurrency = Math.clamp(appProperties.getYtDlp().getDownloadConcurrency(), 1, 64);
         this.cookiesFile = appProperties.getYtDlp().getCookiesFile();
         this.jsRuntime = appProperties.getYtDlp().getJsRuntime();
+        this.youtubePlayerClient = appProperties.getYtDlp().getYoutubePlayerClient();
+        this.youtubeFallbackFormat = appProperties.getYtDlp().getYoutubeFallbackFormat();
         this.objectMapper = objectMapper;
         this.downloadProcesses = new java.util.concurrent.Semaphore(
                 Math.max(1, appProperties.getPreparation().getYtDlpConcurrency()), true);
@@ -329,6 +333,10 @@ public class YtDlpResolver {
             prepared.add(1, jsRuntime);
             prepared.add(1, "--js-runtimes");
         }
+        if (youtubePlayerClient != null && !youtubePlayerClient.isBlank()) {
+            prepared.add(1, "youtube:player_client=" + youtubePlayerClient);
+            prepared.add(1, "--extractor-args");
+        }
         return prepared;
     }
 
@@ -372,18 +380,56 @@ public class YtDlpResolver {
         return YoutubeCookieJar.open(YoutubeCookieFile.resolve(cookiesFile));
     }
 
-    /** Admin check: can this deployment stream YouTube audio right now? */
+    /** Audio format for YouTube: prefer a real audio stream, else the smallest muxed one. */
+    private String youtubeAudioFormat() {
+        String fallback = youtubeFallbackFormat == null || youtubeFallbackFormat.isBlank()
+                ? "best[height<=360]" : youtubeFallbackFormat;
+        return "bestaudio/" + fallback;
+    }
+
+    /**
+     * Admin check: can this deployment stream YouTube audio right now?
+     *
+     * <p>It downloads a few seconds of the real media. A {@code --simulate} run only
+     * resolves format metadata, so it happily reports success on an IP whose media
+     * requests are answered with 403.</p>
+     */
     public Mono<Void> verifyYoutubeStreaming() {
         requireEnabled();
         String target = "https://music.youtube.com/watch?v=dQw4w9WgXcQ";
-        return Mono.fromCallable(() -> runWithSession(
-                        List.of(executable, "--no-warnings", "--no-playlist", "--simulate",
-                                "--format", AUDIO_FORMAT, "--print", "%(id)s", target),
-                        target, "YouTube verification", 20,
-                        command -> runCommand(command, "YouTube verification", 20)))
+        return Mono.fromCallable(() -> {
+                    Path directory = Files.createTempDirectory("yt-verify");
+                    try {
+                        String output = directory.resolve("probe.%(ext)s").toAbsolutePath().toString();
+                        return runWithSession(
+                                List.of(executable, "--no-warnings", "--no-playlist", "--no-progress",
+                                        "--format", youtubeAudioFormat(),
+                                        "--download-sections", "*0-5",
+                                        "--output", output, target),
+                                target, "YouTube verification", 40,
+                                command -> runCommand(command, "YouTube verification", 40));
+                    } finally {
+                        deleteQuietly(directory);
+                    }
+                })
                 .subscribeOn(Schedulers.boundedElastic())
-                .timeout(Duration.ofSeconds(25))
+                .timeout(Duration.ofSeconds(45))
                 .then();
+    }
+
+    private static void deleteQuietly(Path directory) {
+        try (java.util.stream.Stream<Path> files = Files.walk(directory)) {
+            files.sorted(java.util.Comparator.reverseOrder())
+                    .forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException ignored) {
+                            // A leftover probe file in /tmp is harmless.
+                        }
+                    });
+        } catch (IOException ignored) {
+            // Best effort.
+        }
     }
 
     private void requireEnabled() {
@@ -458,17 +504,26 @@ public class YtDlpResolver {
 
         Files.createDirectories(outputDirectory);
         String outputTemplate = outputDirectory.resolve(fileStem + ".%(ext)s").toAbsolutePath().toString();
-        List<String> command = List.of(
+        boolean youtube = isYoutubeTarget(sourceUrl);
+        List<String> command = new ArrayList<>(List.of(
                 executable, "--no-playlist", "--no-warnings", "--no-progress", "--no-simulate",
-                "--format", AUDIO_FORMAT, "--retries", "5", "--fragment-retries", "10",
+                "--format", youtube ? youtubeAudioFormat() : AUDIO_FORMAT,
+                "--retries", "5", "--fragment-retries", "10",
                 "--file-access-retries", "3", "--socket-timeout", "30", "--continue",
                 // SoundCloud 的 bestaudio 是 HLS（96k aac）：不并发分片时单曲要 ~20s，
                 // 4 路并发实测 ~8s 且批量时不会触发 CDN 限流；非 HLS 源会忽略这个参数。
                 "--concurrent-fragments", String.valueOf(downloadConcurrency),
-                "--output", outputTemplate,
+                "--output", outputTemplate
+        ));
+        if (youtube) {
+            // web_safari only exposes muxed HLS renditions, so pull the smallest one
+            // and remux the audio out instead of caching tens of megabytes of video.
+            command.addAll(List.of("--extract-audio", "--audio-format", "m4a", "--audio-quality", "0"));
+        }
+        command.addAll(List.of(
                 "--print", "after_move:__MUSIC_PARTY_FILE__:%(filepath)s",
                 sourceUrl
-        );
+        ));
 
         String output = runWithSession(command, sourceUrl, "audio download", downloadTimeoutSeconds,
                 prepared -> runCommand(prepared, "audio download", downloadTimeoutSeconds));

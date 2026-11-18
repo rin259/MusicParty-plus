@@ -104,6 +104,9 @@ app:
       js-runtime: ${YT_DLP_JS_RUNTIME:bun:/usr/local/bin/bun}
       # 為 1 時同一會話之 yt-dlp 調用串行執行，避免並發輪換把 token 鏈撞壞
       youtube-concurrency: ${YT_DLP_YOUTUBE_CONCURRENCY:1}
+      # 機房 IP 上預設 client 取流回 403；web_safari 走 HLS 可繞開 GVS PO Token
+      youtube-player-client: ${YT_DLP_YOUTUBE_PLAYER_CLIENT:web_safari}
+      youtube-fallback-format: ${YT_DLP_YOUTUBE_FALLBACK_FORMAT:best[height<=360]}
     auth:
       rate-limit:
         enabled: ${AUTH_RATE_LIMIT_ENABLED:true}
