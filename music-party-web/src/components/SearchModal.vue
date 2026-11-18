@@ -69,7 +69,7 @@
               @keydown.up.prevent="moveActive(-1)"
               placeholder="搜索歌曲、歌手，或粘贴链接 / BV 号…"
               aria-label="搜索音乐"
-              class="flex-1 min-h-10 border p-2.5 outline-none transition-colors duration-300 font-sans bg-medical-100 border-medical-200 focus:border-accent text-medical-900 placeholder:text-medical-500"
+              class="flex-1 min-w-0 min-h-10 border p-2.5 outline-none transition-colors duration-300 font-sans bg-medical-100 border-medical-200 focus:border-accent text-medical-900 placeholder:text-medical-500"
           />
           <button
               v-if="platform === 'netease'"
@@ -205,7 +205,8 @@
         </div>
 
         <!-- 右侧：歌曲列表 -->
-        <div class="bg-medical-50 flex-col min-h-0" :class="[supportsPlaylists ? 'md:flex-1' : 'flex-1', mobileView === 'songs' || !supportsPlaylists ? 'flex w-full h-full' : 'hidden md:flex']">
+        <!-- Desktop shares width with the sidebar; long album text must not set this flex item's minimum width. -->
+        <div data-testid="search-results-pane" class="bg-medical-50 flex-col min-h-0 min-w-0 md:w-auto" :class="[supportsPlaylists ? 'md:flex-1' : 'flex-1', mobileView === 'songs' || !supportsPlaylists ? 'flex w-full h-full' : 'hidden md:flex']">
           <!-- 移动端返回条 -->
           <div class="md:hidden flex items-center gap-2 p-2 bg-surface-1 border-b border-medical-200 flex-shrink-0">
             <button v-if="supportsPlaylists" @click="mobileView = 'playlists'" class="flex items-center justify-center w-11 h-11 -ml-1 text-medical-500 hover:text-medical-900" aria-label="返回歌单"><ArrowLeft class="w-5 h-5" /></button>
@@ -224,7 +225,7 @@
                   <div class="text-sm font-bold truncate text-medical-900">{{ album.name }}</div>
                   <div class="text-xs text-medical-500 truncate">{{ album.artist }} · {{ album.trackCount }} TRACKS</div>
                 </div>
-                <ChevronRight class="w-4 h-4 text-medical-500 ml-2" />
+                <ChevronRight class="w-4 h-4 text-medical-500 ml-2 flex-shrink-0" />
               </button>
             </div>
 

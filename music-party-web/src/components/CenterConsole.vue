@@ -1,6 +1,6 @@
 // ... existing code ...
 <template>
-  <div class="relative w-full h-full overflow-hidden">
+  <div class="relative w-full h-full overflow-hidden" :class="{ 'wallpaper-console': wallpaper.active, 'wallpaper-console-compact': wallpaper.active && isMobile }">
 
     <!-- 移动端：独立纵向流式布局。桌面那套绝对定位的歌词/遥测/封面在窄屏会互相压叠，
          这里不再复用，改为封面 → 标题 → 歌词/曲目信息 的自然顺序，内容可滚动。 -->
@@ -12,12 +12,12 @@
       <div class="relative z-10 flex min-h-full flex-col">
       <div class="mx-auto my-auto flex w-full max-w-md flex-col gap-3 px-4 pb-6 pt-4">
         <!-- 曲目元信息：状态在封面角标里，这里只留来源/时长/队列，避免重复 -->
-        <div class="truncate text-center font-mono text-[9px] tracking-[0.16em] text-medical-500">
+        <div v-if="!wallpaper.active" class="truncate text-center font-mono text-[9px] tracking-[0.16em] text-medical-500">
           {{ metaLine || 'SYSTEM IDLE' }}
         </div>
 
         <!-- 封面 + 点赞 -->
-        <div class="mx-auto w-full max-w-[min(60vw,14rem)]">
+        <div class="mobile-cover mx-auto w-full max-w-[min(60vw,14rem)]">
           <button
               id="tutorial-like"
               type="button"
@@ -46,7 +46,7 @@
             <div v-if="isBursting" class="pointer-events-none absolute inset-0 z-30 border-2 border-accent bg-accent/20 animate-ping"></div>
           </button>
 
-          <div class="mt-2 flex items-center justify-between gap-2 font-mono text-[10px] text-medical-500">
+          <div v-if="!wallpaper.active" class="mt-2 flex items-center justify-between gap-2 font-mono text-[10px] text-medical-500">
             <span v-if="player.nowPlaying?.enqueuedById" class="min-w-0 truncate">
               REQ_BY <span class="text-medical-800">{{ userStore.resolveName(player.nowPlaying.enqueuedById, player.nowPlaying.enqueuedByName) }}</span>
             </span>
@@ -98,7 +98,7 @@
           </div>
         </div>
 
-        <div v-else class="text-center font-mono text-[10px] tracking-[0.16em] text-medical-500">IDLE · 等待下一首</div>
+        <div v-else-if="!player.nowPlaying" class="text-center font-mono text-[10px] tracking-[0.16em] text-medical-500">IDLE · 等待下一首</div>
       </div>
       </div>
     </div>
@@ -141,7 +141,7 @@
     <!-- LAYER 2: 信息层 (歌词 & 日志) -->
     <div class="absolute inset-0 z-20 pointer-events-none">
       <!-- 左侧：同步歌词 -->
-      <div class="absolute font-mono transition-all duration-300
+      <div class="console-lyrics absolute font-mono transition-all duration-300
                   inset-x-0 bottom-7 flex flex-col items-center justify-end h-64 pb-2
                   md:inset-auto md:bottom-10 md:left-10 md:items-start md:justify-end md:h-auto md:w-80
       ">
@@ -180,46 +180,11 @@
         </div>
       </div>
 
-      <!-- 右侧：音频遥测（真实测量；B1 三频段电平 + B4 带时间戳的滚动日志） -->
-      <div class="absolute bottom-8 right-8 w-[240px] font-mono text-[10px] text-medical-500 hidden md:block select-none">
-        <div class="absolute inset-0 bg-medical-50/72 chamfer-tl"></div>
-        <!-- 屏读摘要：视觉面板是装饰，但「音频是否在跑」是唯一可信状态，2 秒低频播报一次 -->
-        <span ref="srRef" role="status" aria-live="polite" class="sr-only"></span>
-        <div ref="telemetryRef" aria-hidden="true" class="relative flex flex-col gap-1 px-2 py-1.5">
-          <div class="flex items-baseline justify-between tracking-[0.18em] text-medical-500">
-            <span>AUDIO_TELEMETRY</span>
-            <span class="text-[9px]">REL dB</span>
-          </div>
 
-          <div v-for="band in telemetryBands" :key="band.key" :data-band="band.key" class="flex items-center gap-2">
-            <span class="w-8 shrink-0 text-[9px] tracking-[0.12em]">{{ band.label }}</span>
-            <span class="relative h-1.5 flex-1 overflow-hidden bg-medical-200/70">
-              <span class="telem-bar"></span>
-              <span class="telem-peak"></span>
-            </span>
-            <span class="telem-value w-10 shrink-0 text-right text-[10.5px] tabular-nums text-medical-800">---</span>
-          </div>
-
-          <div class="flex items-baseline justify-between border-t border-medical-200/60 pt-1 tabular-nums text-medical-600">
-            <span>CREST <span data-meta="crest">0.0</span></span>
-            <span>PEAK <span data-meta="peak">0.0</span></span>
-            <span>RMS <span data-meta="rms">0.0</span></span>
-            <span data-meta="clip" class="text-danger" style="visibility: hidden">CLIP!</span>
-          </div>
-
-          <div class="space-y-0.5 pt-0.5 text-[8.5px] leading-tight tabular-nums">
-            <div data-line></div>
-            <div data-line></div>
-            <div data-line></div>
-          </div>
-
-          <div data-meta="link" class="pt-0.5 text-[9px] text-medical-500">LINK SEARCHING · QUEUE 0</div>
-        </div>
-      </div>
     </div>
 
     <!-- LAYER 2.5: live chat danmaku. It is visual-only and never blocks playback controls. -->
-    <div aria-hidden="true" class="absolute inset-0 z-20 overflow-hidden pointer-events-none">
+    <div v-show="!wallpaper.active" aria-hidden="true" class="absolute inset-0 z-20 overflow-hidden pointer-events-none">
       <!-- 统一单侧弹出：原 lane%5 对双轨渲染导致 3/5 的弹幕被静默丢弃 -->
       <TransitionGroup name="danmaku" tag="div" class="danmaku-lane left-[4%] md:left-[8%]">
         <div v-for="message in danmakuMessages" :key="message.instanceId" class="danmaku-item max-w-[38vw] md:max-w-[30vw] truncate rounded-full border border-white/50 bg-scrim/75 px-3 py-1.5 text-xs text-white shadow-lg backdrop-blur-sm">
@@ -242,7 +207,7 @@
             id="tutorial-like"
             ref="coverBoxRef"
             type="button"
-            class="relative w-64 h-64 md:w-[clamp(196px,26vh,288px)] md:h-[clamp(196px,26vh,288px)] bg-medical-50 chamfer-br flex items-center justify-center overflow-hidden transition-all duration-500 cursor-pointer border border-surface-1 shadow-2xl"
+            class="studio-cover relative w-64 h-64 md:w-[clamp(196px,26vh,288px)] md:h-[clamp(196px,26vh,288px)] bg-medical-50 chamfer-br flex items-center justify-center overflow-hidden transition-all duration-500 cursor-pointer border border-surface-1 shadow-2xl"
             :class="[
                  // 仅保留暂停时的缩放/灰度
                  player.isPaused ? 'scale-95 grayscale' : 'scale-100',
@@ -339,7 +304,47 @@
           </div>
         </button>
       </div>
+      <div v-if="wallpaper.active && player.nowPlaying" class="wallpaper-track px-4 text-center">
+        <h2 class="line-clamp-2 text-[clamp(1.25rem,3vmin,2.25rem)] font-bold leading-tight text-medical-900">{{ player.nowPlaying.music.name }}</h2>
+        <p class="mt-1 truncate text-sm text-medical-600">{{ player.nowPlaying.music.artists.join(' / ') }}</p>
+      </div>
     </div>
+    </div>
+    <!-- 右侧：音频遥测（真实测量；B1 三频段电平 + B4 带时间戳的滚动日志） -->
+    <div v-if="!isMobile || wallpaper.active" class="console-telemetry absolute bottom-8 right-8 z-20 w-[240px] select-none font-mono text-[10px] text-medical-500 pointer-events-none" aria-label="音量计">
+      <div class="absolute inset-0 bg-medical-50/72 chamfer-tl"></div>
+      <!-- 屏读摘要：视觉面板是装饰，但「音频是否在跑」是唯一可信状态，2 秒低频播报一次 -->
+      <span ref="srRef" role="status" aria-live="polite" class="sr-only"></span>
+      <div ref="telemetryRef" aria-hidden="true" class="relative flex flex-col gap-1 px-2 py-1.5">
+        <div class="flex items-baseline justify-between tracking-[0.18em] text-medical-500">
+          <span>AUDIO_TELEMETRY</span>
+          <span class="text-[9px]">REL dB</span>
+        </div>
+
+        <div v-for="band in telemetryBands" :key="band.key" :data-band="band.key" class="flex items-center gap-2">
+          <span class="w-8 shrink-0 text-[9px] tracking-[0.12em]">{{ band.label }}</span>
+          <span class="relative h-1.5 flex-1 overflow-hidden bg-medical-200/70">
+            <span class="telem-bar"></span>
+            <span class="telem-peak"></span>
+          </span>
+          <span class="telem-value w-10 shrink-0 text-right text-[10.5px] tabular-nums text-medical-800">---</span>
+        </div>
+
+        <div class="flex items-baseline justify-between border-t border-medical-200/60 pt-1 tabular-nums text-medical-600">
+          <span>CREST <span data-meta="crest">0.0</span></span>
+          <span>PEAK <span data-meta="peak">0.0</span></span>
+          <span>RMS <span data-meta="rms">0.0</span></span>
+          <span data-meta="clip" class="text-danger" style="visibility: hidden">CLIP!</span>
+        </div>
+
+        <div class="space-y-0.5 pt-0.5 text-[8.5px] leading-tight tabular-nums">
+          <div data-line></div>
+          <div data-line></div>
+          <div data-line></div>
+        </div>
+
+        <div data-meta="link" class="pt-0.5 text-[9px] text-medical-500">LINK SEARCHING · QUEUE 0</div>
+      </div>
     </div>
   </div>
 </template>
@@ -348,6 +353,7 @@
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
+import { useWallpaperStore } from '../stores/wallpaper.js';
 import {useEventListener, useWindowSize} from '@vueuse/core';
 import { parseLyrics } from '../utils/parser';
 import { AudioVisualizer } from '../logic/AudioVisualizer';
@@ -363,6 +369,7 @@ import { Activity, Zap } from 'lucide-vue-next';
 
 const userStore = useUserStore();
 const player = usePlayerStore();
+const wallpaper = useWallpaperStore();
 const uiStore = useUiStore();
 const canvasRef = ref(null);
 const wordRef = ref(null);
@@ -590,7 +597,7 @@ watch(wordLetters, async () => {
   wordmark.remeasure();
 });
 
-// 脱敏工具
+watch([telemetryRef, srRef], ([root, summary]) => telemetry.attach(root, summary), { flush: 'post' });
 
 onMounted(() => {
   // 1. 挂载 Canvas & Visualizer
@@ -610,7 +617,6 @@ onMounted(() => {
     wordmark.start();
   }
   if (lightsRef.value) lights.mount(lightsRef.value);
-  if (telemetryRef.value) telemetry.attach(telemetryRef.value, srRef.value);
 
   // 2. 监听全局自定义事件
   useEventListener(window, 'resize', refreshVisualizerMetrics);
@@ -656,6 +662,23 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.wallpaper-console { --wallpaper-cover-size: clamp(8rem, 46vmin, 32rem); }
+.wallpaper-console .studio-cover { width: var(--wallpaper-cover-size); height: auto; aspect-ratio: 1; }
+.wallpaper-console:not(.wallpaper-console-compact) :is(.console-lyrics, .console-telemetry) {
+  max-width: calc((100% - var(--wallpaper-cover-size)) / 2 - 3rem);
+}
+.wallpaper-console-compact { display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+.wallpaper-console-compact .console-telemetry {
+  position: relative;
+  inset: auto;
+  width: min(20rem, calc(100% - 1.5rem));
+  margin: 0 auto .75rem;
+}
+.wallpaper-track { position: absolute; top: calc(100% + clamp(.75rem, 2.5vmin, 1.5rem)); width: var(--wallpaper-cover-size); }
+@media (max-width: 767px) {
+  .wallpaper-console .mobile-cover { max-width: min(72vw, 43dvh, 20rem); }
+}
+
 .danmaku-lane {
   position: absolute;
   bottom: 12%;
@@ -681,9 +704,9 @@ onUnmounted(() => {
 @keyframes telemetry-fault {
   0% { transform: none; clip-path: none; text-shadow: none; }
   18% { transform: translateX(calc(-1 * var(--ga, 1.4px))); clip-path: inset(12% 0 58% 0);
-        text-shadow: 1px 0 rgba(249, 115, 22, 0.45), -1px 0 rgba(56, 189, 248, 0.3); }
+        text-shadow: 1px 0 rgb(var(--accent) / 0.45), -1px 0 rgb(var(--accent-glow) / 0.3); }
   38% { transform: translateX(var(--ga, 1.4px)); clip-path: inset(60% 0 14% 0);
-        text-shadow: -1px 0 rgba(249, 115, 22, 0.45), 1px 0 rgba(56, 189, 248, 0.3); }
+        text-shadow: -1px 0 rgb(var(--accent) / 0.45), 1px 0 rgb(var(--accent-glow) / 0.3); }
   60% { transform: translateX(calc(-0.66 * var(--ga, 1.4px))); clip-path: inset(34% 0 42% 0); text-shadow: none; }
   80% { transform: none; clip-path: none; }
   100% { transform: none; clip-path: none; }

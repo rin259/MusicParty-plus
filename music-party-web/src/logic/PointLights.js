@@ -15,6 +15,8 @@ import { spectrumBandEnergy } from './AudioVisualizer.js';
  *    高頻燈隨鑔片/齒音閃動；於是背景的「哪一顆亮」本身就是頻譜信息的空間化。
  *  - 低解析度畫布再放大：柔化天然、成本極低（每幀 16 個徑向漸變）。
  */
+import { getVisualTheme } from './themeRuntime.js';
+
 const COUNT = 16;
 const MIN_HZ = 20;
 const MAX_HZ = 16000;
@@ -39,9 +41,9 @@ const WHITE_LIGHT = [212, 218, 228];
 const srgbToLinear = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
 const linearToSrgb = (v) => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
 /** t = 0 → 低頻（橙），t = 1 → 高頻（白端） */
-const bandColor = (t, white) => ORANGE.map((c) => {
+export const pointLightColor = (t, white, accent = ORANGE) => accent.map((c, channel) => {
     const a = srgbToLinear(c / 255);
-    const b = srgbToLinear(white[0] / 255);
+    const b = srgbToLinear(white[channel] / 255);
     return Math.round(linearToSrgb(a + (b - a) * t) * 255);
 });
 
@@ -72,8 +74,8 @@ export class PointLights {
         this.lights = this.seed();
         // 兩套調色板：淺色/深色各一套，繪製時依當前主題取用（避免白燈在淺底上隱形）
         this.palettes = {
-            light: Array.from({ length: COUNT }, (_, i) => bandColor(i / (COUNT - 1), WHITE_LIGHT)),
-            dark: Array.from({ length: COUNT }, (_, i) => bandColor(i / (COUNT - 1), WHITE_DARK))
+            light: Array.from({ length: COUNT }, (_, i) => pointLightColor(i / (COUNT - 1), WHITE_LIGHT)),
+            dark: Array.from({ length: COUNT }, (_, i) => pointLightColor(i / (COUNT - 1), WHITE_DARK))
         };
     }
 
@@ -162,6 +164,12 @@ export class PointLights {
     /** 预渲染 24×2 张径向光斑 sprite：替代每帧 24 次 createRadialGradient。 */
     buildSprites() {
         if (typeof document === 'undefined') return;
+        const accent = getVisualTheme().accent;
+        this._accentKey = accent.join(',');
+        this.palettes = {
+            light: Array.from({ length: COUNT }, (_, i) => pointLightColor(i / (COUNT - 1), WHITE_LIGHT, accent)),
+            dark: Array.from({ length: COUNT }, (_, i) => pointLightColor(i / (COUNT - 1), WHITE_DARK, accent))
+        };
         // 光晕剖面 a(t) = (1-t)^2 * (1 + 1.084t)：
         //   a(0)=1、a(0.45)=0.45（与旧版中段亮度一致）、a(1)=0，且 t=1 处导数为 0——
         //   旧版在 t=0.45 处斜率突变、末端线性收口，放大后能看到一圈「边界」；
@@ -269,6 +277,7 @@ export class PointLights {
     draw(dt) {
         const { ctx, width, height } = this;
         if (!ctx || !width || !height) return;
+        if (getVisualTheme().accent.join(',') !== this._accentKey) this.buildSprites();
 
         this.flash *= Math.pow(0.87, dt * 60);
         this.crowd *= Math.pow(0.998, dt * 60);

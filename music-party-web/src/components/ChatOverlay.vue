@@ -181,7 +181,7 @@
       id="tutorial-chat"
       ref="launcherRef"
       type="button"
-      v-show="!isMobile"
+      v-show="!isMobile && !wallpaper.active"
       @pointerdown="handlePointerDown"
       @click="handleClick"
       :aria-label="chatStore.unreadCount > 0 ? `打开聊天，${chatStore.unreadCount} 条未读` : '打开聊天'"
@@ -189,7 +189,7 @@
       :style="launcherStyle"
       class="fixed left-0 top-0 z-[72] flex h-11 w-11 touch-none select-none items-center justify-center overflow-hidden rounded-sm border transition-all cursor-move"
       :class="chatStore.unreadCount > 0
-          ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(249,115,22,0.6)] scale-110'
+          ? 'bg-accent border-accent text-accent-fg shadow-[0_0_15px_rgb(var(--accent)/0.6)] scale-110'
           : 'bg-surface-1 border-medical-200 text-medical-500 shadow-lg hover:text-medical-900 hover:border-medical-300'"
   >
     <span v-if="chatStore.unreadCount > 0" class="font-bold font-mono text-sm relative z-10 animate-pulse">
@@ -206,6 +206,7 @@ import { useChatStore } from '../stores/chat';
 import { usePlayerStore } from '../stores/player';
 import { useUserStore } from '../stores/user';
 import { useUiStore } from '../stores/ui';
+import { useWallpaperStore } from '../stores/wallpaper.js';
 import { useToast } from '../composables/useToast';
 import { useDraggable, useEventListener, useWindowSize } from '@vueuse/core';
 import { autoUpdate, flip, offset, shift, size, useFloating } from '@floating-ui/vue';
@@ -218,6 +219,7 @@ const chatStore = useChatStore();
 const playerStore = usePlayerStore();
 const userStore = useUserStore();
 const uiStore = useUiStore();
+const wallpaper = useWallpaperStore();
 const { success, error } = useToast();
 const { width: windowWidth, height: windowHeight } = useWindowSize();
 const vv = useVisualViewport();
@@ -351,7 +353,11 @@ const mobileWindowStyle = computed(() => {
   };
 });
 
-const panelStyle = computed(() => (isMobile.value ? mobileWindowStyle.value : floatingStyles.value));
+const panelStyle = computed(() => {
+  if (isMobile.value) return mobileWindowStyle.value;
+  if (wallpaper.active) return { top: '4.5rem', right: '1rem', height: 'min(30rem, calc(100dvh - 5.5rem))' };
+  return floatingStyles.value;
+});
 
 // === 4. 焦点与外部点击 ===
 watch(() => chatStore.isOpen, async (open) => {

@@ -9,9 +9,12 @@
             SELECT OR CREATE A ROOM
           </p>
         </div>
-        <div class="hidden text-right md:block">
+        <div class="flex items-end gap-3 text-right">
+          <button type="button" class="flex h-11 w-11 items-center justify-center border border-medical-200 bg-surface-1 text-medical-600 hover:border-accent hover:text-accent-text" aria-label="自定义主题" title="自定义主题" @click="appearanceStore.open"><Palette class="h-4 w-4" /></button>
+          <div class="hidden md:block">
           <div class="font-mono text-[9px] tracking-[0.16em] text-medical-500">DEVICE</div>
           <div class="font-mono text-[10px] text-medical-600">{{ deviceShort }}</div>
+          </div>
         </div>
       </header>
 
@@ -195,7 +198,7 @@
         </div>
         <div class="flex gap-2">
           <button type="button" @click="deleteTarget = null" class="min-h-11 flex-1 border border-medical-200 px-3 text-xs font-bold text-medical-600 hover:bg-medical-100">CANCEL</button>
-          <button type="button" @click="confirmDelete" :disabled="deleting" class="min-h-11 flex-1 bg-danger px-3 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50">
+          <button type="button" @click="confirmDelete" :disabled="deleting" class="min-h-11 flex-1 bg-danger px-3 text-xs font-bold text-danger-fg hover:opacity-90 disabled:opacity-50">
             {{ deleting ? 'CLOSING...' : 'CLOSE ROOM' }}
           </button>
         </div>
@@ -233,17 +236,21 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
-import { ArrowRight, Plus, RefreshCw } from 'lucide-vue-next';
+import { ArrowRight, Plus, RefreshCw, Palette } from 'lucide-vue-next';
 import { useRoomStore } from '../stores/room';
+import { useWallpaperStore } from '../stores/wallpaper.js';
 import { useToast } from '../composables/useToast';
 import RoomDirectory from './RoomDirectory.vue';
 import { useUserStore } from '../stores/user';
 import { STORAGE_KEYS } from '../constants/keys';
 import { revealOnFocus, setPageScrollable } from '../utils/viewport';
+import { useAppearanceStore } from '../stores/appearance';
 
 const emit = defineEmits(['enter']);
 const roomStore = useRoomStore();
+const wallpaper = useWallpaperStore();
 const userStore = useUserStore();
+const appearanceStore = useAppearanceStore();
 const { info, error: toastError } = useToast();
 
 const profileName = ref(localStorage.getItem(STORAGE_KEYS.USERNAME) || '');
@@ -442,10 +449,11 @@ async function joinByCode() {
 
 onMounted(async () => {
   await roomStore.loadRooms();
-  const query = new URLSearchParams(window.location.search).get('room');
-  if (query) {
-    joinCode.value = query;
-    await enterRoom(query.trim().toLowerCase());
-  }
+  const query = new URLSearchParams(window.location.search).get('room')?.trim().toLowerCase();
+  const previous = wallpaper.fromLauncher ? wallpaper.lastRoom : null;
+  const candidate = query || previous?.roomId;
+  // A saved code remains available after returning to the room directory.
+  if (candidate) joinCode.value = candidate;
+  if (candidate && (query || previous?.entered)) await enterRoom(candidate);
 });
 </script>
