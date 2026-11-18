@@ -401,19 +401,22 @@ public class YtDlpResolver {
                     Path directory = Files.createTempDirectory("yt-verify");
                     try {
                         String output = directory.resolve("probe.%(ext)s").toAbsolutePath().toString();
+                        // Mirror the production download (same format, same audio
+                        // extraction) so a green check cannot hide a broken path.
                         return runWithSession(
                                 List.of(executable, "--no-warnings", "--no-playlist", "--no-progress",
                                         "--format", youtubeAudioFormat(),
                                         "--download-sections", "*0-5",
+                                        "--extract-audio", "--audio-format", "m4a", "--audio-quality", "0",
                                         "--output", output, target),
-                                target, "YouTube verification", 40,
-                                command -> runCommand(command, "YouTube verification", 40));
+                                target, "YouTube verification", 60,
+                                command -> runCommand(command, "YouTube verification", 60));
                     } finally {
                         deleteQuietly(directory);
                     }
                 })
                 .subscribeOn(Schedulers.boundedElastic())
-                .timeout(Duration.ofSeconds(45))
+                .timeout(Duration.ofSeconds(65))
                 .then();
     }
 
