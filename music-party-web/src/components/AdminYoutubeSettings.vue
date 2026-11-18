@@ -130,8 +130,16 @@ onMounted(load);
         <code class="bg-medical-50 px-1 font-mono text-[11px]">cookies.txt</code>（Netscape 格式）后，
         取流才会成功。内容只保存在服务端，读取接口不会返回。
       </p>
-      <p v-if="status.configured" class="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.12em] text-success">
-        <CircleDot class="h-3 w-3" aria-hidden="true" /> 已配置 · {{ updatedLabel }}
+      <p v-if="status.configured" class="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.12em]"
+          :class="status.sessionReady ? 'text-success' : 'text-danger'">
+        <CircleDot class="h-3 w-3" aria-hidden="true" />
+        {{ status.sessionReady ? '登录态有效' : '无登录态' }} · {{ updatedLabel }}
+      </p>
+      <p v-if="status.configured && !status.sessionReady" role="alert"
+          class="border border-danger/40 bg-danger-bg px-3 py-2 text-xs leading-relaxed text-danger">
+        这份 cookies 缺少登录必需的 HttpOnly 字段：{{ (status.missing || []).join('、') }}。
+        用 <code class="font-mono">document.cookie</code> 或只读脚本 cookie 的扩展导出会漏掉它们，
+        取流会一直失败。请重新导出完整 cookies。
       </p>
       <div>
         <div class="mb-1 flex items-baseline justify-between gap-2">

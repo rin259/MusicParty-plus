@@ -87,14 +87,21 @@ public class AdminController {
     @PostMapping("/config/youtube/test")
     public ResponseEntity<?> testYoutubeCookies(@RequestHeader(value = "X-Admin-Password", required = false) String password) {
         if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        YoutubeCookiesAdmin.Status status = youtubeCookies.status();
+        if (status.configured() && !status.sessionReady()) {
+            return ResponseEntity.ok(new YoutubeCookiesAdmin.TestResult(false,
+                    "cookies 缺少登录必需的 HttpOnly 字段：" + String.join("、", status.missing())
+                            + "。当前导出无法通过登录校验，请重新导出。"));
+        }
         try {
             ytDlpResolver.verifyYoutubeStreaming().block(java.time.Duration.ofSeconds(30));
             return ResponseEntity.ok(new YoutubeCookiesAdmin.TestResult(true, "YouTube 取流可用"));
         } catch (RuntimeException error) {
             String message = error.getMessage() == null ? "" : error.getMessage();
-            boolean botCheck = message.toLowerCase(java.util.Locale.ROOT).contains("sign in to confirm");
+            boolean botCheck = message.toLowerCase(java.util.Locale.ROOT).contains("sign in to confirm")
+                    || message.contains("登录校验");
             return ResponseEntity.ok(new YoutubeCookiesAdmin.TestResult(false,
-                    botCheck ? "YouTube 仍要求登录校验，请重新导出 cookies" : "取流失败：" + message));
+                    botCheck ? "YouTube 仍要求登录校验：cookies 可能已在浏览器里被轮换失效，请重新导出" : "取流失败：" + message));
         }
     }
 

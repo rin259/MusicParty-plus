@@ -27,8 +27,18 @@ public class YoutubeCookiesAdmin {
     private static final int MAX_INPUT_BYTES = 4_000_000;
     private static final int MAX_STORED_BYTES = 512_000;
 
-    public record Status(boolean configured, long bytes, long updatedAt) {}
+    public record Status(boolean configured, long bytes, long updatedAt,
+                         boolean sessionReady, List<String> missing) {}
     public record TestResult(boolean ok, String message) {}
+
+    /**
+     * Cookies a signed-in YouTube session cannot work without. Google marks all
+     * of them HttpOnly, so an export taken from {@code document.cookie} (or a
+     * browser extension that only reads script-visible cookies) silently drops
+     * them and leaves a file that looks plausible but is never authenticated.
+     */
+    private static final List<String> HTTP_ONLY_AUTH_COOKIES =
+            List.of("SID", "SAPISID", "LOGIN_INFO");
 
     private final Path file;
 
@@ -37,12 +47,35 @@ public class YoutubeCookiesAdmin {
     }
 
     public Status status() {
-        if (!YoutubeCookieFile.usable(file)) return new Status(false, 0, 0);
+        if (!YoutubeCookieFile.usable(file)) return new Status(false, 0, 0, false, HTTP_ONLY_AUTH_COOKIES);
         try {
-            return new Status(true, Files.size(file), Files.getLastModifiedTime(file).toMillis());
+            String text = Files.readString(file, StandardCharsets.UTF_8);
+            List<String> missing = missingAuthCookies(text);
+            return new Status(true, Files.size(file), Files.getLastModifiedTime(file).toMillis(),
+                    missing.isEmpty(), missing);
         } catch (IOException error) {
-            return new Status(false, 0, 0);
+            return new Status(false, 0, 0, false, HTTP_ONLY_AUTH_COOKIES);
         }
+    }
+
+    /** Cookie names present in the file, minus everything but the auth fields we care about. */
+    static List<String> missingAuthCookies(String content) {
+        List<String> present = new ArrayList<>();
+        for (String line : (content == null ? "" : content).replace("\r\n", "\n").split("\n")) {
+            String trimmed = line.strip();
+            String bare = trimmed.startsWith("#HttpOnly_") ? trimmed.substring("#HttpOnly_".length()) : trimmed;
+            if (bare.isEmpty() || bare.startsWith("#")) continue;
+            String[] parts = bare.split("\t");
+            if (parts.length >= 7) present.add(parts[5]);
+        }
+        List<String> missing = new ArrayList<>();
+        boolean hasSid = present.contains("SID") || present.contains("__Secure-1PSID");
+        boolean hasSapisid = present.contains("SAPISID") || present.contains("__Secure-1PAPISID");
+        boolean hasLoginInfo = present.contains("LOGIN_INFO");
+        if (!hasSid) missing.add("SID");
+        if (!hasSapisid) missing.add("SAPISID");
+        if (!hasLoginInfo) missing.add("LOGIN_INFO");
+        return missing;
     }
 
     public Status save(String content) {
@@ -120,6 +153,12 @@ public class YoutubeCookiesAdmin {
         boolean hasSid = text.contains("\tSID\t") || text.contains("\tSAPISID\t")
                 || text.contains("\t__Secure-3PAPISID\t") || text.contains("\t__Secure-1PAPISID\t");
         if (!header && !hasSid) throw new IllegalArgumentException("cookies 内容缺少 YouTube 登录字段（SID / SAPISID）");
+        List<String> missing = missingAuthCookies(text);
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException("cookies 缺少登录必需的 HttpOnly 字段：" + String.join("、", missing)
+                    + "。用 document.cookie 或只读脚本 cookie 的扩展导出会漏掉它们；"
+                    + "请改用 yt-dlp --cookies-from-browser，或支持 HttpOnly 的导出扩展。");
+        }
         return text + "\n";
     }
 }

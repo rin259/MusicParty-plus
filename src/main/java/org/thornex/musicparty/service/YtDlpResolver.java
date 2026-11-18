@@ -446,7 +446,7 @@ public class YtDlpResolver {
             Thread.ofVirtual().name("yt-dlp-output-reader").start(outputReader);
             if (!process.waitFor(actionTimeoutSeconds, TimeUnit.SECONDS)) throw new IllegalStateException("yt-dlp timed out during " + action);
             String output = outputReader.get(5, TimeUnit.SECONDS);
-            if (process.exitValue() != 0) throw new IllegalStateException("yt-dlp failed during " + action + ": " + output);
+            if (process.exitValue() != 0) throw new IllegalStateException("yt-dlp failed during " + action + ": " + explain(output));
             return output;
         } finally {
             if (process != null && process.isAlive()) {
@@ -457,6 +457,17 @@ public class YtDlpResolver {
             if (outputReader != null) outputReader.cancel(true);
             permits.release();
         }
+    }
+
+    /** Turns the one yt-dlp error operators actually hit into an actionable Chinese message. */
+    private static String explain(String output) {
+        if (output == null) return "";
+        String lowered = output.toLowerCase(java.util.Locale.ROOT);
+        if (lowered.contains("sign in to confirm")) {
+            return "YouTube 要求登录校验：服务端 cookies 没有登录态或已失效，"
+                    + "需要包含 SID / SAPISID / LOGIN_INFO 的完整导出（原始输出：" + output + "）";
+        }
+        return output;
     }
 
     private void stopProcess(Process process) throws InterruptedException {
