@@ -41,6 +41,28 @@ cookies**（浏览器会调用 `accounts.youtube.com/RotateCookiesPage` 刷新�
 - 换用**住宅 IP / 家宽出口**是从根上消除该错误的方式；机房 IP 只能靠 cookies 续命。
 - 同一个账号被用于服务器取流有封号风险，建议专备一个小号，不要在其它地方使用。
 
+## 另一种失败：`HTTP Error 403: Forbidden`（与 bot check 不同）
+
+若日志是 `unable to download video data: HTTP Error 403: Forbidden`，
+那**不是**登录问题，cookies 可以是完全有效的。原因是 GVS（Google Video Server）
+要求 PO Token：默认的 `web` / `mweb` / `web_embedded` 客户端从机房 IP 取媒体流会被拒。
+
+本项目默认改用 `web_safari` 客户端（`YT_DLP_YOUTUBE_PLAYER_CLIENT`）：
+它走 HLS（m3u8），目前不需要 GVS PO Token，实测可正常下载。
+
+代价是 `web_safari` 只提供**带画面**的合并流，所以下载后会再抽成纯音轨：
+
+```sh
+--extract-audio --audio-format m4a    # 7MB 的 360p 流 → 约 1MB 的 m4a
+```
+
+若以后连 HLS 也开始强制 PO Token，需要额外部署 PO Token provider
+（如 `brainicism/bgutil-ytdlp-pot-provider` 容器 + yt-dlp 插件），
+届时才能回到 `web` 客户端的纯音频流。
+
+**验证口径**：管理台的「验证取流」会真的下载 5 秒媒体并抽成 m4a 再删除，
+不用 `--simulate`——后者只解析格式，在 403 的情况下也会报成功。
+
 ## 启用方式
 
 两种方式任选其一，效果相同。
