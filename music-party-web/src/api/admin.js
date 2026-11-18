@@ -12,6 +12,27 @@ export const adminApi = {
         headers: { 'X-Admin-Password': adminPwd }
     }),
 
+    preparation: (adminPwd) => client.get('/api/admin/preparation', {
+        headers: { 'X-Admin-Password': adminPwd }
+    }),
+
+    youtubeSettings: (adminPwd) => client.get('/api/admin/config/youtube', {
+        headers: { 'X-Admin-Password': adminPwd }
+    }),
+
+    saveYoutubeCookies: (adminPwd, cookies) => client.put('/api/admin/config/youtube', { cookies }, {
+        headers: { 'X-Admin-Password': adminPwd }
+    }),
+
+    clearYoutubeCookies: (adminPwd) => client.delete('/api/admin/config/youtube', {
+        headers: { 'X-Admin-Password': adminPwd }
+    }),
+
+    testYoutube: (adminPwd) => client.post('/api/admin/config/youtube/test', {}, {
+        headers: { 'X-Admin-Password': adminPwd },
+        timeout: 35000
+    }),
+
     // 验证密码
     verify: (password) => client.post('/api/admin/verify', { password }),
 

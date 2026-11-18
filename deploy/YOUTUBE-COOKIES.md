@@ -12,6 +12,16 @@ player client 全部被拒。这不是队列或解析超时问题，匿名取流
 
 ## 启用方式
 
+两种方式任选其一，效果相同。
+
+### 管理终端（推荐，无需重启）
+
+管理后台 →「YouTube 取流」：粘贴导出的 cookies.txt 内容，保存后立即生效；
+「验证取流」会用固定测试视频跑一次 `--simulate`，直接告诉你当前是否还会被校验拦截。
+读取接口只返回是否已配置与文件大小，永远不会返回内容。
+
+### 放到数据目录
+
 1. 在已登录 YouTube 的浏览器里导出 Netscape 格式 cookies（例如
    "Get cookies.txt LOCALLY" 扩展）。
 2. 放到宿主机的 `./music_party/data/yt-cookies.txt`（容器内为

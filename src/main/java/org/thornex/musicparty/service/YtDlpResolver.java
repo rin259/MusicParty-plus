@@ -298,13 +298,21 @@ public class YtDlpResolver {
     }
 
     private Path youtubeCookiesFile() {
-        Path file = cookiesFile == null || cookiesFile.isBlank()
-                ? Path.of("data", "yt-cookies.txt") : Path.of(cookiesFile);
-        try {
-            return Files.isReadable(file) && Files.size(file) > 0 ? file : null;
-        } catch (IOException error) {
-            return null;
-        }
+        Path file = YoutubeCookieFile.resolve(cookiesFile);
+        return YoutubeCookieFile.usable(file) ? file : null;
+    }
+
+    /** Admin check: can this deployment stream YouTube audio right now? */
+    public Mono<Void> verifyYoutubeStreaming() {
+        requireEnabled();
+        String target = "https://music.youtube.com/watch?v=dQw4w9WgXcQ";
+        List<String> command = withYoutubeCookies(List.of(
+                executable, "--no-warnings", "--no-playlist", "--simulate",
+                "--format", "bestaudio", "--print", "%(id)s", target), target);
+        return Mono.fromCallable(() -> runCommand(command, "YouTube verification", 20))
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(Duration.ofSeconds(25))
+                .then();
     }
 
     private void requireEnabled() {

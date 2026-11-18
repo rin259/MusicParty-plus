@@ -10,6 +10,8 @@ import org.thornex.musicparty.dto.*;
 import org.thornex.musicparty.room.RoomMailSettings;
 import org.thornex.musicparty.room.RoomRegistry;
 import org.thornex.musicparty.service.RuntimeConfigService;
+import org.thornex.musicparty.service.YoutubeCookiesAdmin;
+import org.thornex.musicparty.service.YtDlpResolver;
 import org.thornex.musicparty.service.api.BilibiliMusicApiService;
 import org.thornex.musicparty.service.api.NeteaseMusicApiService;
 import org.thornex.musicparty.service.stream.LiveStreamService;
@@ -30,8 +32,11 @@ public class AdminController {
     private final RuntimeConfigService runtimeConfigService;
     private final org.thornex.musicparty.service.LocalCacheService localCacheService;
     private final RoomMailSettings roomMailSettings;
+    private final YoutubeCookiesAdmin youtubeCookies;
+    private final YtDlpResolver ytDlpResolver;
 
-    public AdminController(RoomRegistry roomRegistry, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService, RuntimeConfigService runtimeConfigService, org.thornex.musicparty.service.LocalCacheService localCacheService, RoomMailSettings roomMailSettings) {
+    public AdminController(RoomRegistry roomRegistry, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService, RuntimeConfigService runtimeConfigService, org.thornex.musicparty.service.LocalCacheService localCacheService,
+                        RoomMailSettings roomMailSettings, YoutubeCookiesAdmin youtubeCookies, YtDlpResolver ytDlpResolver) {
         this.roomRegistry = roomRegistry;
         this.adminPassword = appProperties.getAdminPassword();
         this.authController = authController;
@@ -41,6 +46,56 @@ public class AdminController {
         this.runtimeConfigService = runtimeConfigService;
         this.localCacheService = localCacheService;
         this.roomMailSettings = roomMailSettings;
+        this.youtubeCookies = youtubeCookies;
+        this.ytDlpResolver = ytDlpResolver;
+    }
+
+    public record YoutubeCookiesRequest(String cookies) {}
+
+    @GetMapping("/config/youtube")
+    public ResponseEntity<?> youtubeCookies(@RequestHeader(value = "X-Admin-Password", required = false) String password) {
+        if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(youtubeCookies.status());
+    }
+
+    @PutMapping("/config/youtube")
+    public ResponseEntity<?> updateYoutubeCookies(
+            @RequestHeader(value = "X-Admin-Password", required = false) String password,
+            @RequestBody YoutubeCookiesRequest request) {
+        if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        try {
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                    .body(youtubeCookies.save(request == null ? null : request.cookies()));
+        } catch (IllegalArgumentException error) {
+            return ResponseEntity.badRequest().body(Map.of("message", error.getMessage()));
+        } catch (IllegalStateException error) {
+            return ResponseEntity.internalServerError().body(Map.of("message", error.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/config/youtube")
+    public ResponseEntity<?> clearYoutubeCookies(@RequestHeader(value = "X-Admin-Password", required = false) String password) {
+        if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        try {
+            youtubeCookies.clear();
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(youtubeCookies.status());
+        } catch (IllegalStateException error) {
+            return ResponseEntity.internalServerError().body(Map.of("message", error.getMessage()));
+        }
+    }
+
+    @PostMapping("/config/youtube/test")
+    public ResponseEntity<?> testYoutubeCookies(@RequestHeader(value = "X-Admin-Password", required = false) String password) {
+        if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        try {
+            ytDlpResolver.verifyYoutubeStreaming().block(java.time.Duration.ofSeconds(30));
+            return ResponseEntity.ok(new YoutubeCookiesAdmin.TestResult(true, "YouTube 取流可用"));
+        } catch (RuntimeException error) {
+            String message = error.getMessage() == null ? "" : error.getMessage();
+            boolean botCheck = message.toLowerCase(java.util.Locale.ROOT).contains("sign in to confirm");
+            return ResponseEntity.ok(new YoutubeCookiesAdmin.TestResult(false,
+                    botCheck ? "YouTube 仍要求登录校验，请重新导出 cookies" : "取流失败：" + message));
+        }
     }
 
     @GetMapping("/preparation")

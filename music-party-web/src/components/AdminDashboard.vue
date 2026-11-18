@@ -189,6 +189,10 @@
               </div>
 
               <!-- Section: Credentials -->
+              <AdminPreparationPanel :admin-password="adminStore.adminPassword" />
+
+              <AdminYoutubeSettings :admin-password="adminStore.adminPassword" />
+
               <AdminMailSettings :admin-password="adminStore.adminPassword" />
 
               <div class="bg-surface-1 border border-medical-200 shadow-sm overflow-hidden chamfer-br">
@@ -248,6 +252,8 @@ import { adminApi } from '../api/admin';
 import { useToast } from '../composables/useToast';
 import ToggleSwitch from './ui/ToggleSwitch.vue';
 import AdminMailSettings from './AdminMailSettings.vue';
+import AdminYoutubeSettings from './AdminYoutubeSettings.vue';
+import AdminPreparationPanel from './AdminPreparationPanel.vue';
 import { useFocusTrap } from '../composables/useFocusTrap';
 import {
   Settings, X, Pause, Play, SkipForward, ListOrdered, Repeat1, Shuffle,
