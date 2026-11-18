@@ -77,14 +77,14 @@
                           <span class="text-[11px] font-bold text-medical-800">{{ playerStore.isFairShuffle ? '公平模式' : '全部随机' }}</span>
                           <span class="text-[11px] text-medical-500 font-mono uppercase">算法类型</span>
                         </div>
-                        <ToggleSwitch :checked="playerStore.isFairShuffle" label="公平随机" @toggle="execPlayerAction('TOGGLE_FAIR_SHUFFLE')" />
+                        <ToggleSwitch :checked="playerStore.isFairShuffle" label="公平随机" @toggle="execPlayerAction('TOGGLE_FAIR_SHUFFLE', () => playerStore.isFairShuffle = !playerStore.isFairShuffle, () => playerStore.isFairShuffle = !playerStore.isFairShuffle)" />
                       </div>
                       <div class="flex items-center justify-between border-l border-medical-100 pl-3">
                         <div class="flex flex-col">
                           <span class="text-[11px] font-bold text-medical-800">{{ playerStore.allowOfflineShuffle ? '含离线' : '仅在线' }}</span>
                           <span class="text-[11px] text-medical-500 font-mono uppercase">曲库范围</span>
                         </div>
-                        <ToggleSwitch :checked="playerStore.allowOfflineShuffle" label="随机范围包含离线歌曲" @toggle="execPlayerAction('TOGGLE_ALLOW_OFFLINE')" />
+                        <ToggleSwitch :checked="playerStore.allowOfflineShuffle" label="随机范围包含离线歌曲" @toggle="execPlayerAction('TOGGLE_ALLOW_OFFLINE', () => playerStore.allowOfflineShuffle = !playerStore.allowOfflineShuffle, () => playerStore.allowOfflineShuffle = !playerStore.allowOfflineShuffle)" />
                       </div>
                     </div>
 
@@ -176,6 +176,13 @@
                   </div>
                   <!-- Toggles -->
                   <div class="grid grid-cols-1 gap-3">
+                    <div class="p-3 bg-medical-50 border border-medical-100 flex items-center justify-between gap-2 rounded-sm">
+                      <div class="flex flex-col">
+                        <span class="text-[11px] font-bold text-medical-800">{{ playerStore.streamActive ? '直播流已开启' : '直播流已关闭' }}</span>
+                        <span class="text-[11px] text-medical-500 font-mono uppercase">LIVE_STREAM</span>
+                      </div>
+                      <ToggleSwitch :checked="playerStore.streamActive" label="直播流同步" @toggle="toggleStream" />
+                    </div>
                     <div class="p-3 bg-medical-50 border border-medical-100 flex flex-col gap-2 rounded-sm">
                       <span class="text-[11px] font-bold text-medical-500 uppercase font-mono text-center">数据清理</span>
                       <div class="flex flex-col gap-1 w-full">
@@ -206,7 +213,7 @@
                       <span class="text-[11px] font-bold text-medical-600 font-mono">{{ plat.name }} // {{ plat.tokenName }}</span>
                       <ToggleSwitch :checked="!!playerStore.config[`${plat.id}Enabled`]" :label="`启用 ${plat.name}`" @toggle="togglePlatform(plat.id)" />
                     </div>
-                    <div class="flex gap-2">
+                    <div v-if="plat.credential" class="flex gap-2">
                       <input 
                         type="password"
                         v-model="plat.value" 
@@ -216,6 +223,7 @@
                       />
                       <button @click="updateCookie(plat.id, plat.value)" class="bg-surface-strong text-white px-3 min-h-10 font-bold text-[11px] hover:bg-accent hover:text-accent-fg transition-colors">更新</button>
                     </div>
+                    <p v-else class="m-0 font-mono text-[10px] leading-relaxed text-medical-500">{{ plat.note }}</p>
                   </div>
                 </div>
               </div>
@@ -294,11 +302,15 @@ const saveSystemConfig = async () => {
   }
 };
 
-const updateInstantConfig = async (update) => {
+const updateInstantConfig = async (update, revert) => {
+  const previous = { ...playerStore.config };
+  playerStore.config = { ...playerStore.config, ...update };
   try {
     const data = await adminApi.updateConfig(adminStore.adminPassword, update);
     success(data.message);
   } catch (e) {
+    playerStore.config = previous;
+    revert?.();
     error('配置同步失败');
   }
 };
@@ -310,15 +322,19 @@ const locks = computed(() => [
 ]);
 
 const platforms = ref([
-  { id: 'netease', name: '网易云音乐', tokenName: 'COOKIE', value: '' },
-  { id: 'bilibili', name: '哔哩哔哩', tokenName: 'SESSDATA', value: '' }
+  { id: 'netease', name: '网易云音乐', tokenName: 'COOKIE', value: '', credential: true },
+  { id: 'bilibili', name: '哔哩哔哩', tokenName: 'SESSDATA', value: '', credential: true },
+  { id: 'soundcloud', name: 'SoundCloud', tokenName: 'OAUTH', value: '', credential: false, note: '在搜索框的 SoundCloud 登录入口完成 OAuth 授权。' },
+  { id: 'ytmusic', name: 'YouTube Music', tokenName: 'COOKIES', value: '', credential: false, note: 'cookies 在本页「YouTube 取流」面板维护。' }
 ]);
 
-const execPlayerAction = async (action) => {
+const execPlayerAction = async (action, optimistic, revert) => {
+  optimistic?.();
   try {
     const data = await adminApi.playerAction(adminStore.adminPassword, action);
     success(data.message);
   } catch (e) {
+    revert?.();
     error('指令执行失败');
   }
 };
@@ -342,10 +358,13 @@ const updateRoomPassword = async () => {
 };
 
 const toggleStream = async () => {
+  const next = !playerStore.streamActive;
+  playerStore.streamActive = next;
   try {
-    const data = await adminApi.setStream(adminStore.adminPassword, !playerStore.streamActive);
+    const data = await adminApi.setStream(adminStore.adminPassword, next);
     success(data.message);
   } catch (e) {
+    playerStore.streamActive = !next;
     error('直播流控制失败');
   }
 };
@@ -377,12 +396,14 @@ const updateCookie = async (platform, value) => {
 };
 
 const togglePlatform = async (platformId) => {
-  const current = playerStore.config[`${platformId}Enabled`];
-  const update = { [`${platformId}Enabled`]: !current };
+  const key = `${platformId}Enabled`;
+  const previous = { ...playerStore.config };
+  playerStore.config = { ...playerStore.config, [key]: !previous[key] };
   try {
-    const data = await adminApi.updateConfig(adminStore.adminPassword, update);
+    const data = await adminApi.updateConfig(adminStore.adminPassword, { [key]: !previous[key] });
     success(data.message);
   } catch (e) {
+    playerStore.config = previous;
     error('平台状态切换失败');
   }
 };

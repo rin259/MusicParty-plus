@@ -910,13 +910,17 @@ public class MusicPlayerService {
     public void updateConfig(AdminConfigUpdateRequest request) {
         StringBuilder logMsg = new StringBuilder("System configuration updated: ");
         
-        if (request.maxSize() != null) {
-            appProperties.getQueue().setMaxSize(request.maxSize());
-            logMsg.append("MaxQueueSize=").append(request.maxSize()).append(" ");
+        // The dashboard has always sent maxQueueSize/maxHistorySize; accept both
+        // spellings so a save is never silently ignored.
+        Integer maxQueueSize = firstPositive(request.maxSize(), request.maxQueueSize());
+        if (maxQueueSize != null) {
+            appProperties.getQueue().setMaxSize(maxQueueSize);
+            logMsg.append("MaxQueueSize=").append(maxQueueSize).append(" ");
         }
-        if (request.historySize() != null) {
-            appProperties.getQueue().setHistorySize(request.historySize());
-            logMsg.append("HistorySize=").append(request.historySize()).append(" ");
+        Integer historySize = firstPositive(request.historySize(), request.maxHistorySize());
+        if (historySize != null) {
+            appProperties.getQueue().setHistorySize(historySize);
+            logMsg.append("HistorySize=").append(historySize).append(" ");
         }
         if (request.maxUserSongs() != null) {
             appProperties.getQueue().setMaxUserSongs(request.maxUserSongs());
@@ -946,6 +950,14 @@ public class MusicPlayerService {
             appProperties.getBilibili().setEnabled(request.bilibiliEnabled());
             logMsg.append("BilibiliEnabled=").append(request.bilibiliEnabled()).append(" ");
         }
+        if (request.soundcloudEnabled() != null) {
+            appProperties.getSoundcloud().setEnabled(request.soundcloudEnabled());
+            logMsg.append("SoundcloudEnabled=").append(request.soundcloudEnabled()).append(" ");
+        }
+        if (request.ytmusicEnabled() != null) {
+            appProperties.getYtmusic().setEnabled(request.ytmusicEnabled());
+            logMsg.append("YtmusicEnabled=").append(request.ytmusicEnabled()).append(" ");
+        }
         
         if (request.voteSkipEnabled() != null) {
             isVoteSkipEnabled.set(request.voteSkipEnabled());
@@ -969,6 +981,12 @@ public class MusicPlayerService {
 
         broadcastFullPlayerState();
         publishRuntimeConfigChanged();
+    }
+
+    private static Integer firstPositive(Integer preferred, Integer fallback) {
+        if (preferred != null && preferred > 0) return preferred;
+        if (fallback != null && fallback > 0) return fallback;
+        return null;
     }
 
     public void togglePause(String sessionId) {
@@ -1476,6 +1494,13 @@ public class MusicPlayerService {
 
     private boolean isRateLimited(String userId) {
         long now = System.currentTimeMillis();
+        // Admin/system commands must not be swallowed by the per-user throttle:
+        // the endpoint still reports success, so a dropped command looks like a
+        // dead switch in the dashboard.
+        if ("SYSTEM".equals(userId)) {
+            lastControlTimestamp.set(now);
+            return false;
+        }
         if (now - lastControlTimestamp.get() < GLOBAL_COOLDOWN_MS) {
             log.warn("Action rate limited for user: {}", userId);
             // eventPublisher.publishEvent(...); // Optional: notify user about rate limit

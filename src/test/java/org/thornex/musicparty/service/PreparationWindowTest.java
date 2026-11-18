@@ -80,6 +80,27 @@ class PreparationWindowTest {
         } finally { player.shutdown(); }
     }
 
+    @Test void adminCommandsBypassTheUserControlCooldown() {
+        var props = new AppProperties(); props.setNetease(new AppProperties.NeteaseApiConfig());
+        props.setBilibili(new AppProperties.BilibiliApiConfig());
+        var queue = new MusicQueueManager(props);
+        var users = mock(UserService.class);
+        var cache = mock(LocalCacheService.class);
+        var api = mock(IMusicApiService.class); when(api.getPlatformName()).thenReturn("netease");
+        var player = new MusicPlayerService(List.of(api), users, cache, mock(LiveStreamService.class), queue,
+                mock(ApplicationEventPublisher.class), props, "room");
+        try {
+            boolean before = player.getCurrentPlayerState().isFairShuffle();
+            player.toggleFairShuffle("SYSTEM");
+            assertThat(player.getCurrentPlayerState().isFairShuffle()).isNotEqualTo(before);
+            player.toggleFairShuffle("SYSTEM");
+            assertThat(player.getCurrentPlayerState().isFairShuffle()).isEqualTo(before);
+            // A user command inside the same second is still throttled.
+            player.toggleFairShuffle("user-token");
+            assertThat(player.getCurrentPlayerState().isFairShuffle()).isEqualTo(before);
+        } finally { player.shutdown(); }
+    }
+
     @Test void roomReclaimsCapacityOnTickEvenWithoutItsOwnDownloadEvent() {
         var props = new AppProperties(); props.setNetease(new AppProperties.NeteaseApiConfig());
         props.setBilibili(new AppProperties.BilibiliApiConfig());

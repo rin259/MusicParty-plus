@@ -12,5 +12,10 @@ public record AdminConfigUpdateRequest(
     Boolean bilibiliEnabled,
     Boolean voteSkipEnabled,
     Double voteSkipThreshold,
-    Integer voteSkipWaitTime
+    Integer voteSkipWaitTime,
+    // Dashboard aliases; kept alongside the legacy names above.
+    Integer maxQueueSize,
+    Integer maxHistorySize,
+    Boolean soundcloudEnabled,
+    Boolean ytmusicEnabled
 ) {}
