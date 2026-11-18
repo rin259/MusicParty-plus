@@ -358,7 +358,8 @@ public class YtDlpResolver {
             String content = Files.readString(file, java.nio.charset.StandardCharsets.UTF_8);
             java.util.List<String> missing = YoutubeCookiesAdmin.missingAuthCookies(content);
             if (!missing.isEmpty()) {
-                throw new IllegalStateException("YouTube 要求登录校验：服务端 cookies 缺少 "
+                throw new org.thornex.musicparty.exception.ApiRequestException(
+                        "YouTube 要求登录校验：服务端 cookies 缺少 "
                         + String.join("、", missing) + "，取流被跳过。请重新导出完整 cookies。");
             }
         } catch (java.io.IOException ignored) {
