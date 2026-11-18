@@ -25,6 +25,7 @@ RUN npm run build
 # ============================
 FROM maven:3.9-eclipse-temurin-21-alpine AS backend-builder
 WORKDIR /app/backend
+ENV JAVA_TOOL_OPTIONS="-XX:-UseBASE64Intrinsics"
 
 # 复制 Maven 依赖定义
 COPY pom.xml .

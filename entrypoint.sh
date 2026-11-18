@@ -21,4 +21,10 @@ update_ytdlp
     done
 ) &
 
-exec java -jar /app/app.jar
+# CVE-2026-114938: disable the affected Base64 intrinsic. HotSpot processes
+# _JAVA_OPTIONS after the command line, so keep unrelated flags but enforce
+# the mitigation last there as well if that variable is set.
+if [ -n "${_JAVA_OPTIONS:-}" ]; then
+    export _JAVA_OPTIONS="$_JAVA_OPTIONS -XX:-UseBASE64Intrinsics"
+fi
+exec java -XX:-UseBASE64Intrinsics -jar /app/app.jar
