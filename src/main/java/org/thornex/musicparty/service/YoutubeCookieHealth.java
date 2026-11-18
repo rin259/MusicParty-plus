@@ -18,13 +18,19 @@ import org.springframework.stereotype.Service;
 public class YoutubeCookieHealth {
     public record Status(boolean checked, boolean healthy, long checkedAt, String message) {}
 
-    private final YtDlpResolver resolver;
+    private final java.util.function.Supplier<reactor.core.publisher.Mono<Void>> probeRunner;
     private final YoutubeCookiesAdmin cookies;
 
     private volatile Status status = new Status(false, false, 0, "尚未检测");
 
+    @org.springframework.beans.factory.annotation.Autowired
     public YoutubeCookieHealth(YtDlpResolver resolver, YoutubeCookiesAdmin cookies) {
-        this.resolver = resolver;
+        this(resolver::verifyYoutubeStreaming, cookies);
+    }
+
+    YoutubeCookieHealth(java.util.function.Supplier<reactor.core.publisher.Mono<Void>> probeRunner,
+                        YoutubeCookiesAdmin cookies) {
+        this.probeRunner = probeRunner;
         this.cookies = cookies;
     }
 
@@ -46,10 +52,15 @@ public class YoutubeCookieHealth {
             return;
         }
         try {
-            resolver.verifyYoutubeStreaming().block(java.time.Duration.ofSeconds(35));
+            probeRunner.get().block(java.time.Duration.ofSeconds(35));
             transition(new Status(true, true, System.currentTimeMillis(), "取流可用"));
         } catch (RuntimeException error) {
             String message = error.getMessage() == null ? "" : error.getMessage();
+            if (message.contains("yt-dlp busy")) {
+                // Saturated lanes are a queue condition, not a verdict on the cookies.
+                // Keep the last known state instead of flapping the panel to "broken".
+                return;
+            }
             String reason = message.contains("登录校验")
                     ? "cookies 登录态已失效，需要重新导出"
                     : "取流失败：" + message;
