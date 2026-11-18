@@ -97,7 +97,7 @@ onMounted(load);
       </fieldset>
       <p v-if="error" role="alert" class="text-sm text-danger">{{ error }}</p>
       <p v-if="notice" role="status" class="text-sm text-success">{{ notice }}</p>
-      <button type="submit" :disabled="!dirty || saving" class="flex min-h-11 w-full items-center justify-center gap-2 bg-surface-strong px-3 font-bold text-white hover:bg-accent hover:text-accent-fg disabled:opacity-50">
+      <button type="submit" :disabled="!dirty || saving" class="flex min-h-11 w-full items-center justify-center gap-2 bg-surface-strong px-3 font-bold text-white hover:bg-accent hover:text-accent-fg disabled:cursor-not-allowed disabled:bg-medical-200 disabled:text-medical-500">
         <Save class="h-4 w-4" aria-hidden="true" /> {{ saving ? '正在保存…' : '保存邮件设置' }}
       </button>
     </form>

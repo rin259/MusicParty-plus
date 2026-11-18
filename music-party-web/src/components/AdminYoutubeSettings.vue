@@ -156,7 +156,7 @@ onMounted(load);
         {{ testResult.message }}
       </p>
       <div class="flex flex-wrap gap-2">
-        <button type="submit" :disabled="!dirty || saving" class="flex min-h-11 flex-1 items-center justify-center gap-2 bg-surface-strong px-3 font-bold text-white hover:bg-accent hover:text-accent-fg disabled:opacity-50">
+        <button type="submit" :disabled="!dirty || saving" class="flex min-h-11 flex-1 items-center justify-center gap-2 bg-surface-strong px-3 font-bold text-white hover:bg-accent hover:text-accent-fg disabled:cursor-not-allowed disabled:bg-medical-200 disabled:text-medical-500">
           <Save class="h-4 w-4" aria-hidden="true" /> {{ saving ? '正在保存…' : '保存 cookies' }}
         </button>
         <button type="button" :disabled="!status.configured || testing" class="flex min-h-11 items-center justify-center gap-2 border border-medical-200 px-3 text-sm font-bold text-medical-700 hover:border-accent hover:text-accent-text disabled:opacity-50" @click="test">

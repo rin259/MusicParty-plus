@@ -32,9 +32,9 @@
         </div>
 
         <!-- Content Area -->
-        <div class="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 custom-scroll bg-medical-50/50">
+        <div class="flex-1 space-y-6 overflow-y-auto bg-medical-50/50 p-4 custom-scroll md:p-6">
           
-          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
             
             <!-- Left Column: Playback & Parameters (7 cols) -->
             <div class="lg:col-span-7 space-y-6">
@@ -123,6 +123,10 @@
                   </div>
 
                   <!-- Permission Locks -->
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-medical-500">权限锁 / LOCKS</span>
+                    <button type="button" class="min-h-9 border border-medical-200 px-2 font-mono text-[10px] text-medical-600 hover:border-accent hover:text-accent-text" @click="unlockAll">全部解锁</button>
+                  </div>
                   <div class="grid grid-cols-3 gap-2">
                     <button v-for="lock in locks" :key="lock.key" class="flex items-center justify-center gap-2 min-h-11 py-2 px-1 border transition-all text-[11px] font-bold font-mono" @click="toggleLock(lock.key, !lock.value)"
                       :aria-pressed="lock.value"
@@ -154,6 +158,10 @@
                   </button>
                 </div>
               </div>
+
+              <AdminPreparationPanel :admin-password="adminStore.adminPassword" />
+
+              <AdminYoutubeSettings :admin-password="adminStore.adminPassword" />
             </div>
 
             <!-- Right Column: Environment & Danger Zone (5 cols) -->
@@ -195,13 +203,9 @@
                 </div>
               </div>
 
-              <!-- Section: Credentials -->
-              <AdminPreparationPanel :admin-password="adminStore.adminPassword" />
-
-              <AdminYoutubeSettings :admin-password="adminStore.adminPassword" />
-
               <AdminMailSettings :admin-password="adminStore.adminPassword" />
 
+              <!-- Section: Credentials -->
               <div class="bg-surface-1 border border-medical-200 shadow-sm overflow-hidden chamfer-br">
                 <div class="p-3 bg-surface-strong text-white flex items-center gap-2">
                   <Database class="w-4 h-4" />
@@ -223,7 +227,7 @@
                       />
                       <button @click="updateCookie(plat.id, plat.value)" class="bg-surface-strong text-white px-3 min-h-10 font-bold text-[11px] hover:bg-accent hover:text-accent-fg transition-colors">更新</button>
                     </div>
-                    <p v-else class="m-0 font-mono text-[10px] leading-relaxed text-medical-500">{{ plat.note }}</p>
+                    <AdminPlatformAuth v-else :admin-password="adminStore.adminPassword" :platform="plat" />
                   </div>
                 </div>
               </div>
@@ -262,6 +266,7 @@ import ToggleSwitch from './ui/ToggleSwitch.vue';
 import AdminMailSettings from './AdminMailSettings.vue';
 import AdminYoutubeSettings from './AdminYoutubeSettings.vue';
 import AdminPreparationPanel from './AdminPreparationPanel.vue';
+import AdminPlatformAuth from './admin/AdminPlatformAuth.vue';
 import { useFocusTrap } from '../composables/useFocusTrap';
 import {
   Settings, X, Pause, Play, SkipForward, ListOrdered, Repeat1, Shuffle,
@@ -315,6 +320,15 @@ const updateInstantConfig = async (update, revert) => {
   }
 };
 
+const unlockAll = async () => {
+  try {
+    const data = await adminApi.setLock(adminStore.adminPassword, 'ALL', false);
+    success(data.message);
+  } catch (e) {
+    error('解锁失败');
+  }
+};
+
 const locks = computed(() => [
   { key: 'PAUSE', cnLabel: '锁定暂停', value: playerStore.isPauseLocked },
   { key: 'SKIP', cnLabel: '锁定切歌', value: playerStore.isSkipLocked },
@@ -324,8 +338,8 @@ const locks = computed(() => [
 const platforms = ref([
   { id: 'netease', name: '网易云音乐', tokenName: 'COOKIE', value: '', credential: true },
   { id: 'bilibili', name: '哔哩哔哩', tokenName: 'SESSDATA', value: '', credential: true },
-  { id: 'soundcloud', name: 'SoundCloud', tokenName: 'OAUTH', value: '', credential: false, note: '在搜索框的 SoundCloud 登录入口完成 OAuth 授权。' },
-  { id: 'ytmusic', name: 'YouTube Music', tokenName: 'COOKIES', value: '', credential: false, note: 'cookies 在本页「YouTube 取流」面板维护。' }
+  { id: 'soundcloud', name: 'SoundCloud', tokenName: 'OAUTH', value: '', credential: false },
+  { id: 'ytmusic', name: 'YouTube Music', tokenName: 'COOKIES', value: '', credential: false }
 ]);
 
 const execPlayerAction = async (action, optimistic, revert) => {
