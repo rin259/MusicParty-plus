@@ -113,6 +113,12 @@ public class AppProperties {
         private int downloadConcurrency = 4;
         /** 下载队列任务之间的冷却；过大会让批量导入整体变慢，过小可能触发上游限流。 */
         private long downloadCooldownMs = 1000;
+        /**
+         * YouTube 的 Netscape 格式 cookies 文件。YouTube 对机房 IP 常返回
+         * "Sign in to confirm you're not a bot"，缺少 cookies 时取流必然失败。
+         * 留空则读 data/yt-cookies.txt（容器内即 /app/data/yt-cookies.txt）。
+         */
+        private String cookiesFile = "";
     }
 
     @Data

@@ -82,8 +82,10 @@ app:
       download-timeout-seconds: ${YT_DLP_DOWNLOAD_TIMEOUT_SECONDS:180}
       # SoundCloud 是 HLS 分片流；4 路并发单曲 ~8s 且批量稳定（8 路虽更快但会被 CDN 限流）
       download-concurrency: ${YT_DLP_DOWNLOAD_CONCURRENCY:4}
-      # yt-dlp 源（SoundCloud / YTMusic）下载任务之间的冷却（毫秒）；直链源固定 3s
+      # yt-dlp 源（SoundCloud / YTMusic）下载任务之间的冷却（毫秒）
       download-cooldown-ms: ${YT_DLP_DOWNLOAD_COOLDOWN_MS:1000}
+      # YouTube 机器人校验需要登录 cookies；留空则使用 data/yt-cookies.txt
+      cookies-file: ${YT_DLP_COOKIES_FILE:}
     auth:
       rate-limit:
         enabled: ${AUTH_RATE_LIMIT_ENABLED:true}

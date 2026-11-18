@@ -30,6 +30,22 @@ class YtDlpResolverTest {
     }
 
     @Test
+    void passesConfiguredCookiesOnlyToYouTubeRequests() throws Exception {
+        Path args = temporaryDirectory.resolve("args.txt");
+        Path executable = writeExecutable("#!/bin/sh\nprintf '%s\\n' \"$@\" > " + args
+                + "\nprintf '%s\\n' '{\"entries\":[]}'\n");
+        Path cookies = temporaryDirectory.resolve("yt-cookies.txt");
+        Files.writeString(cookies, "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\ttest\n");
+
+        YtDlpResolver resolver = newResolver(executable, 5, cookies);
+        resolver.searchYoutubeMusic("test", 1).block(Duration.ofSeconds(4));
+        assertThat(Files.readString(args)).contains("--cookies").contains(cookies.toString());
+
+        resolver.searchSoundCloud("test", 1).block(Duration.ofSeconds(4));
+        assertThat(Files.readString(args)).doesNotContain("--cookies");
+    }
+
+    @Test
     void terminatesAStalledResolverWithinTheConfiguredTimeout() throws Exception {
         Path executable = writeExecutable("#!/bin/sh\nexec sleep 5\n");
         YtDlpResolver resolver = newResolver(executable, 1);
@@ -93,10 +109,15 @@ class YtDlpResolverTest {
     }
 
     private YtDlpResolver newResolver(Path executable, long timeoutSeconds) {
+        return newResolver(executable, timeoutSeconds, null);
+    }
+
+    private YtDlpResolver newResolver(Path executable, long timeoutSeconds, Path cookiesFile) {
         AppProperties properties = new AppProperties();
         properties.getYtDlp().setPath(executable.toString());
         properties.getYtDlp().setTimeoutSeconds(timeoutSeconds);
         properties.getYtDlp().setDownloadTimeoutSeconds(10);
+        if (cookiesFile != null) properties.getYtDlp().setCookiesFile(cookiesFile.toString());
         return new YtDlpResolver(properties, new ObjectMapper());
     }
 

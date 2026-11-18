@@ -20,6 +20,66 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PreparationWindowTest {
     @TempDir Path directory;
 
+    @SuppressWarnings("unchecked")
+    private static java.util.List<String> ids(org.mockito.ArgumentCaptor<Collection> window) {
+        return ((Collection<LocalCacheService.PreparationRequest>) window.getValue()).stream()
+                .map(LocalCacheService.PreparationRequest::id).toList();
+    }
+
+    @Test void readyEntriesNoLongerBlockAdmissionOfALaterImport() {
+        var props = new AppProperties(); props.setNetease(new AppProperties.NeteaseApiConfig());
+        props.setBilibili(new AppProperties.BilibiliApiConfig()); props.setYtmusic(new AppProperties.YtDlpSourceConfig());
+        props.getPreparation().setWindowSize(4);
+        var queue = new MusicQueueManager(props);
+        var users = mock(UserService.class);
+        var alice = new UserSummary("alice", "s", "Alice", false);
+        when(users.getOnlineUserSummaries()).thenReturn(List.of(alice));
+        var cache = mock(LocalCacheService.class);
+        var netease = mock(IMusicApiService.class); when(netease.getPlatformName()).thenReturn("netease");
+        var ytmusic = mock(IMusicApiService.class); when(ytmusic.getPlatformName()).thenReturn("ytmusic");
+        var player = new MusicPlayerService(List.of(netease, ytmusic), users, cache, mock(LiveStreamService.class), queue,
+                mock(ApplicationEventPublisher.class), props, "room");
+        try {
+            for (int i = 0; i < 6; i++) {
+                String id = "ready" + i;
+                queue.add(new Music(id, "done", List.of("artist"), 1000, "netease", ""), alice, QueueItemStatus.READY);
+                when(cache.getStatus("netease_" + id)).thenReturn(CacheStatus.COMPLETED);
+            }
+            queue.add(new Music("yt1", "new import", List.of("artist"), 1000, "ytmusic", ""), alice, QueueItemStatus.PENDING);
+            player.flushQueueUpdate();
+            var window = org.mockito.ArgumentCaptor.forClass(Collection.class);
+            verify(cache).updatePreparationWindow(eq("room"), window.capture());
+            assertThat(ids(window)).containsExactly("ytmusic_yt1");
+        } finally { player.shutdown(); }
+    }
+
+    @Test void finishedSongsOfOneUserDoNotExhaustThatUsersSlots() {
+        var props = new AppProperties(); props.setNetease(new AppProperties.NeteaseApiConfig());
+        props.setBilibili(new AppProperties.BilibiliApiConfig()); props.setYtmusic(new AppProperties.YtDlpSourceConfig());
+        var queue = new MusicQueueManager(props);
+        var users = mock(UserService.class);
+        var alice = new UserSummary("alice", "s", "Alice", false);
+        when(users.getOnlineUserSummaries()).thenReturn(List.of(alice));
+        var cache = mock(LocalCacheService.class);
+        var netease = mock(IMusicApiService.class); when(netease.getPlatformName()).thenReturn("netease");
+        var ytmusic = mock(IMusicApiService.class); when(ytmusic.getPlatformName()).thenReturn("ytmusic");
+        var player = new MusicPlayerService(List.of(netease, ytmusic), users, cache, mock(LiveStreamService.class), queue,
+                mock(ApplicationEventPublisher.class), props, "room");
+        try {
+            for (int i = 0; i < 2; i++) {
+                String id = "played" + i;
+                queue.add(new Music(id, "done", List.of("artist"), 1000, "netease", ""), alice, QueueItemStatus.READY);
+                when(cache.getStatus("netease_" + id)).thenReturn(CacheStatus.COMPLETED);
+            }
+            queue.add(new Music("yt2", "first pending", List.of("artist"), 1000, "ytmusic", ""), alice, QueueItemStatus.PENDING);
+            queue.add(new Music("yt3", "second pending", List.of("artist"), 1000, "ytmusic", ""), alice, QueueItemStatus.PENDING);
+            player.flushQueueUpdate();
+            var window = org.mockito.ArgumentCaptor.forClass(Collection.class);
+            verify(cache).updatePreparationWindow(eq("room"), window.capture());
+            assertThat(ids(window)).containsExactly("ytmusic_yt2", "ytmusic_yt3");
+        } finally { player.shutdown(); }
+    }
+
     @Test void roomReclaimsCapacityOnTickEvenWithoutItsOwnDownloadEvent() {
         var props = new AppProperties(); props.setNetease(new AppProperties.NeteaseApiConfig());
         props.setBilibili(new AppProperties.BilibiliApiConfig());

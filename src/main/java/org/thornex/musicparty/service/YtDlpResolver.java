@@ -8,6 +8,7 @@ import org.thornex.musicparty.config.AppProperties;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -43,6 +44,7 @@ public class YtDlpResolver {
     private final long timeoutSeconds;
     private final long downloadTimeoutSeconds;
     private final int downloadConcurrency;
+    private final String cookiesFile;
     private final ObjectMapper objectMapper;
     private final java.util.concurrent.Semaphore metadataProcesses = new java.util.concurrent.Semaphore(2, true);
     private final java.util.concurrent.Semaphore downloadProcesses;
@@ -54,9 +56,24 @@ public class YtDlpResolver {
         this.timeoutSeconds = appProperties.getYtDlp().getTimeoutSeconds();
         this.downloadTimeoutSeconds = appProperties.getYtDlp().getDownloadTimeoutSeconds();
         this.downloadConcurrency = Math.clamp(appProperties.getYtDlp().getDownloadConcurrency(), 1, 64);
+        this.cookiesFile = appProperties.getYtDlp().getCookiesFile();
         this.objectMapper = objectMapper;
         this.downloadProcesses = new java.util.concurrent.Semaphore(
                 Math.max(1, appProperties.getPreparation().getYtDlpConcurrency()), true);
+    }
+
+    @jakarta.annotation.PostConstruct
+    void logConfiguration() {
+        if (!enabled) return;
+        Path cookies = youtubeCookiesFile();
+        String executableVersion;
+        try {
+            executableVersion = runCommand(List.of(executable, "--version"), "version", 10);
+        } catch (Exception error) {
+            executableVersion = "unavailable: " + error.getMessage();
+        }
+        log.info("yt-dlp {} | youtube cookies: {}", executableVersion,
+                cookies == null ? "none (YouTube may reject anonymous streaming)" : cookies);
     }
 
     public Mono<String> resolveBilibiliAudioUrl(String bvid, String sessdata) {
@@ -245,16 +262,49 @@ public class YtDlpResolver {
         requireEnabled();
         List<String> args = new ArrayList<>(List.of("--flat-playlist", "--dump-single-json", query));
         args.addAll(Arrays.asList(extraArgs));
-        return Mono.fromCallable(() -> parseSearchResult(runJsonCommand(args), platform))
+        List<String> command = withYoutubeCookies(args, query);
+        return Mono.fromCallable(() -> parseSearchResult(runJsonCommand(command), platform))
                 .subscribeOn(Schedulers.boundedElastic())
                 .timeout(Duration.ofSeconds(timeoutSeconds + 5));
     }
 
     private Mono<TrackMetadata> resolveMetadata(String sourceUrl, String platform) {
         requireEnabled();
-        return Mono.fromCallable(() -> parseMetadata(runJsonCommand(List.of("--skip-download", "--dump-single-json", sourceUrl)), platform))
+        List<String> command = withYoutubeCookies(
+                List.of("--skip-download", "--dump-single-json", sourceUrl), sourceUrl);
+        return Mono.fromCallable(() -> parseMetadata(runJsonCommand(command), platform))
                 .subscribeOn(Schedulers.boundedElastic())
                 .timeout(Duration.ofSeconds(timeoutSeconds + 5));
+    }
+
+    /**
+     * YouTube rejects anonymous streaming requests from many datacenter IPs
+     * ("Sign in to confirm you're not a bot"). A Netscape cookie file exported
+     * from a signed-in browser is the only reliable fix; it is optional so
+     * deployments without YouTube never need it.
+     */
+    private List<String> withYoutubeCookies(List<String> command, String target) {
+        if (!isYoutubeTarget(target)) return command;
+        Path cookies = youtubeCookiesFile();
+        if (cookies == null) return command;
+        List<String> prepared = new ArrayList<>(command);
+        prepared.add(1, cookies.toString());
+        prepared.add(1, "--cookies");
+        return prepared;
+    }
+
+    private static boolean isYoutubeTarget(String target) {
+        return target != null && (target.startsWith("ytsearch") || target.contains("youtube.com") || target.contains("youtu.be"));
+    }
+
+    private Path youtubeCookiesFile() {
+        Path file = cookiesFile == null || cookiesFile.isBlank()
+                ? Path.of("data", "yt-cookies.txt") : Path.of(cookiesFile);
+        try {
+            return Files.isReadable(file) && Files.size(file) > 0 ? file : null;
+        } catch (IOException error) {
+            return null;
+        }
     }
 
     private void requireEnabled() {
@@ -341,7 +391,7 @@ public class YtDlpResolver {
                 sourceUrl
         );
 
-        String output = runCommand(command, "audio download", downloadTimeoutSeconds);
+        String output = runCommand(withYoutubeCookies(command, sourceUrl), "audio download", downloadTimeoutSeconds);
         String prefix = "__MUSIC_PARTY_FILE__:";
         String outputFile = output.lines()
                 .map(String::trim)

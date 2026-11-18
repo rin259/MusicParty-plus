@@ -1120,8 +1120,11 @@ public class MusicPlayerService {
             broadcastQueueUpdate();
             boolean failed = localCacheService.getStatus(musicId) == CacheStatus.FAILED;
             if (failed) {
+                String reason = localCacheService.failureReason(musicId);
+                String detail = reason == null || reason.isBlank()
+                        ? queueItem.get().music().name() : queueItem.get().music().name() + "（" + reason + "）";
                 eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.ERROR,
-                        PlayerAction.ERROR_LOAD, "SYSTEM", queueItem.get().music().name()));
+                        PlayerAction.ERROR_LOAD, "SYSTEM", detail));
             }
             PlayableMusic current = currentMusic.get();
             if (failed && current != null && cacheIdFor(current).equals(musicId)) {
@@ -1366,12 +1369,14 @@ public class MusicPlayerService {
             int perUser = Math.max(1, appProperties.getPreparation().getPerUserWindow());
             boolean onlyActiveUsers = playMode.get() == PlayMode.SHUFFLE && !allowOfflineShuffle.get();
             Set<String> activeUsers = onlyActiveUsers ? userService.getRecentlyActiveUserTokens() : Set.of();
-            // Queue is already round-robin by user. Bound work, including READY
-            // entries, so a full cache window doesn't start downloading the entire tail.
+            // Queue is already round-robin by user. Only work that still needs
+            // preparation may consume the window: READY entries would otherwise
+            // pin the whole window and a later import could wait forever.
             for (MusicQueueItem item : queueManager.getQueueSnapshot()) {
                 if (requests.size() >= limit) break;
                 if (!usesLocalCache(item.music().platform())) continue;
-                if (localCacheService.getStatus(cacheIdFor(item.music())) == CacheStatus.FAILED) continue;
+                CacheStatus status = localCacheService.getStatus(cacheIdFor(item.music()));
+                if (status == CacheStatus.COMPLETED || status == CacheStatus.FAILED) continue;
                 if (onlyActiveUsers && !activeUsers.contains(item.enqueuedBy().token())) continue;
                 String user = item.enqueuedBy().token();
                 int n = userCounts.getOrDefault(user, 0);

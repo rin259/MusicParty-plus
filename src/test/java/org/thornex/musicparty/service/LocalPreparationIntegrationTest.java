@@ -122,6 +122,15 @@ class LocalPreparationIntegrationTest {
         }
     }
 
+    @Test void youtubeBotCheckIsPermanentAndIsNotRetried() {
+        var cache = new LocalCacheService(WebClient.create(), event -> {}, new AppProperties(), null, directory);
+        try {
+            assertThat(cache.isRetryableDownloadFailure(new IllegalStateException(
+                    "yt-dlp failed during audio download: ERROR: [youtube] x: Sign in to confirm you're not a bot."))).isFalse();
+            assertThat(cache.isRetryableDownloadFailure(new java.util.concurrent.TimeoutException("transfer stalled"))).isTrue();
+        } finally { cache.cleanup(); }
+    }
+
     @Test void sameSourceSongsRunConcurrentlyInsteadOfOneAtATime() throws Exception {
         HttpServer server = HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
         AtomicInteger active = new AtomicInteger(), maxActive = new AtomicInteger();

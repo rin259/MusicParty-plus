@@ -145,7 +145,8 @@ public class LocalCacheService {
         }
     }
 
-    public record TaskTiming(String id, CacheStatus status, String phase, long queuedMs, long resolveMs, long transferMs) {}
+    public record TaskTiming(String id, CacheStatus status, String phase, long queuedMs, long resolveMs,
+                             long transferMs, String lastError) {}
     public record PreparationStats(int waiting, int active, long completed, long failed,
                                    long cacheHits, long merged, long totalWaitMs, long totalWorkMs,
                                    Map<String, Integer> activeBySource, List<TaskTiming> recentTasks,
@@ -158,7 +159,7 @@ public class LocalCacheService {
                 cacheHits.get(), mergedTasks.get(), totalWaitMillis.get(), totalWorkMillis.get(), counts.activeBySource(),
                 cacheIndex.values().stream().sorted(Comparator.comparingLong(CacheEntry::getLastAccessTime).reversed())
                         .limit(64).map(e -> new TaskTiming(e.getId(), e.getStatus(), e.getPhase(),
-                                e.getQueuedMillis(), e.getResolveMillis(), e.getTransferMillis())).toList(),
+                                e.getQueuedMillis(), e.getResolveMillis(), e.getTransferMillis(), e.getLastError())).toList(),
                 counts.waiting() - counts.retryBackoff() - counts.sourceCooldown(), counts.retryBackoff(), counts.sourceCooldown(),
                 admissionDeferrals.get());
     }
@@ -182,6 +183,7 @@ public class LocalCacheService {
         private volatile long transferMillis;
         private volatile int retryCount;
         private volatile long startedAtNanos;
+        private volatile String lastError;
     }
 
     @PostConstruct
@@ -315,6 +317,7 @@ public class LocalCacheService {
                 }
                 entry.setPhase("failed");
                 entry.setStatus(CacheStatus.FAILED);
+                entry.setLastError(briefFailure(failure));
                 failedTasks.incrementAndGet();
             }
             scheduler.complete(id, cooldown);
@@ -483,7 +486,44 @@ public class LocalCacheService {
         }
     }
 
-    private boolean isRetryableDownloadFailure(Throwable error) {
+    /** Short, user-facing reason for a terminal failure. */
+    private static String briefFailure(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            String message = cause.getMessage();
+            if (message == null) continue;
+            String text = message.toLowerCase(java.util.Locale.ROOT);
+            if (text.contains("sign in to confirm") || text.contains("cookies for the authentication")) {
+                return "YouTube 需要登录 cookies（data/yt-cookies.txt）";
+            }
+            if (text.contains("private video") || text.contains("video unavailable")) {
+                return "视频不可用或已被删除";
+            }
+            String single = message.replaceAll("\\s+", " ").trim();
+            if (!single.isEmpty()) return single.length() > 160 ? single.substring(0, 160) : single;
+        }
+        return null;
+    }
+
+    public String failureReason(String musicId) {
+        CacheEntry entry = cacheIndex.get(musicId);
+        return entry == null ? null : entry.getLastError();
+    }
+
+    /** Permanent upstream rejections must not burn two retries and a cool-down window. */
+    private static boolean isPermanentFailure(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            String message = cause.getMessage();
+            if (message == null) continue;
+            String text = message.toLowerCase(java.util.Locale.ROOT);
+            if (text.contains("sign in to confirm") || text.contains("cookies for the authentication")
+                    || text.contains("private video") || text.contains("video unavailable")
+                    || text.contains("drm protected")) return true;
+        }
+        return false;
+    }
+
+    boolean isRetryableDownloadFailure(Throwable error) {
+        if (isPermanentFailure(error)) return false;
         for (Throwable cause = error; cause != null; cause = cause.getCause()) {
             if (cause instanceof WebClientResponseException response) {
                 int status = response.getStatusCode().value();

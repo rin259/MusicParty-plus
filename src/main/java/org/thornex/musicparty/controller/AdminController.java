@@ -38,13 +38,13 @@ public class AdminController {
     }
 
     @GetMapping("/preparation")
-    public ResponseEntity<?> preparation(@RequestHeader("X-Admin-Password") String password) {
+    public ResponseEntity<?> preparation(@RequestHeader(value = "X-Admin-Password", required = false) String password) {
         if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         return ResponseEntity.ok(localCacheService.preparationStats());
     }
 
     private boolean isValid(String password) {
-        return adminPassword != null && adminPassword.equals(password);
+        return password != null && adminPassword != null && adminPassword.equals(password);
     }
 
     /** 管理端操作默认作用于主房间；分房管理属于后续阶段。 */
