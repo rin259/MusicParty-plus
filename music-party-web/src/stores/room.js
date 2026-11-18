@@ -19,6 +19,8 @@ const roomError = (error, fallback) => {
     return error?.message || fallback;
 };
 
+const passwordError = (code, room) => Object.assign(new Error(code), { code, room });
+
 export const useRoomStore = defineStore('room', () => {
     const deviceId = computed(() => localStorage.getItem(STORAGE_KEYS.TOKEN) || '');
 
@@ -75,12 +77,6 @@ export const useRoomStore = defineStore('room', () => {
         await loadRooms();
     };
 
-    const fetchInfo = async (id) => {
-        const data = await roomsApi.info(id);
-        info.value = data;
-        return data;
-    };
-
     const createRoom = async (name, password, visibility = 'public') => {
         const data = await roomsApi.create({ name, password: password || null, visibility });
         await loadRooms();
@@ -93,40 +89,34 @@ export const useRoomStore = defineStore('room', () => {
         return data;
     };
 
-    const verify = async (id, password) => {
-        try {
-            await roomsApi.verify(id, password);
-            return true;
-        } catch {
-            return false;
-        }
-    };
-
-    /** 进入房间：有密码则先校验；成功后记录 roomId（真正连接由 App 触发）。 */
-    const enter = async (id, password) => {
+    /** 保留当前房间，直到新房间的信息和密码都已校验。 */
+    const enter = async (id, password, signal) => {
         error.value = '';
         let room;
+        const candidate = password ?? passwordFor(id);
         try {
-            room = await fetchInfo(id);
+            room = await roomsApi.info(id, signal);
+            if (room.hasPassword) {
+                if (!candidate) throw passwordError('PASSWORD_REQUIRED', room);
+                try {
+                    await roomsApi.verify(id, candidate, signal);
+                } catch (cause) {
+                    if (cause?.response?.status !== 403) throw cause;
+                    signal?.throwIfAborted();
+                    forgetPassword(id);
+                    throw passwordError('INVALID_PASSWORD', room);
+                }
+            }
         } catch (e) {
-            error.value = e?.response?.status === 404 ? '房间不存在或已关闭' : roomError(e, '无法读取房间信息');
+            signal?.throwIfAborted();
+            if (!e?.room) {
+                error.value = e?.response?.status === 404 ? '房间不存在或已关闭' : roomError(e, '无法进入房间');
+            }
             throw e;
         }
 
-        if (room?.hasPassword) {
-            const candidate = password !== undefined && password !== null ? password : passwordFor(id);
-            if (!candidate) {
-                const need = new Error('PASSWORD_REQUIRED');
-                need.code = 'PASSWORD_REQUIRED';
-                throw need;
-            }
-            const ok = await verify(id, candidate);
-            if (!ok) {
-                forgetPassword(id);
-                const invalid = new Error('INVALID_PASSWORD');
-                invalid.code = 'INVALID_PASSWORD';
-                throw invalid;
-            }
+        signal?.throwIfAborted();
+        if (room.hasPassword) {
             rememberPassword(id, candidate);
         } else {
             forgetPassword(id);
@@ -171,6 +161,6 @@ export const useRoomStore = defineStore('room', () => {
         deviceId, rooms, myRooms, publicRooms, roomId, info, entered, loading, error,
         currentName, hasPassword,
         passwordFor, rememberPassword, forgetPassword,
-        loadRooms, fetchInfo, createRoom, updateRoom, verify, enter, leave, reject, clearError, deleteRoom
+        loadRooms, createRoom, updateRoom, enter, leave, reject, clearError, deleteRoom
     };
 });

@@ -24,7 +24,7 @@ class SocketService {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const brokerURL = `${protocol}//${window.location.host}/ws`;
 
-        this.client = new Client({
+        const client = new Client({
             brokerURL,
             connectHeaders: authHeaders,
             heartbeatIncoming: 10000,
@@ -32,11 +32,13 @@ class SocketService {
             reconnectDelay: 2000,
 
             onConnect: (frame) => {
+                if (this.client !== client) return;
                 this.connected = true;
 
                 // 1. 注册所有订阅
                 Object.entries(subscriptions).forEach(([topic, handler]) => {
-                    this.client.subscribe(topic, (message) => {
+                    client.subscribe(topic, (message) => {
+                        if (this.client !== client) return;
                         const body = JSON.parse(message.body);
                         handler(body);
                     });
@@ -48,6 +50,7 @@ class SocketService {
 
             // 监听非正常关闭 (如网络中断、服务器重启)
             onWebSocketClose: () => {
+                if (this.client !== client) return;
                 console.warn('WebSocket connection closed.');
                 this.connected = false;
                 // 触发断开回调，让 Store 感知状态变化
@@ -55,17 +58,20 @@ class SocketService {
             },
 
             onDisconnect: () => {
+                if (this.client !== client) return;
                 this.connected = false;
                 if (callbacks.onDisconnect) callbacks.onDisconnect();
             },
 
             onStompError: (frame) => {
+                if (this.client !== client) return;
                 console.error('STOMP Error:', frame.body);
                 if (callbacks.onStompError) callbacks.onStompError(frame);
             }
         });
 
-        this.client.activate();
+        this.client = client;
+        client.activate();
     }
 
     /**
@@ -110,12 +116,12 @@ class SocketService {
      * 断开连接
      */
     disconnect() {
-        if (this.client) {
-            this.client.deactivate();
-            this.client = null;
-            this.connected = false;
-            this.reconnectPromise = null;
-        }
+        const client = this.client;
+        if (!client) return;
+        this.client = null;
+        this.connected = false;
+        this.reconnectPromise = null;
+        client.deactivate({ force: true });
     }
 }
 
