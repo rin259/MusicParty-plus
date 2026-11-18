@@ -38,12 +38,13 @@
       </button>
 
       <!-- 主界面 -->
-      <MainLayout v-if="hasStarted" @search="handleSearchClick">
+      <MainLayout v-if="hasStarted" @search="handleSearchClick" @switch-room="showRoomSwitcher = true">
         <CenterConsole />
         <template #player>
           <PlayerControl />
         </template>
       </MainLayout>
+      <RoomSwitchDialog v-if="showRoomSwitcher" @close="showRoomSwitcher = false" />
 
       <!-- 全局弹窗 -->
       <SearchModal :isOpen="showSearch" @close="showSearch = false" />
@@ -74,6 +75,7 @@ import CenterConsole from './components/CenterConsole.vue';
 import PlayerControl from './components/PlayerControl.vue';
 import AudioEngine from './components/AudioEngine.vue';
 import RoomLanding from './components/RoomLanding.vue';
+import RoomSwitchDialog from './components/RoomSwitchDialog.vue';
 import SearchModal from './components/SearchModal.vue';
 import NamePromptModal from './components/NamePromptModal.vue';
 import ChatOverlay from './components/ChatOverlay.vue';
@@ -93,6 +95,7 @@ const uiStore = useUiStore();
 const adminStore = useAdminStore();
 const hasStarted = ref(false);
 const showSearch = ref(false);
+const showRoomSwitcher = ref(false);
 const chatStore = useChatStore();
 const roomStore = useRoomStore();
 const appearanceStore = useAppearanceStore();
@@ -149,6 +152,7 @@ onUnmounted(() => {
 useEventListener(window, 'keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (appearanceStore.isOpen) return; // native appearance dialog owns Escape, not the room below it
+  if (showRoomSwitcher.value) return; // the native switch dialog owns Escape, not the room below it
   if (adminStore.showAuthModal) { adminStore.showAuthModal = false; return; }
   if (userStore.showNameModal) { userStore.showNameModal = false; return; }
   if (adminStore.showDashboard) { adminStore.showDashboard = false; return; }
@@ -160,28 +164,28 @@ useEventListener(window, 'keydown', (e) => {
 useEventListener(window, 'keydown', (e) => {
   if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'k') return;
   if (appearanceStore.isOpen) return;
-  if (!hasStarted.value || adminStore.showAuthModal || adminStore.showDashboard || userStore.showNameModal) return;
+  if (!hasStarted.value || showRoomSwitcher.value || adminStore.showAuthModal || adminStore.showDashboard || userStore.showNameModal) return;
   e.preventDefault();
   showSearch.value = true;
 });
 
-// 进入/离开房间只以 roomStore.entered 为准：
-// landing 组件在 entered 变 true 的同一 tick 会被卸载，从子组件 emit 出来的事件可能丢失。
-watch(() => roomStore.entered, async (entered) => {
-  // landing 是可滚动的长页，房间是固定的单屏：切换时把文档滚动归零，
-  // 否则从房间回到 landing 会停在上一次的滚动位置（看起来像页面自己跳了）。
-  await nextTick();
-  window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-  if (entered) {
-    hasStarted.value = true;
-    player.connect();
-  } else {
-    hasStarted.value = false;
+// 页内切换房间时 entered 仍为 true，连接随已确认的房间 ID 切换。
+watch(() => roomStore.entered ? roomStore.roomId : null, async (id, previousId) => {
+  if (previousId) {
     player.disconnect();
-    // 房间级状态必须一起清掉，不能让上一个房间的聊天/在线列表带到落地页
-    chatStore.messages = [];
-    chatStore.unreadCount = 0;
+    chatStore.setHistory([]);
+    chatStore.isLoadingMore = false;
     userStore.setOnlineUsers([]);
+    showSearch.value = false;
+  }
+
+  hasStarted.value = !!id;
+  if (id) player.connect();
+  else showRoomSwitcher.value = false;
+
+  if (!id || !previousId) {
+    await nextTick();
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }
 });
 
