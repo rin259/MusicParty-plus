@@ -1,10 +1,15 @@
 <template>
-  <div class="group flex items-stretch border border-medical-200 bg-surface-1 transition-all hover:border-accent hover:shadow-sm">
+  <div
+      class="group flex items-stretch border bg-surface-1 transition-all"
+      :class="current ? 'border-accent/50' : 'border-medical-200 hover:border-accent hover:shadow-sm'"
+  >
     <button
         type="button"
         @click="$emit('select', room)"
-        :disabled="disabled"
-        class="flex min-w-0 flex-1 items-stretch gap-3 p-3 text-left transition-colors hover:bg-medical-50 disabled:opacity-60"
+        :disabled="disabled || current"
+        :aria-current="current ? 'true' : undefined"
+        class="flex min-w-0 flex-1 items-stretch gap-3 p-3 text-left transition-colors"
+        :class="current ? 'bg-medical-50' : 'hover:bg-medical-50 disabled:opacity-60'"
     >
       <span class="w-1 flex-shrink-0" :class="room.mainRoom ? 'bg-accent' : 'bg-medical-200'"></span>
       <span class="min-w-0 flex-1">
@@ -19,11 +24,12 @@
           CODE {{ room.id }} · {{ room.onlineCount }} ONLINE
         </span>
       </span>
-      <ChevronRight class="h-4 w-4 flex-shrink-0 self-center text-medical-400 transition-colors group-hover:text-accent-text" />
+      <span v-if="current" class="shrink-0 self-center text-[10px] text-accent-text">当前房间</span>
+      <ChevronRight v-else class="h-4 w-4 flex-shrink-0 self-center text-medical-400 transition-colors group-hover:text-accent-text" aria-hidden="true" />
     </button>
 
     <button
-        v-if="room.owner && !room.mainRoom"
+        v-if="manage && room.owner && !room.mainRoom"
         type="button"
         @click.stop="$emit('edit', room)"
         :disabled="disabled"
@@ -35,7 +41,7 @@
     </button>
 
     <button
-        v-if="room.owner && !room.mainRoom"
+        v-if="manage && room.owner && !room.mainRoom"
         type="button"
         @click.stop="$emit('delete', room)"
         :disabled="disabled"
@@ -53,7 +59,9 @@ import { ChevronRight, Lock, Pencil, Trash2 } from 'lucide-vue-next';
 
 defineProps({
   room: { type: Object, required: true },
-  disabled: { type: Boolean, default: false }
+  disabled: Boolean,
+  current: Boolean,
+  manage: Boolean
 });
 defineEmits(['select', 'edit', 'delete']);
 </script>

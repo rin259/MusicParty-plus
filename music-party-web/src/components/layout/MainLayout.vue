@@ -15,7 +15,7 @@ import { useToast } from '../../composables/useToast';
 import { useAdminStore } from '../../stores/admin';
 import { roomMailApi } from '../../api/rooms';
 
-const emit = defineEmits(['search']);
+const emit = defineEmits(['search', 'switch-room']);
 const userStore = useUserStore();
 const uiStore = useUiStore();
 const playerStore = usePlayerStore();
@@ -41,9 +41,11 @@ watch([() => roomStore.roomId, () => adminStore.showDashboard], async ([id, dash
 }, { immediate: true });
 
 const switchRoom = () => {
-  mobileMenuOpen.value = false;
-  // App 监听 roomStore.entered，会自动断开连接并清空房间状态
-  roomStore.leave();
+  if (mobileMenuOpen.value) {
+    mobileMenuOpen.value = false;
+    mobileMenuButton.value?.focus();
+  }
+  emit('switch-room');
 };
 
 const inviteLink = computed(() => `${window.location.origin}${window.location.pathname}?room=${roomStore.roomId}`);
@@ -81,6 +83,7 @@ onMounted(() => {
 const mobileQueueOpen = ref(false);
 const mobileUserOpen = ref(false);
 const mobileMenuOpen = ref(false);
+const mobileMenuButton = ref(null);
 
 const toggleMobileQueue = () => {
   mobileQueueOpen.value = !mobileQueueOpen.value;
@@ -128,6 +131,7 @@ const handleSearchClick = () => {
             {{ roomStore.currentName }}
           </span>
           <button
+              aria-haspopup="dialog"
               type="button"
               @click="switchRoom"
               class="inline-flex min-h-11 items-center font-mono text-[9px] tracking-[0.12em] px-1.5 border border-medical-200 bg-medical-50 text-medical-500 hover:border-accent hover:text-accent-text transition-colors"
@@ -195,6 +199,7 @@ const handleSearchClick = () => {
           <Search class="w-5 h-5" />
         </button>
         <button
+            ref="mobileMenuButton"
             @click="toggleMobileMenu"
             class="flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 text-medical-600 transition-colors rounded-sm"
             :class="mobileMenuOpen ? 'bg-medical-200 text-medical-900 border-medical-300' : 'hover:bg-medical-100'"
@@ -226,6 +231,7 @@ const handleSearchClick = () => {
         <button
             @click="switchRoom"
             class="w-full min-h-11 flex items-center justify-between gap-2 p-3 border border-medical-200 bg-medical-50 text-medical-700"
+            aria-haspopup="dialog"
         >
           <span class="flex items-center gap-2 text-sm font-bold"><LogOut class="w-4 h-4" /> 切换房间</span>
           <span class="font-mono text-[10px] text-medical-500 truncate max-w-[7rem]">{{ roomStore.currentName }}</span>
@@ -377,6 +383,7 @@ const handleSearchClick = () => {
             type="button"
             @click="switchRoom"
             class="w-full border border-medical-200 text-medical-600 font-bold py-3 flex items-center justify-center gap-2 transition-all hover:border-accent hover:text-accent-text active:scale-[0.98]"
+            aria-haspopup="dialog"
         >
           <LogOut class="w-4 h-4" />
           <span class="text-xs tracking-widest uppercase">切换房间 · {{ roomStore.currentName }}</span>
