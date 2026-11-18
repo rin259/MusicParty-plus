@@ -33,6 +33,15 @@ export const adminApi = {
         timeout: 35000
     }),
 
+    youtubeHealth: (adminPwd) => client.get('/api/admin/config/youtube/health', {
+        headers: { 'X-Admin-Password': adminPwd }
+    }),
+
+    probeYoutubeHealth: (adminPwd) => client.post('/api/admin/config/youtube/health', {}, {
+        headers: { 'X-Admin-Password': adminPwd },
+        timeout: 40000
+    }),
+
     // 验证密码
     verify: (password) => client.post('/api/admin/verify', { password }),
 

@@ -33,6 +33,8 @@ function filterCookies(text) {
   }
   return kept.join('\n');
 }
+const health = ref(null);
+const checking = ref(false);
 const cookieCount = computed(() => filterCookies(cookies.value).split('\n').filter((line) => line && !line.startsWith('#')).length);
 const updatedLabel = computed(() => {
   if (!status.value?.updatedAt) return '';
@@ -48,6 +50,33 @@ async function load() {
     error.value = '无法读取 YouTube 设置，请重试。';
   } finally {
     loading.value = false;
+  }
+  loadHealth();
+}
+
+async function loadHealth() {
+  try {
+    health.value = await adminApi.youtubeHealth(props.adminPassword);
+  } catch {
+    health.value = null;
+  }
+}
+
+const healthLabel = computed(() => {
+  if (!health.value?.checked) return '';
+  const when = new Date(health.value.checkedAt).toLocaleString('zh-CN', { hour12: false });
+  return `${health.value.healthy ? '会话正常' : '会话异常'} · ${when}`;
+});
+
+async function recheckHealth() {
+  if (checking.value) return;
+  checking.value = true;
+  try {
+    health.value = await adminApi.probeYoutubeHealth(props.adminPassword);
+  } catch {
+    error.value = '健康检查失败，请稍后重试。';
+  } finally {
+    checking.value = false;
   }
 }
 
@@ -135,6 +164,19 @@ onMounted(load);
         <CircleDot class="h-3 w-3" aria-hidden="true" />
         {{ status.sessionReady ? '登录态有效' : '无登录态' }} · {{ updatedLabel }}
       </p>
+      <div v-if="status.configured && health?.checked" class="flex flex-wrap items-center justify-between gap-2 border border-medical-200 bg-medical-50 px-3 py-2">
+        <span class="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.12em]"
+            :class="health.healthy ? 'text-success' : 'text-danger'">
+          <CircleDot class="h-3 w-3" aria-hidden="true" />
+          {{ healthLabel }}
+        </span>
+        <button type="button" :disabled="checking"
+            class="min-h-9 border border-medical-200 bg-surface-1 px-2 font-mono text-[10px] text-medical-600 hover:border-accent hover:text-accent-text disabled:opacity-50"
+            @click="recheckHealth">
+          {{ checking ? '检测中…' : '立即检测' }}
+        </button>
+      </div>
+
       <p v-if="status.configured && !status.sessionReady" role="alert"
           class="border border-danger/40 bg-danger-bg px-3 py-2 text-xs leading-relaxed text-danger">
         这份 cookies 缺少登录必需的 HttpOnly 字段：{{ (status.missing || []).join('、') }}。

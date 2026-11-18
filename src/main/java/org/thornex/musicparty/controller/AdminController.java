@@ -33,10 +33,12 @@ public class AdminController {
     private final org.thornex.musicparty.service.LocalCacheService localCacheService;
     private final RoomMailSettings roomMailSettings;
     private final YoutubeCookiesAdmin youtubeCookies;
+    private final org.thornex.musicparty.service.YoutubeCookieHealth youtubeCookieHealth;
     private final YtDlpResolver ytDlpResolver;
 
     public AdminController(RoomRegistry roomRegistry, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService, RuntimeConfigService runtimeConfigService, org.thornex.musicparty.service.LocalCacheService localCacheService,
-                        RoomMailSettings roomMailSettings, YoutubeCookiesAdmin youtubeCookies, YtDlpResolver ytDlpResolver) {
+                        RoomMailSettings roomMailSettings, YoutubeCookiesAdmin youtubeCookies, YtDlpResolver ytDlpResolver,
+                        org.thornex.musicparty.service.YoutubeCookieHealth youtubeCookieHealth) {
         this.roomRegistry = roomRegistry;
         this.adminPassword = appProperties.getAdminPassword();
         this.authController = authController;
@@ -47,6 +49,7 @@ public class AdminController {
         this.localCacheService = localCacheService;
         this.roomMailSettings = roomMailSettings;
         this.youtubeCookies = youtubeCookies;
+        this.youtubeCookieHealth = youtubeCookieHealth;
         this.ytDlpResolver = ytDlpResolver;
     }
 
@@ -103,6 +106,19 @@ public class AdminController {
             return ResponseEntity.ok(new YoutubeCookiesAdmin.TestResult(false,
                     botCheck ? "YouTube 仍要求登录校验：cookies 可能已在浏览器里被轮换失效，请重新导出" : "取流失败：" + message));
         }
+    }
+
+    @GetMapping("/config/youtube/health")
+    public ResponseEntity<?> youtubeCookieHealth(@RequestHeader(value = "X-Admin-Password", required = false) String password) {
+        if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(youtubeCookieHealth.status());
+    }
+
+    @PostMapping("/config/youtube/health")
+    public ResponseEntity<?> probeYoutubeCookieHealth(@RequestHeader(value = "X-Admin-Password", required = false) String password) {
+        if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        youtubeCookieHealth.probe();
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(youtubeCookieHealth.status());
     }
 
     @GetMapping("/preparation")

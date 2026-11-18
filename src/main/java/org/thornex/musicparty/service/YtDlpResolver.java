@@ -266,17 +266,31 @@ public class YtDlpResolver {
         requireEnabled();
         List<String> args = new ArrayList<>(List.of("--flat-playlist", "--dump-single-json", query));
         args.addAll(Arrays.asList(extraArgs));
-        List<String> command = withYoutubeCookies(args, query);
-        return Mono.fromCallable(() -> parseSearchResult(runJsonCommand(command), platform))
+        return Mono.fromCallable(() -> {
+                    YoutubeCookieJar.Run jar = openCookieJar(query);
+                    try {
+                        List<String> command = withYoutubeCookies(args, query, jar);
+                        return parseSearchResult(runJsonCommand(command), platform);
+                    } finally {
+                        YoutubeCookieJar.release(jar);
+                    }
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .timeout(Duration.ofSeconds(timeoutSeconds + 5));
     }
 
     private Mono<TrackMetadata> resolveMetadata(String sourceUrl, String platform) {
         requireEnabled();
-        List<String> command = withYoutubeCookies(
-                List.of("--skip-download", "--dump-single-json", sourceUrl), sourceUrl);
-        return Mono.fromCallable(() -> parseMetadata(runJsonCommand(command), platform))
+        return Mono.fromCallable(() -> {
+                    YoutubeCookieJar.Run jar = openCookieJar(sourceUrl);
+                    try {
+                        List<String> command = withYoutubeCookies(
+                                List.of("--skip-download", "--dump-single-json", sourceUrl), sourceUrl, jar);
+                        return parseMetadata(runJsonCommand(command), platform);
+                    } finally {
+                        YoutubeCookieJar.release(jar);
+                    }
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .timeout(Duration.ofSeconds(timeoutSeconds + 5));
     }
@@ -287,10 +301,10 @@ public class YtDlpResolver {
      * from a signed-in browser is the only reliable fix; it is optional so
      * deployments without YouTube never need it.
      */
-    private List<String> withYoutubeCookies(List<String> command, String target) {
+    private List<String> withYoutubeCookies(List<String> command, String target, YoutubeCookieJar.Run jar) {
         if (!isYoutubeTarget(target)) return command;
         List<String> prepared = new ArrayList<>(command);
-        Path cookies = youtubeCookiesFile();
+        Path cookies = jar != null ? jar.file() : youtubeCookiesFile();
         if (cookies != null) {
             prepared.add(1, cookies.toString());
             prepared.add(1, "--cookies");
@@ -311,14 +325,30 @@ public class YtDlpResolver {
         return YoutubeCookieFile.usable(file) ? file : null;
     }
 
+    /**
+     * Per-run cookie jar so concurrent yt-dlp processes cannot clobber each
+     * other's rotated session tokens. Null when the target is not YouTube.
+     */
+    private YoutubeCookieJar.Run openCookieJar(String target) {
+        if (!isYoutubeTarget(target)) return null;
+        return YoutubeCookieJar.open(YoutubeCookieFile.resolve(cookiesFile));
+    }
+
     /** Admin check: can this deployment stream YouTube audio right now? */
     public Mono<Void> verifyYoutubeStreaming() {
         requireEnabled();
         String target = "https://music.youtube.com/watch?v=dQw4w9WgXcQ";
-        List<String> command = withYoutubeCookies(List.of(
-                executable, "--no-warnings", "--no-playlist", "--simulate",
-                "--format", AUDIO_FORMAT, "--print", "%(id)s", target), target);
-        return Mono.fromCallable(() -> runCommand(command, "YouTube verification", 20))
+        return Mono.fromCallable(() -> {
+                    YoutubeCookieJar.Run jar = openCookieJar(target);
+                    try {
+                        List<String> command = withYoutubeCookies(List.of(
+                                executable, "--no-warnings", "--no-playlist", "--simulate",
+                                "--format", AUDIO_FORMAT, "--print", "%(id)s", target), target, jar);
+                        return runCommand(command, "YouTube verification", 20);
+                    } finally {
+                        YoutubeCookieJar.release(jar);
+                    }
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .timeout(Duration.ofSeconds(25))
                 .then();
@@ -408,7 +438,13 @@ public class YtDlpResolver {
                 sourceUrl
         );
 
-        String output = runCommand(withYoutubeCookies(command, sourceUrl), "audio download", downloadTimeoutSeconds);
+        YoutubeCookieJar.Run jar = openCookieJar(sourceUrl);
+        String output;
+        try {
+            output = runCommand(withYoutubeCookies(command, sourceUrl, jar), "audio download", downloadTimeoutSeconds);
+        } finally {
+            YoutubeCookieJar.release(jar);
+        }
         String prefix = "__MUSIC_PARTY_FILE__:";
         String outputFile = output.lines()
                 .map(String::trim)

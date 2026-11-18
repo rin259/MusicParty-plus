@@ -39,9 +39,21 @@ class YtDlpResolverTest {
 
         YtDlpResolver resolver = newResolver(executable, 5, cookies);
         resolver.searchYoutubeMusic("test", 1).block(Duration.ofSeconds(4));
-        assertThat(Files.readString(args))
-                .contains("--cookies").contains(cookies.toString())
+        String youtubeArgs = Files.readString(args);
+        assertThat(youtubeArgs)
+                .contains("--cookies")
                 .contains("--js-runtimes").contains("bun:/usr/local/bin/bun");
+        // Each run works on a private copy so concurrent yt-dlp processes cannot
+        // clobber each other's rotated session tokens.
+        String cookiePath = youtubeArgs.lines()
+                .dropWhile(line -> !line.equals("--cookies"))
+                .skip(1)
+                .findFirst()
+                .orElseThrow();
+        assertThat(Path.of(cookiePath).getParent())
+                .isEqualTo(temporaryDirectory.toAbsolutePath());
+        assertThat(Path.of(cookiePath).getFileName().toString()).startsWith("yt-cookies.run");
+        assertThat(cookiePath).isNotEqualTo(cookies.toString());
 
         resolver.searchSoundCloud("test", 1).block(Duration.ofSeconds(4));
         assertThat(Files.readString(args)).doesNotContain("--cookies").doesNotContain("--js-runtimes");
