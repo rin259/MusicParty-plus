@@ -102,6 +102,8 @@ app:
       # YouTube 机器人校验需要登录 cookies；留空则使用 data/yt-cookies.txt
       cookies-file: ${YT_DLP_COOKIES_FILE:}
       js-runtime: ${YT_DLP_JS_RUNTIME:bun:/usr/local/bin/bun}
+      # 為 1 時同一會話之 yt-dlp 調用串行執行，避免並發輪換把 token 鏈撞壞
+      youtube-concurrency: ${YT_DLP_YOUTUBE_CONCURRENCY:1}
     auth:
       rate-limit:
         enabled: ${AUTH_RATE_LIMIT_ENABLED:true}

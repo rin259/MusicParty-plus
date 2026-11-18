@@ -293,6 +293,10 @@ public class LocalCacheService {
             if (failure != null && running) {
                 if (deferred) log.info("Preparation deferred: {} (retry {})", id, entry.getRetryCount());
                 else log.warn("Preparation failed for {}: {}", id, failure.toString());
+                String reason = failure.toString();
+                if (reason.contains("登录校验") || reason.contains("Sign in to confirm")) {
+                    eventPublisher.publishEvent(new YoutubeAuthExpiredEvent(reason));
+                }
                 eventPublisher.publishEvent(new DownloadStatusEvent(this, id));
             }
         }

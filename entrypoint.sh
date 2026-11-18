@@ -5,9 +5,23 @@
 
 YTDLP_BIN="${YT_DLP_PATH:-yt-dlp}"
 YTDLP_AUTOUPDATE_INTERVAL_SECONDS="${YTDLP_AUTOUPDATE_INTERVAL_SECONDS:-21600}"
+# `--update` follows the stable channel, which only moves every few weeks. YouTube
+# extraction fixes usually land on nightly first, so make the channel selectable
+# and say what happened instead of failing silently.
+YTDLP_UPDATE_CHANNEL="${YTDLP_UPDATE_CHANNEL:-stable}"
 
 update_ytdlp() {
-    "$YTDLP_BIN" --update >/dev/null 2>&1 || true
+    if [ "$YTDLP_UPDATE_CHANNEL" = "stable" ]; then
+        output="$("$YTDLP_BIN" --update 2>&1)" || true
+    else
+        output="$("$YTDLP_BIN" --update-to "$YTDLP_UPDATE_CHANNEL" 2>&1)" || true
+    fi
+    case "$output" in
+        *"up to date"*) : ;;
+        *"Updated yt-dlp"*|*"Downloading"*) echo "[yt-dlp] $output" ;;
+        "") : ;;
+        *) echo "[yt-dlp] update on '$YTDLP_UPDATE_CHANNEL' failed: $output" ;;
+    esac
 }
 
 # Update once at startup.

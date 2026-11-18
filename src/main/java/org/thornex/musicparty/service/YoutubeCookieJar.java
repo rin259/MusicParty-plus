@@ -10,8 +10,13 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -35,6 +40,17 @@ public final class YoutubeCookieJar {
     private static final String PREFIX = "yt-cookies.run";
     private static final String SUFFIX = ".txt";
     private static final Duration STALE_AFTER = Duration.ofHours(2);
+
+    /**
+     * The cookies that carry the login itself. Google answers a rejected session
+     * with Set-Cookie clears for these, and yt-dlp faithfully writes the deletion
+     * out; a single failed fetch then erases a working export for good. Keep them
+     * unless the operator uploads a new file.
+     */
+    private static final Set<String> LOGIN_COOKIES = Set.of(
+            "SID", "HSID", "SSID", "APISID", "SAPISID", "LOGIN_INFO",
+            "__Secure-1PSID", "__Secure-1PAPISID", "__Secure-3PSID", "__Secure-3PAPISID",
+            "SIDCC", "__Secure-1PSIDCC", "__Secure-3PSIDCC");
 
     private YoutubeCookieJar() {}
 
@@ -109,7 +125,9 @@ public final class YoutubeCookieJar {
             // a fresh export). Never overwrite that with our older copy.
             return;
         }
-        byte[] updated = Files.readAllBytes(copy);
+        byte[] updated = preserveLoginCookies(new String(snapshot, StandardCharsets.UTF_8),
+                new String(Files.readAllBytes(copy), StandardCharsets.UTF_8))
+                .getBytes(StandardCharsets.UTF_8);
         if (Arrays.equals(updated, snapshot)) return;
 
         Path parent = canonical.toAbsolutePath().getParent();
@@ -123,6 +141,38 @@ public final class YoutubeCookieJar {
         } finally {
             Files.deleteIfExists(staged);
         }
+    }
+
+    /**
+     * Re-adds any login cookie that the run dropped. Rotation updates values in
+     * place, so a vanished name means the server cleared it, not that it moved.
+     */
+    static String preserveLoginCookies(String snapshot, String updated) {
+        Map<String, String> updatedLines = index(updated);
+        List<String> restored = new ArrayList<>();
+        for (String name : LOGIN_COOKIES) {
+            if (!updatedLines.containsKey(name)) {
+                String original = index(snapshot).get(name);
+                if (original != null) restored.add(original);
+            }
+        }
+        if (restored.isEmpty()) return updated;
+        StringBuilder out = new StringBuilder(updated);
+        if (!updated.isEmpty() && !updated.endsWith("\n")) out.append('\n');
+        for (String line : restored) out.append(line).append('\n');
+        return out.toString();
+    }
+
+    /** name → raw line, for the cookies a Netscape file actually declares. */
+    private static Map<String, String> index(String content) {
+        Map<String, String> byName = new LinkedHashMap<>();
+        for (String line : content.replace("\r\n", "\n").split("\n")) {
+            String bare = line.startsWith("#HttpOnly_") ? line.substring("#HttpOnly_".length()) : line;
+            if (bare.isBlank() || bare.startsWith("#")) continue;
+            String[] parts = bare.split("\t");
+            if (parts.length >= 7) byName.put(parts[5], line);
+        }
+        return byName;
     }
 
     private static void pruneStale(Path directory) {

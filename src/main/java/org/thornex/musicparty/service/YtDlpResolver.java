@@ -48,6 +48,12 @@ public class YtDlpResolver {
     private final String jsRuntime;
     private final ObjectMapper objectMapper;
     private final java.util.concurrent.Semaphore metadataProcesses = new java.util.concurrent.Semaphore(2, true);
+    /**
+     * One YouTube session, one writer. Rotating __Secure-*PSIDTS tokens issued to
+     * concurrent runs cannot all be current, and Google drops the session when it
+     * sees a token chain that cannot be reconciled.
+     */
+    private final java.util.concurrent.Semaphore youtubeSession;
     private final java.util.concurrent.Semaphore downloadProcesses;
     private static final String BUVID3 = java.util.UUID.randomUUID().toString().toUpperCase() + "infoc";
     /** m4a first so the browser can play it everywhere; Opus/WebM as a fallback. */
@@ -64,6 +70,8 @@ public class YtDlpResolver {
         this.objectMapper = objectMapper;
         this.downloadProcesses = new java.util.concurrent.Semaphore(
                 Math.max(1, appProperties.getPreparation().getYtDlpConcurrency()), true);
+        this.youtubeSession = new java.util.concurrent.Semaphore(
+                Math.clamp(appProperties.getYtDlp().getYoutubeConcurrency(), 1, 8), true);
     }
 
     @jakarta.annotation.PostConstruct
@@ -266,33 +274,40 @@ public class YtDlpResolver {
         requireEnabled();
         List<String> args = new ArrayList<>(List.of("--flat-playlist", "--dump-single-json", query));
         args.addAll(Arrays.asList(extraArgs));
-        return Mono.fromCallable(() -> {
-                    YoutubeCookieJar.Run jar = openCookieJar(query);
-                    try {
-                        List<String> command = withYoutubeCookies(args, query, jar);
-                        return parseSearchResult(runJsonCommand(command), platform);
-                    } finally {
-                        YoutubeCookieJar.release(jar);
-                    }
-                })
+        return Mono.fromCallable(() -> parseSearchResult(
+                        runWithSession(args, query, "metadata query", timeoutSeconds, this::runJsonCommand), platform))
                 .subscribeOn(Schedulers.boundedElastic())
                 .timeout(Duration.ofSeconds(timeoutSeconds + 5));
     }
 
     private Mono<TrackMetadata> resolveMetadata(String sourceUrl, String platform) {
         requireEnabled();
-        return Mono.fromCallable(() -> {
-                    YoutubeCookieJar.Run jar = openCookieJar(sourceUrl);
-                    try {
-                        List<String> command = withYoutubeCookies(
-                                List.of("--skip-download", "--dump-single-json", sourceUrl), sourceUrl, jar);
-                        return parseMetadata(runJsonCommand(command), platform);
-                    } finally {
-                        YoutubeCookieJar.release(jar);
-                    }
-                })
+        return Mono.fromCallable(() -> parseMetadata(
+                        runWithSession(List.of("--skip-download", "--dump-single-json", sourceUrl),
+                                sourceUrl, "metadata query", timeoutSeconds, this::runJsonCommand), platform))
                 .subscribeOn(Schedulers.boundedElastic())
                 .timeout(Duration.ofSeconds(timeoutSeconds + 5));
+    }
+
+    /** Runs one yt-dlp command through the per-run cookie jar and the session gate. */
+    private String runWithSession(List<String> args, String target, String action, long actionTimeoutSeconds,
+                                  CommandRunner runner) throws Exception {
+        YoutubeCookieJar.Run jar = openCookieJar(target);
+        if (jar == null) return runner.run(withYoutubeCookies(args, target, null));
+        boolean gated = false;
+        try {
+            youtubeSession.acquire();
+            gated = true;
+            return runner.run(withYoutubeCookies(args, target, jar));
+        } finally {
+            if (gated) youtubeSession.release();
+            YoutubeCookieJar.release(jar);
+        }
+    }
+
+    @FunctionalInterface
+    private interface CommandRunner {
+        String run(List<String> command) throws Exception;
     }
 
     /**
@@ -338,17 +353,11 @@ public class YtDlpResolver {
     public Mono<Void> verifyYoutubeStreaming() {
         requireEnabled();
         String target = "https://music.youtube.com/watch?v=dQw4w9WgXcQ";
-        return Mono.fromCallable(() -> {
-                    YoutubeCookieJar.Run jar = openCookieJar(target);
-                    try {
-                        List<String> command = withYoutubeCookies(List.of(
-                                executable, "--no-warnings", "--no-playlist", "--simulate",
-                                "--format", AUDIO_FORMAT, "--print", "%(id)s", target), target, jar);
-                        return runCommand(command, "YouTube verification", 20);
-                    } finally {
-                        YoutubeCookieJar.release(jar);
-                    }
-                })
+        return Mono.fromCallable(() -> runWithSession(
+                        List.of(executable, "--no-warnings", "--no-playlist", "--simulate",
+                                "--format", AUDIO_FORMAT, "--print", "%(id)s", target),
+                        target, "YouTube verification", 20,
+                        command -> runCommand(command, "YouTube verification", 20)))
                 .subscribeOn(Schedulers.boundedElastic())
                 .timeout(Duration.ofSeconds(25))
                 .then();
@@ -438,13 +447,8 @@ public class YtDlpResolver {
                 sourceUrl
         );
 
-        YoutubeCookieJar.Run jar = openCookieJar(sourceUrl);
-        String output;
-        try {
-            output = runCommand(withYoutubeCookies(command, sourceUrl, jar), "audio download", downloadTimeoutSeconds);
-        } finally {
-            YoutubeCookieJar.release(jar);
-        }
+        String output = runWithSession(command, sourceUrl, "audio download", downloadTimeoutSeconds,
+                prepared -> runCommand(prepared, "audio download", downloadTimeoutSeconds));
         String prefix = "__MUSIC_PARTY_FILE__:";
         String outputFile = output.lines()
                 .map(String::trim)

@@ -46,6 +46,11 @@ public class YoutubeCookiesAdmin {
         this.file = YoutubeCookieFile.resolve(appProperties.getYtDlp().getCookiesFile());
     }
 
+    /** Canonical jar location; the health probe keeps a last-known-good copy beside it. */
+    Path file() {
+        return file;
+    }
+
     public Status status() {
         if (!YoutubeCookieFile.usable(file)) return new Status(false, 0, 0, false, HTTP_ONLY_AUTH_COOKIES);
         try {

@@ -67,6 +67,26 @@ class YoutubeCookieHealthTest {
         assertThat(busy.status().message()).isEqualTo("尚未检测");
     }
 
+    @Test void aTruncatedJarIsRestoredFromTheLastWorkingCopy() throws Exception {
+        YoutubeCookiesAdmin admin = cookies();
+        seedCookies(admin);
+        Path canonical = directory.resolve("yt-cookies.txt");
+        YoutubeCookieHealth first = new YoutubeCookieHealth(() -> Mono.empty(), admin);
+        first.probe();
+        assertThat(first.status().healthy()).isTrue();
+        assertThat(Files.exists(directory.resolve("yt-cookies.good.txt"))).isTrue();
+
+        // A rejected fetch cleared the login cookies and yt-dlp wrote the deletion out.
+        Files.writeString(canonical, "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tPREF\tx\n");
+        assertThat(admin.status().sessionReady()).isFalse();
+
+        YoutubeCookieHealth second = new YoutubeCookieHealth(() -> Mono.empty(), admin);
+        second.probe();
+
+        assertThat(admin.status().sessionReady()).isTrue();
+        assertThat(second.status().healthy()).isTrue();
+    }
+
     @Test void flagsAnExportWithoutLoginFieldsWithoutSpendingAProbe() throws Exception {
         YoutubeCookiesAdmin admin = cookies();
         // Simulates a file written before validation existed: the panel must call

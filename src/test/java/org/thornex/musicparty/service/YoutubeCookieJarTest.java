@@ -80,6 +80,24 @@ class YoutubeCookieJarTest {
         assertThat(Files.readString(canonical)).contains("fresh").doesNotContain("NEW");
     }
 
+    @Test void aFailedRunCannotEraseTheLoginCookies() throws Exception {
+        Path canonical = canonical();
+        YoutubeCookieJar.Run run = YoutubeCookieJar.open(canonical);
+
+        // Google rejects the session and answers with Set-Cookie clears; yt-dlp
+        // writes a jar that no longer carries SID at all.
+        Files.writeString(run.file(), """
+                # Netscape HTTP Cookie File
+                .youtube.com	TRUE	/	TRUE	0	PREF	keepme
+                """);
+        run.close();
+
+        String stored = Files.readString(canonical);
+        assertThat(stored).contains("\tSID\t").contains("PREF");
+        // Rotation tokens must still follow the server; only the login itself is pinned.
+        assertThat(stored).doesNotContain("\t__Secure-1PSIDTS\t");
+    }
+
     @Test void missingCanonicalFileMeansAnonymousRuns() throws Exception {
         assertThat(YoutubeCookieJar.open(directory.resolve("absent.txt"))).isNull();
         assertThat(YoutubeCookieJar.open(null)).isNull();

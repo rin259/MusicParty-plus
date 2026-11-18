@@ -126,6 +126,12 @@ public class AppProperties {
          * 镜像内置 bun；显式传入，避免依赖 PATH 探测。
          */
         private String jsRuntime = "bun:/usr/local/bin/bun";
+        /**
+         * YouTube 会話的 cookie 每次應答都會輪換（__Secure-*PSIDTS）。同一會話被多個
+         * yt-dlp 進程並發使用時，各路各自拿到不同的輪換值，Google 會把無法對齊的
+         * token 鏈視為盜用並強制登出。故 YouTube 的 yt-dlp 調用默認串行化（1 路）。
+         */
+        private int youtubeConcurrency = 1;
     }
 
     @Data
