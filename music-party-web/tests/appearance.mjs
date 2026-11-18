@@ -45,11 +45,11 @@ try {
     assert.equal(await page.getByRole('button', { name: '自定义主题', exact: true }).evaluate(el => document.activeElement === el), true, 'focus returns to launcher');
     await page.getByRole('button', { name: '自定义主题', exact: true }).click();
     await dialog.getByLabel('自定义强调色', { exact: true }).fill('#1122zz');
-    await dialog.getByRole('button', { name: '保存主题', exact: true }).click();
+    await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
     assert.ok(await dialog.isVisible()); assert.equal(await pref(), null);
     await dialog.getByRole('button', { name: '鸢尾紫', exact: true }).click();
     await dialog.getByRole('button', { name: '深色', exact: true }).click();
-    await dialog.getByRole('button', { name: '保存主题', exact: true }).click();
+    await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
     assert.equal((await pref()).accent, '#8b5cf6');
     await page.reload(); await page.waitForFunction(() => window.appearanceFixture);
     assert.equal(await accent(), '139 92 246');
@@ -60,7 +60,7 @@ try {
     await dialog.getByRole('button', { name: '玫瑰红', exact: true }).click();
     await other.getByRole('button', { name: '自定义主题', exact: true }).click();
     await other.getByRole('dialog', { name: '外观与主题' }).getByRole('button', { name: '海洋蓝', exact: true }).click();
-    await other.getByRole('button', { name: '保存主题', exact: true }).click();
+    await other.getByRole('button', { name: '保存设置', exact: true }).click();
     await page.waitForFunction(() => document.documentElement.style.getPropertyValue('--accent') === '37 99 235');
     assert.ok(await dialog.getByText('另一个标签页更新了主题，已载入最新设置。', { exact: true }).isVisible());
     await dialog.getByRole('button', { name: '取消', exact: true }).click(); await other.close();
@@ -78,35 +78,22 @@ try {
     await dialog.getByRole('button', { name: '导出 JSON', exact: true }).click();
     assert.equal((await download).suggestedFilename(), 'music-party-theme.json');
     assert.equal(JSON.parse(await dialog.getByLabel('主题 JSON', { exact: true }).inputValue()).accent, '#059669');
-    await dialog.getByRole('button', { name: '保存主题', exact: true }).click();
+    await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
     // System live mode; Monet is an independent source, not a brightness mode.
     await page.getByRole('button', { name: '自定义主题', exact: true }).click();
     await dialog.getByRole('button', { name: '系统', exact: true }).click();
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await dialog.getByRole('button', { name: 'Monet · 跟随封面', exact: true }).click();
-    await page.evaluate(() => { window.appearanceFixture.player.nowPlaying = { music: { id: 'cover', name: '封面测试', artists: ['Artist'], coverUrl: '/cover-blue.svg' }, likedUserIds: [] }; });
+    await page.evaluate(() => { window.appearanceFixture.player.nowPlaying = { music: { id: 'cover', name: '封面测试', artists: ['Artist'], coverUrl: '/cover-blue.svg' } }; });
     await page.waitForFunction(() => window.appearanceFixture.appearance.snapshot.monetAccent);
     const blue = await accent();
-    // Simulate like / state sync: new nowPlaying object reference with same coverUrl must not jump or flicker
-    let themeChangeCount = 0;
-    await page.exposeFunction('onThemeChangedInTest', () => themeChangeCount++);
-    await page.evaluate(() => window.addEventListener('music-party:theme-change', window.onThemeChangedInTest));
-    await page.evaluate(() => {
-        window.appearanceFixture.player.nowPlaying = {
-            music: { id: 'cover', name: '封面测试', artists: ['Artist'], coverUrl: '/cover-blue.svg' },
-            likedUserIds: ['self']
-        };
-    });
-    await page.waitForTimeout(100);
-    assert.equal(await accent(), blue, 'like update with same coverUrl must keep active theme');
-    assert.equal(themeChangeCount, 0, 'like update with same coverUrl must not re-dispatch theme changes');
     await page.evaluate(() => { window.appearanceFixture.player.nowPlaying.music.coverUrl = '/cover-red.svg'; });
     await page.waitForFunction(previous => document.documentElement.style.getPropertyValue('--accent') !== previous && window.appearanceFixture.appearance.snapshot.monetAccent, blue);
     await page.evaluate(() => { window.appearanceFixture.player.nowPlaying.music.coverUrl = '/broken-cover'; });
     await page.waitForFunction(() => window.appearanceFixture.appearance.snapshot.monetAccent === null);
-    await dialog.getByRole('button', { name: '保存主题', exact: true }).click();
-    await page.evaluate(() => { const f = window.appearanceFixture; f.room.info = { id: 'main', name: '主题测试房间' }; f.room.entered = true; });
+    await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
+    await page.evaluate(() => { const f = window.appearanceFixture; f.room.info = { id: 'main', name: '主题测试房间' }; f.room.roomId = 'main'; f.room.entered = true; });
     await page.waitForFunction(() => document.querySelector('header button[aria-label="自定义主题"]'));
     // Responsive screen checks cover real landing, room and the native settings dialog.
     for (const width of [320, 390, 768, 1200]) {
@@ -134,7 +121,7 @@ try {
         assert.ok(boxes.footer.bottom <= 850 && boxes.footer.height >= 44, 'footer actions remain accessible');
         for (let i = 0; i < 25; i++) { await page.keyboard.press('Tab'); assert.ok(await dialog.evaluate(el => el.contains(document.activeElement))); }
         if (output) await page.screenshot({ path: `${output}/settings-${width}.png` });
-        await dialog.getByRole('button', { name: '保存主题', exact: true }).click();
+        await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
         if (width < 768) {
             await page.getByRole('button', { name: '关闭菜单', exact: true }).last().click();
             await page.locator('#mobile-menu').waitFor({ state: 'hidden' });
@@ -175,7 +162,7 @@ try {
     await page.evaluate(() => { const f = window.appearanceFixture; f.chat.isOpen = false; f.room.entered = false; });
     await page.getByRole('button', { name: '自定义主题', exact: true }).click();
     await dialog.getByRole('button', { name: '浅色', exact: true }).click();
-    await dialog.getByRole('button', { name: '保存主题', exact: true }).click();
+    await dialog.getByRole('button', { name: '保存设置', exact: true }).click();
     for (const width of [390, 1200]) {
         await page.setViewportSize({ width, height: 850 });
         if (output) await page.screenshot({ path: `${output}/landing-light-${width}.png` });

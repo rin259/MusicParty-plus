@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { roomsApi } from '../api/rooms';
 import { STORAGE_KEYS } from '../constants/keys';
+import { useWallpaperStore } from './wallpaper.js';
 
 const readAccess = () => {
     try {
@@ -27,7 +28,8 @@ export const useRoomStore = defineStore('room', () => {
     const myRooms = ref([]);
     const publicRooms = ref([]);
     const rooms = computed(() => [...myRooms.value, ...publicRooms.value]);
-    const roomId = ref(localStorage.getItem(STORAGE_KEYS.ROOM_ID) || '');
+    const wallpaper = useWallpaperStore();
+    const roomId = ref(wallpaper.fromLauncher ? wallpaper.lastRoom.roomId : localStorage.getItem(STORAGE_KEYS.ROOM_ID) || '');
     const info = ref(null);
     const entered = ref(false);
     const loading = ref(false);
@@ -109,6 +111,10 @@ export const useRoomStore = defineStore('room', () => {
             }
         } catch (e) {
             signal?.throwIfAborted();
+            if (wallpaper.fromLauncher && !entered.value && wallpaper.lastRoom.roomId === id
+                && (e?.room || e?.response?.status === 404)) {
+                wallpaper.rememberRoom(id, false);
+            }
             if (!e?.room) {
                 error.value = e?.response?.status === 404 ? '房间不存在或已关闭' : roomError(e, '无法进入房间');
             }
@@ -125,7 +131,8 @@ export const useRoomStore = defineStore('room', () => {
         roomId.value = id;
         info.value = room;
         entered.value = true;
-        localStorage.setItem(STORAGE_KEYS.ROOM_ID, id);
+        if (wallpaper.fromLauncher) wallpaper.rememberRoom(id, true);
+        else localStorage.setItem(STORAGE_KEYS.ROOM_ID, id);
         const url = new URL(window.location.href);
         url.searchParams.set('room', id);
         window.history.replaceState({}, '', url);
@@ -133,6 +140,7 @@ export const useRoomStore = defineStore('room', () => {
     };
 
     const leave = () => {
+        if (wallpaper.fromLauncher) wallpaper.rememberRoom(roomId.value, false);
         entered.value = false;
         info.value = null;
         const url = new URL(window.location.href);
@@ -142,6 +150,7 @@ export const useRoomStore = defineStore('room', () => {
 
     /** 服务端拒绝连接（密码错/房间已关闭）时由 socket 层调用。 */
     const reject = (message) => {
+        if (wallpaper.fromLauncher) wallpaper.rememberRoom(roomId.value, false);
         entered.value = false;
         error.value = message || '无法进入房间';
         if (info.value) forgetPassword(info.value.id);

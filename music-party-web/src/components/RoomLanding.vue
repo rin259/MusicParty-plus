@@ -238,6 +238,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { ArrowRight, Plus, RefreshCw, Palette } from 'lucide-vue-next';
 import { useRoomStore } from '../stores/room';
+import { useWallpaperStore } from '../stores/wallpaper.js';
 import { useToast } from '../composables/useToast';
 import RoomDirectory from './RoomDirectory.vue';
 import { useUserStore } from '../stores/user';
@@ -247,6 +248,7 @@ import { useAppearanceStore } from '../stores/appearance';
 
 const emit = defineEmits(['enter']);
 const roomStore = useRoomStore();
+const wallpaper = useWallpaperStore();
 const userStore = useUserStore();
 const appearanceStore = useAppearanceStore();
 const { info, error: toastError } = useToast();
@@ -447,10 +449,11 @@ async function joinByCode() {
 
 onMounted(async () => {
   await roomStore.loadRooms();
-  const query = new URLSearchParams(window.location.search).get('room');
-  if (query) {
-    joinCode.value = query;
-    await enterRoom(query.trim().toLowerCase());
-  }
+  const query = new URLSearchParams(window.location.search).get('room')?.trim().toLowerCase();
+  const previous = wallpaper.fromLauncher ? wallpaper.lastRoom : null;
+  const candidate = query || previous?.roomId;
+  // A saved code remains available after returning to the room directory.
+  if (candidate) joinCode.value = candidate;
+  if (candidate && (query || previous?.entered)) await enterRoom(candidate);
 });
 </script>

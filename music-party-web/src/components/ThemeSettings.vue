@@ -19,6 +19,37 @@
           <p class="mt-2 text-xs text-medical-500">当前为{{ appearance.resolvedMode === 'dark' ? '深色' : '浅色' }}，跟随系统会自动响应设备外观变化。</p>
         </fieldset>
 
+        <section aria-labelledby="wallpaper-settings-title" class="border-t border-medical-200 pt-5">
+          <h3 id="wallpaper-settings-title" class="text-sm font-bold">壁纸模式</h3>
+          <p class="mt-1.5 text-xs leading-relaxed text-medical-600">死区是从屏幕边缘向内的偏移。鼠标越过死区、进入反应距离内时，对应栏会展开。</p>
+          <fieldset v-for="metric in wallpaperMetrics" :key="metric.key" class="mt-4 border border-medical-200 bg-medical-50 px-3 pb-3">
+            <legend class="px-1 text-xs font-bold">{{ metric.label }}</legend>
+            <label class="mb-2 flex min-h-9 w-fit cursor-pointer items-center gap-2 text-xs font-medium text-medical-700">
+              <input v-model="wallpaperDraft[metric.key].linked" type="checkbox" class="h-4 w-4 accent-[rgb(var(--accent))]" @change="syncWallpaperEdges(metric.key)" />
+              四边联动
+            </label>
+            <div class="grid gap-2" :class="wallpaperDraft[metric.key].linked ? 'grid-cols-1' : 'grid-cols-2 sm:grid-cols-4'">
+              <label v-for="edge in (wallpaperDraft[metric.key].linked ? ['top'] : WALLPAPER_EDGES)" :key="edge" class="min-w-0 text-xs text-medical-700">
+                <span class="block pb-1">{{ wallpaperDraft[metric.key].linked ? '四边' : WALLPAPER_EDGE_LABELS[edge] }}</span>
+                <span class="flex max-w-32 items-center gap-1 border border-medical-200 bg-surface-1 px-2 focus-within:border-accent">
+                  <input
+                      v-model.number="wallpaperDraft[metric.key].edges[edge]"
+                      :aria-label="metric.label + ' · ' + (wallpaperDraft[metric.key].linked ? '四边' : WALLPAPER_EDGE_LABELS[edge])"
+                      class="h-10 min-w-0 flex-1 bg-transparent tabular-nums text-medical-900 outline-none"
+                      type="number"
+                      :min="metric.min"
+                      :max="WALLPAPER_MAX_DISTANCE"
+                      step="1"
+                      inputmode="numeric"
+                      @change="syncWallpaperEdges(metric.key)"
+                  />
+                  <span class="shrink-0 text-medical-600" aria-hidden="true">px</span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+        </section>
+
         <fieldset>
           <legend class="mb-2 text-sm font-bold">配色来源</legend>
           <div class="grid grid-cols-2 gap-2">
@@ -68,7 +99,7 @@
 
       <footer class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-medical-200 px-4 py-3 md:px-5">
         <button type="button" class="min-h-11 px-2 text-xs font-bold text-medical-600 hover:text-accent-text" @click="reset">恢复默认</button>
-        <div class="flex gap-2"><button type="button" class="min-h-11 border border-medical-200 px-3 text-xs font-bold text-medical-600 hover:border-medical-400" @click="appearance.cancel">取消</button><button type="button" class="min-h-11 bg-accent px-4 text-xs font-bold text-accent-fg hover:bg-accent-hover" @click="save">保存主题</button></div>
+        <div class="flex gap-2"><button type="button" class="min-h-11 border border-medical-200 px-3 text-xs font-bold text-medical-600 hover:border-medical-400" @click="appearance.cancel">取消</button><button type="button" class="min-h-11 bg-accent px-4 text-xs font-bold text-accent-fg hover:bg-accent-hover" @click="save">保存设置</button></div>
       </footer>
     </div>
   </dialog>
@@ -78,11 +109,22 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { Check, X, Sun, Moon, Monitor } from 'lucide-vue-next';
 import { useAppearanceStore } from '../stores/appearance.js';
+import { useWallpaperStore } from '../stores/wallpaper.js';
+import { normalizeWallpaperSettings, WALLPAPER_EDGES, WALLPAPER_EDGE_LABELS, WALLPAPER_MAX_DISTANCE } from '../logic/wallpaper.js';
 import { DEFAULT_APPEARANCE, THEME_PRESETS, normalizeAppearance, normalizeHex, parseAppearance, readableColor, hexRgb, rgbHex } from '../logic/theme.js';
 import ThemeColorField from './ThemeColorField.vue';
 import { useFocusTrap } from '../composables/useFocusTrap.js';
 
 const appearance = useAppearanceStore();
+const wallpaper = useWallpaperStore();
+const wallpaperDraft = reactive(normalizeWallpaperSettings(wallpaper.settings));
+const wallpaperMetrics = [
+    { key: 'deadZone', label: '死区', min: 0 },
+    { key: 'reaction', label: '反应距离', min: 1 }
+];
+function syncWallpaperEdges(metric) {
+    wallpaperDraft[metric] = normalizeWallpaperSettings(wallpaperDraft)[metric];
+}
 const dialog = ref(null), error = ref(''), notice = ref(''), jsonDraft = ref('');
 let fileRequest = 0;
 useFocusTrap(computed(() => appearance.isOpen), dialog);
@@ -99,8 +141,21 @@ const preview = () => {
     try { const valid = normalizeAppearance(draft, { strict: true }); error.value = ''; appearance.preview(valid); return true; }
     catch (e) { error.value = e.message; return false; }
 };
-const reset = () => { Object.assign(draft, normalizeAppearance(DEFAULT_APPEARANCE)); notice.value = '已预览默认主题；点击保存才会覆盖原设置。'; preview(); };
-const save = () => { if (preview()) appearance.save(); };
+const reset = () => {
+    Object.assign(draft, normalizeAppearance(DEFAULT_APPEARANCE));
+    Object.assign(wallpaperDraft, normalizeWallpaperSettings());
+    notice.value = '已恢复默认值，点击保存后生效。';
+    preview();
+};
+const save = () => {
+    if (!preview()) return;
+    const next = normalizeWallpaperSettings(wallpaperDraft);
+    if (JSON.stringify(next) !== JSON.stringify(wallpaper.settings) && !wallpaper.save(next)) {
+        error.value = '无法保存壁纸设置，请检查浏览器存储权限后重试。';
+        return;
+    }
+    appearance.save();
+};
 const importJson = text => {
     try { const valid = parseAppearance(text); Object.assign(draft, valid); preview(); notice.value = '主题已导入预览，尚未保存。'; }
     catch (e) { error.value = e.message; }
@@ -135,6 +190,7 @@ watch(() => appearance.isOpen, async open => {
     fileRequest++;
     if (open) {
         Object.assign(draft, normalizeAppearance(appearance.snapshot.appearance));
+        Object.assign(wallpaperDraft, normalizeWallpaperSettings(wallpaper.settings));
         error.value = notice.value = jsonDraft.value = '';
         await nextTick();
         if (appearance.isOpen && !dialog.value.open) dialog.value.showModal();

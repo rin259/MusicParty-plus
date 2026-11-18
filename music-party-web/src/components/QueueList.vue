@@ -1,6 +1,6 @@
 <template>
   <div id="tutorial-queue" class="h-full flex flex-col bg-surface-1 border-l border-medical-200">
-    <div class="p-4 bg-medical-50 border-b border-medical-200 flex justify-between items-center">
+    <div class="queue-list-heading p-4 bg-medical-50 border-b border-medical-200 flex justify-between items-center">
       <div class="min-w-0">
         <h2 class="m-0 text-sm font-bold text-medical-900">播放队列 <span class="text-accent-text text-xs">[{{ queue.length }}]</span></h2>
         <div class="mt-0.5 font-mono text-[9px] tracking-[0.14em] text-medical-500 tabular-nums">

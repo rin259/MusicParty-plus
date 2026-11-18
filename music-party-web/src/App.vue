@@ -49,8 +49,8 @@
       <!-- 全局弹窗 -->
       <SearchModal :isOpen="showSearch" @close="showSearch = false" />
       <NamePromptModal />
-      <ChatOverlay v-if="hasStarted && !uiStore.isLiteMode" />
-      <TutorialOverlay v-if="hasStarted && !uiStore.isLiteMode" />
+      <ChatOverlay v-if="hasStarted && (!uiStore.isLiteMode || wallpaper.active)" />
+      <TutorialOverlay v-if="hasStarted && !uiStore.isLiteMode && !wallpaper.active" />
       <AdminAuthModal />
       <AdminDashboard />
     </template>
@@ -67,6 +67,7 @@ import { useUiStore } from './stores/ui';
 import { useAdminStore } from './stores/admin';
 import { useChatStore } from './stores/chat';
 import { useRoomStore } from './stores/room';
+import { useWallpaperStore } from './stores/wallpaper.js';
 import { setPageScrollable } from './utils/viewport';
 
 // Components
@@ -99,6 +100,7 @@ const showRoomSwitcher = ref(false);
 const chatStore = useChatStore();
 const roomStore = useRoomStore();
 const appearanceStore = useAppearanceStore();
+const wallpaper = useWallpaperStore();
 let lastMonetCover = null;
 watch(
   [() => uiStore.appearanceSource, () => player.nowPlaying?.music?.coverUrl],
@@ -157,7 +159,8 @@ useEventListener(window, 'keydown', (e) => {
   if (userStore.showNameModal) { userStore.showNameModal = false; return; }
   if (adminStore.showDashboard) { adminStore.showDashboard = false; return; }
   if (showSearch.value) { showSearch.value = false; return; }
-  if (chatStore.isOpen) chatStore.toggleChat();
+  if (chatStore.isOpen) { chatStore.toggleChat(); return; }
+  if (wallpaper.active && roomStore.entered) wallpaper.active = false;
 });
 
 // Cmd/Ctrl+K：随处唤起搜索（房间内、无更高层浮层时）
@@ -179,6 +182,7 @@ watch(() => roomStore.entered ? roomStore.roomId : null, async (id, previousId) 
     showSearch.value = false;
   }
 
+  if (id && wallpaper.fromLauncher) wallpaper.active = true;
   hasStarted.value = !!id;
   if (id) player.connect();
   else showRoomSwitcher.value = false;
