@@ -292,6 +292,7 @@ public class YtDlpResolver {
     /** Runs one yt-dlp command through the per-run cookie jar and the session gate. */
     private String runWithSession(List<String> args, String target, String action, long actionTimeoutSeconds,
                                   CommandRunner runner) throws Exception {
+        requireUsableYoutubeCookies(target);
         YoutubeCookieJar.Run jar = openCookieJar(target);
         if (jar == null) return runner.run(withYoutubeCookies(args, target, null));
         boolean gated = false;
@@ -344,6 +345,27 @@ public class YtDlpResolver {
      * Per-run cookie jar so concurrent yt-dlp processes cannot clobber each
      * other's rotated session tokens. Null when the target is not YouTube.
      */
+    /**
+     * A jar that lost SID/SAPISID/LOGIN_INFO cannot authenticate, so every fetch
+     * would spend its full timeout and rewrite the file again. Fail in a
+     * millisecond with the reason the operator can act on.
+     */
+    private void requireUsableYoutubeCookies(String target) {
+        if (!isYoutubeTarget(target)) return;
+        Path file = YoutubeCookieFile.resolve(cookiesFile);
+        if (!YoutubeCookieFile.usable(file)) return;
+        try {
+            String content = Files.readString(file, java.nio.charset.StandardCharsets.UTF_8);
+            java.util.List<String> missing = YoutubeCookiesAdmin.missingAuthCookies(content);
+            if (!missing.isEmpty()) {
+                throw new IllegalStateException("YouTube 要求登录校验：服务端 cookies 缺少 "
+                        + String.join("、", missing) + "，取流被跳过。请重新导出完整 cookies。");
+            }
+        } catch (java.io.IOException ignored) {
+            // Unreadable file: let the run fail with its own message.
+        }
+    }
+
     private YoutubeCookieJar.Run openCookieJar(String target) {
         if (!isYoutubeTarget(target)) return null;
         return YoutubeCookieJar.open(YoutubeCookieFile.resolve(cookiesFile));

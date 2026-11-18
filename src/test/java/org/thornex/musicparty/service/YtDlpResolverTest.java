@@ -35,7 +35,10 @@ class YtDlpResolverTest {
         Path executable = writeExecutable("#!/bin/sh\nprintf '%s\\n' \"$@\" > " + args
                 + "\nprintf '%s\\n' '{\"entries\":[]}'\n");
         Path cookies = temporaryDirectory.resolve("yt-cookies.txt");
-        Files.writeString(cookies, "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\ttest\n");
+        Files.writeString(cookies, "# Netscape HTTP Cookie File\n"
+                + ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\ttest\n"
+                + ".youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\ttest\n"
+                + ".youtube.com\tTRUE\t/\tTRUE\t0\tLOGIN_INFO\ttest\n");
 
         YtDlpResolver resolver = newResolver(executable, 5, cookies);
         resolver.searchYoutubeMusic("test", 1).block(Duration.ofSeconds(4));
