@@ -2,6 +2,19 @@ server:
   port: 8080
 
 spring:
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.starttls.required: true
+      mail.smtp.ssl.checkserveridentity: true
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
   mvc:
     # Search fan-out to yt-dlp can be slow on a cold cache; give async requests
     # room instead of failing with AsyncRequestTimeoutException at 30s.
@@ -21,6 +34,8 @@ app:
   music-api:
     admin-password: ${ADMIN_PASSWORD:admin123}
     base-url: ${BASE_URL:http://localhost:8080}
+    rooms:
+      summon-cooldown-hours: ${ROOM_SUMMON_COOLDOWN_HOURS:6}
     author-name: ${APP_AUTHOR_NAME:ThorNex}
     back-words: ${APP_BACK_WORDS:THORNEX}
     netease:
