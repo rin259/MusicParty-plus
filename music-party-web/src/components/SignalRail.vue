@@ -32,12 +32,27 @@ defineProps({
   transition: transform 220ms cubic-bezier(.22, 1, .36, 1);
 }
 /* Three lamps step once each, twice, then rest. Activity, not a fake percentage. */
-.signal-rail__cells { position: absolute; inset: 0; display: flex; align-items: center; gap: 3px; }
-.signal-rail__cells i {
+.signal-rail--cells {
+  width: 18px;
+  height: 6px;
+  overflow: visible;
+  background: transparent;
+}
+/* No background or tick overlay here: on a 26px rail the comb pattern reads
+   as a squeezed block instead of three lamps. */
+.signal-rail--cells .signal-rail__ticks { display: none; }
+.signal-rail--cells .signal-rail__cells {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.signal-rail--cells .signal-rail__cells i {
   width: 4px;
-  height: 3px;
+  height: 4px;
   background: rgb(var(--accent));
-  opacity: 0.2;
+  opacity: 0.18;
   animation: signal-cell 520ms ease-in-out 2 both;
 }
 .signal-rail__cells i:nth-child(2) { animation-delay: 110ms; }

@@ -18,7 +18,7 @@
         <div v-else-if="item.status === 'DOWNLOADING' || item.status === 'PENDING'" class="flex min-w-0 items-center gap-1.5 font-mono font-bold" :class="preparing ? 'text-accent-text' : 'text-medical-500'">
           <SignalLight :active="preparing" :tick="preparing" />
           <span class="truncate text-[10px] tracking-[0.12em]">{{ preparing ? 'PREPARING' : 'WAITING' }}</span>
-          <SignalRail :active="preparing" class="w-[26px] shrink-0 max-[359px]:hidden" />
+          <SignalRail v-if="preparing" active class="shrink-0 max-[359px]:hidden" />
         </div>
 
         <!-- 失败状态 -->

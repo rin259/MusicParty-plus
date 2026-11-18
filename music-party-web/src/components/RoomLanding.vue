@@ -1,6 +1,6 @@
 <template>
-  <div class="min-h-app w-full bg-medical-50 text-medical-900">
-    <div class="mx-auto w-full max-w-6xl px-4 py-8 md:px-8 md:py-12 pt-[max(2rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))]">
+  <div class="min-h-app w-full bg-medical-50 text-medical-900 lg:h-screen lg:min-h-0">
+    <div class="mx-auto flex w-full max-w-6xl flex-col px-4 py-8 md:px-8 md:py-12 pt-[max(2rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))] lg:h-full lg:min-h-0 lg:py-8">
       <header class="flex items-end justify-between gap-4 border-b border-medical-200 pb-5">
         <div class="min-w-0">
           <div class="mb-3 h-3 w-3 bg-accent"></div>
@@ -22,9 +22,9 @@
         > {{ roomStore.error }}
       </div>
 
-      <div class="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
+      <div class="mt-6 grid min-h-0 gap-6 lg:flex-1 lg:grid-cols-[1fr_380px]">
         <!-- 房间列表 -->
-        <section class="min-w-0">
+        <section class="min-w-0 max-lg:max-h-[52vh] max-lg:overflow-y-auto lg:min-h-0 lg:overflow-y-auto lg:pr-1 mp-scroll">
           <div class="mb-3 flex items-center justify-between">
             <h2 class="m-0 font-mono text-[10px] tracking-[0.18em] text-medical-500">ROOM DIRECTORY</h2>
             <button
@@ -46,7 +46,7 @@
             <section v-for="section in sections" :key="section.key">
               <div class="mb-2 flex items-center justify-between">
                 <h3 class="m-0 font-mono text-[10px] tracking-[0.18em] text-medical-500">{{ section.title }}</h3>
-                <span class="font-mono text-[10px] text-medical-500">{{ section.rooms.length }}</span>
+                <span class="font-mono text-[10px] text-medical-500">{{ section.rooms.length }}<template v-if="section.total > section.rooms.length"> / {{ section.total }}</template></span>
               </div>
 
               <div v-if="section.rooms.length" class="space-y-2">
@@ -61,6 +61,22 @@
                 />
               </div>
 
+              <div v-if="section.total" class="mt-2 flex items-center gap-2">
+                <button
+                    v-if="hasMore(section)"
+                    type="button"
+                    class="min-h-11 flex-1 border border-medical-200 bg-surface-1 font-mono text-[10px] tracking-[0.12em] text-medical-600 hover:border-accent hover:text-accent-text"
+                    :aria-label="`展开更多${section.title === 'MY ROOMS' ? '我的' : '其他'}房间`"
+                    @click="loadMore(section)"
+                >LOAD MORE · +{{ stepCount(section) }}</button>
+                <button
+                    v-else-if="section.total > PAGE_SIZE"
+                    type="button"
+                    class="min-h-11 flex-1 border border-medical-200 bg-surface-1 font-mono text-[10px] tracking-[0.12em] text-medical-500 hover:border-accent hover:text-accent-text"
+                    @click="showLess(section)"
+                >SHOW LESS</button>
+              </div>
+
               <div v-else class="border border-dashed border-medical-300 bg-medical-50 p-5 text-center">
                 <div class="font-mono text-[10px] tracking-[0.16em] text-medical-500">NO ROOMS YET</div>
                 <div class="mt-1.5 text-xs text-medical-600">
@@ -72,7 +88,7 @@
         </section>
 
         <!-- 创建 / 加入 -->
-        <aside class="min-w-0 space-y-5">
+        <aside class="min-w-0 space-y-5 lg:min-h-0 lg:overflow-y-auto lg:pr-1 mp-scroll">
           <!-- 名字 -->
           <section class="border border-medical-200 bg-surface-1 p-4">
             <div class="mb-2 flex items-baseline justify-between gap-2">
@@ -265,7 +281,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { ArrowRight, Plus, RefreshCw, Palette } from 'lucide-vue-next';
 import { useRoomStore } from '../stores/room';
 import { useToast } from '../composables/useToast';
@@ -304,10 +320,25 @@ const editClearPassword = ref(false);
 const editSaving = ref(false);
 const editError = ref('');
 
+// 房间目录按页展开：landing 不再因为房间变多而变成一整页滚动。
+const PAGE_SIZE = 6;
+const visibleCounts = reactive({ mine: PAGE_SIZE, public: PAGE_SIZE });
 const sections = computed(() => [
-  { key: 'mine', title: 'MY ROOMS', rooms: roomStore.myRooms },
-  { key: 'public', title: 'OTHER ROOMS', rooms: roomStore.publicRooms }
-]);
+  { key: 'mine', title: 'MY ROOMS', all: roomStore.myRooms },
+  { key: 'public', title: 'OTHER ROOMS', all: roomStore.publicRooms }
+].map((section) => ({
+  ...section,
+  rooms: section.all.slice(0, visibleCounts[section.key]),
+  total: section.all.length
+})));
+const hasMore = (section) => section.total > section.rooms.length;
+const stepCount = (section) => Math.min(PAGE_SIZE, section.total - section.rooms.length);
+const loadMore = (section) => { visibleCounts[section.key] += PAGE_SIZE; };
+const showLess = (section) => { visibleCounts[section.key] = PAGE_SIZE; };
+watch(() => [roomStore.myRooms.length, roomStore.publicRooms.length], () => {
+  visibleCounts.mine = PAGE_SIZE;
+  visibleCounts.public = PAGE_SIZE;
+});
 
 const hasName = computed(() => !!profileName.value && !isGuestName(profileName.value));
 const canCreate = computed(() => hasName.value);
