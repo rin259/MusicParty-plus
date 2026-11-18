@@ -1,16 +1,20 @@
 package org.thornex.musicparty.controller;
 
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.*;
 import org.thornex.musicparty.config.AppProperties;
 import org.thornex.musicparty.dto.*;
+import org.thornex.musicparty.room.RoomMailSettings;
 import org.thornex.musicparty.room.RoomRegistry;
 import org.thornex.musicparty.service.RuntimeConfigService;
 import org.thornex.musicparty.service.api.BilibiliMusicApiService;
 import org.thornex.musicparty.service.api.NeteaseMusicApiService;
 import org.thornex.musicparty.service.stream.LiveStreamService;
 
+import java.io.IOException;
 import java.util.Map;
 
 @RestController
@@ -25,8 +29,9 @@ public class AdminController {
     private final LiveStreamService liveStreamService;
     private final RuntimeConfigService runtimeConfigService;
     private final org.thornex.musicparty.service.LocalCacheService localCacheService;
+    private final RoomMailSettings roomMailSettings;
 
-    public AdminController(RoomRegistry roomRegistry, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService, RuntimeConfigService runtimeConfigService, org.thornex.musicparty.service.LocalCacheService localCacheService) {
+    public AdminController(RoomRegistry roomRegistry, AppProperties appProperties, AuthController authController, NeteaseMusicApiService neteaseMusicApiService, BilibiliMusicApiService bilibiliMusicApiService, LiveStreamService liveStreamService, RuntimeConfigService runtimeConfigService, org.thornex.musicparty.service.LocalCacheService localCacheService, RoomMailSettings roomMailSettings) {
         this.roomRegistry = roomRegistry;
         this.adminPassword = appProperties.getAdminPassword();
         this.authController = authController;
@@ -35,12 +40,38 @@ public class AdminController {
         this.liveStreamService = liveStreamService;
         this.runtimeConfigService = runtimeConfigService;
         this.localCacheService = localCacheService;
+        this.roomMailSettings = roomMailSettings;
     }
 
     @GetMapping("/preparation")
     public ResponseEntity<?> preparation(@RequestHeader(value = "X-Admin-Password", required = false) String password) {
         if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         return ResponseEntity.ok(localCacheService.preparationStats());
+    }
+
+    @GetMapping("/config/mail")
+    public ResponseEntity<?> getMailSettings(@RequestHeader(value = "X-Admin-Password", required = false) String password) {
+        if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(roomMailSettings.view());
+    }
+
+    @PatchMapping("/config/mail")
+    public ResponseEntity<?> updateMailSettings(
+            @RequestHeader(value = "X-Admin-Password", required = false) String password,
+            @RequestBody RoomMailSettings.Update request) {
+        if (!isValid(password)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        try {
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(roomMailSettings.update(request));
+        } catch (IllegalArgumentException error) {
+            return ResponseEntity.badRequest().body(Map.of("message", error.getMessage()));
+        } catch (IOException error) {
+            return ResponseEntity.internalServerError().body(Map.of("message", "无法保存邮件设置，请检查服务端数据目录权限"));
+        }
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<?> malformedAdminRequest() {
+        return ResponseEntity.badRequest().body(Map.of("message", "配置格式无效"));
     }
 
     private boolean isValid(String password) {

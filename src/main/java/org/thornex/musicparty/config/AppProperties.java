@@ -60,6 +60,8 @@ public class AppProperties {
         private int idleUnloadMinutes = 30;
         /** 房间码长度 */
         private int codeLength = 8;
+        /** 同一房间两次邮件召唤之间的间隔；0 表示不限间隔。 */
+        private int summonCooldownHours = 6;
     }
 
     @Data

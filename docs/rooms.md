@@ -67,7 +67,7 @@ room-password: <密码或空>
 | GET | `/api/rooms` | 公共房间目录（只含 `public`；密码房带锁，仍可凭密码进入）。 |
 | GET | `/api/rooms/{id}` | 公开摘要：名称、是否有密码、可见性、在线数、是否房主；unlisted 可凭码访问。 |
 | POST | `/api/rooms` | 创建。需 `X-Device-Id` + `X-User-Name`（游客名会被拒绝）。body `{name?, password?}`。 |
-| PATCH | `/api/rooms/{id}` | 房主改名 / 改可见性 / 改密码 / 取消密码。 |
+| PATCH | `/api/rooms/{id}` | 房主修改名称、可见性、房间密码和召唤冷却。 |
 | DELETE | `/api/rooms/{id}` | 房主关闭房间（默认房不可删）；先向房间广播 `ROOM_CLOSED`，在线成员回到待机页。 |
 | POST | `/api/rooms/{id}/verify` | 加入前密码预校验。 |
 
@@ -79,6 +79,18 @@ data/rooms/{roomId}.json     # 队列、历史、聊天快照（tmp + rename 原
 ```
 
 默认房 `main` 首次启动时会回退读取旧版 `data/queue-data.json`，升级不丢队列；之后写入 `data/rooms/main.json`。
+
+## 邮件订阅
+
+设置 `SMTP_HOST`、`SMTP_USERNAME`、`SMTP_PASSWORD` 与收件人可访问的 `BASE_URL` 后，房间内会显示「订阅」。SMTP 默认使用端口 587 和 STARTTLS。Gmail 可使用 `smtp.gmail.com`、完整的 Gmail 地址和应用专用密码。邮件显示名为 MusicParty，发件地址为 `SMTP_USERNAME`。
+
+管理员可在「管理终端 → 邮件设置」修改 SMTP 服务器、端口、发件邮箱、密码、邮件链接地址和默认召唤冷却。仅被修改的字段覆盖环境变量，保存后立即生效，并写入服务端 `data/room-mail-settings.json`。密码留空保留原值；更换 SMTP 服务器、端口或账号时请一起填写对应密码。邮件链接地址只用于邮件。
+
+收件人确认后才会收到该房间的召唤邮件。房间内的任何人都可以发起召唤，密码房仍要求房间密码。邀请包含房间链接和退订指引。
+
+退订时在房间内点「订阅」，输入已确认订阅的邮箱，选择「退订」即可，无需邮件确认。之前发出的退订链接仍可使用。
+
+订阅仅保存在服务端 `data/room-subscriptions/{roomId}.json`，每房最多 50 条，删除房间时清理。每个房间共享召唤冷却。站点默认由 `ROOM_SUMMON_COOLDOWN_HOURS` 指定，缺省为 6 小时。房主可以在房间选择页的 ROOM SETTINGS 中为自己的房间选择 0 到 24 小时，或恢复站点默认。0 表示关闭冷却。修改后按新间隔计算上一次召唤的剩余冷却时间，设置和记录在重启后仍有效。邮件由本进程后台发送，进程重启会丢弃待发任务。
 
 ## 已知边界
 

@@ -133,6 +133,13 @@ public class RoomRegistry {
         return updated;
     }
 
+    public synchronized void setSummonCooldownHours(String roomId, String deviceId, Integer hours) {
+        Room room = requireOwned(roomId, deviceId);
+        if (Objects.equals(room.summonCooldownHours(), hours)) return;
+        rooms.put(roomId, room.withSummonCooldownHours(hours).touched(System.currentTimeMillis()));
+        persistence.saveRooms(metadataSnapshot());
+    }
+
     private static String normalizeVisibility(String visibility) {
         return Room.VISIBILITY_UNLISTED.equalsIgnoreCase(visibility)
                 ? Room.VISIBILITY_UNLISTED
@@ -171,6 +178,7 @@ public class RoomRegistry {
         }
         persistence.deleteSnapshot(roomId);
         rooms.remove(roomId);
+        persistence.deleteSubscriptions(roomId);
         persistence.saveRooms(metadataSnapshot());
         log.info("Room deleted: {}", roomId);
     }
@@ -269,8 +277,7 @@ public class RoomRegistry {
                 persistence.saveSnapshot(roomId, runtime);
                 runtime.shutdown();
                 runtimes.remove(roomId, runtime);
-                Room room = rooms.get(roomId);
-                if (room != null) rooms.put(roomId, room.touched(now));
+                touchRoom(roomId, now);
                 log.info("Room {} unloaded after {} minutes idle", roomId, idleMs / 60_000);
             }
         }
@@ -278,19 +285,24 @@ public class RoomRegistry {
     }
 
     public void saveAll() {
-        persistence.saveRooms(metadataSnapshot());
+        synchronized (this) {
+            persistence.saveRooms(metadataSnapshot());
+        }
         long now = System.currentTimeMillis();
         for (Map.Entry<String, RoomRuntime> entry : runtimes.entrySet()) {
             try {
                 persistence.saveSnapshot(entry.getKey(), entry.getValue());
-                Room room = rooms.get(entry.getKey());
-                if (room != null && !entry.getValue().users().getOnlineUserSummaries().isEmpty()) {
-                    rooms.put(entry.getKey(), room.touched(now));
+                if (!entry.getValue().users().getOnlineUserSummaries().isEmpty()) {
+                    touchRoom(entry.getKey(), now);
                 }
             } catch (RuntimeException error) {
                 log.warn("Failed to persist room {}: {}", entry.getKey(), error.toString());
             }
         }
+    }
+
+    private synchronized void touchRoom(String roomId, long timestamp) {
+        rooms.computeIfPresent(roomId, (id, room) -> room.touched(timestamp));
     }
 
     private List<Room> metadataSnapshot() {

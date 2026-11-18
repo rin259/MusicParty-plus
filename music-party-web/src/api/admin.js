@@ -4,6 +4,14 @@ import client from './client';
  * 管理员后台专用接口封装
  */
 export const adminApi = {
+    mailSettings: (adminPwd) => client.get('/api/admin/config/mail', {
+        headers: { 'X-Admin-Password': adminPwd }
+    }),
+
+    updateMailSettings: (adminPwd, settings) => client.patch('/api/admin/config/mail', settings, {
+        headers: { 'X-Admin-Password': adminPwd }
+    }),
+
     // 验证密码
     verify: (password) => client.post('/api/admin/verify', { password }),
 

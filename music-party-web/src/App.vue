@@ -4,7 +4,14 @@
   <ToastNotification />
   <ThemeSettings />
 
+  <RoomMailLink
+      v-if="emailAction === 'confirm' || emailAction === 'unsubscribe'"
+      :action="emailAction"
+      :room="emailLink.get('room') || ''"
+      :token="emailLink.get('token') || ''"
+  />
   <div
+      v-else
       class="w-full font-sans transition-colors duration-500"
       :class="roomStore.entered ? 'h-app overflow-hidden' : 'min-h-app overflow-x-hidden'"
   >
@@ -76,7 +83,10 @@ import AdminAuthModal from './components/AdminAuthModal.vue';
 import AdminDashboard from './components/AdminDashboard.vue';
 import ThemeSettings from './components/ThemeSettings.vue';
 import { useAppearanceStore } from './stores/appearance';
+import RoomMailLink from './components/RoomMailLink.vue';
 
+const emailLink = new URLSearchParams(window.location.hash.slice(1));
+const emailAction = emailLink.get('roomSubscription');
 const player = usePlayerStore();
 const userStore = useUserStore();
 const uiStore = useUiStore();

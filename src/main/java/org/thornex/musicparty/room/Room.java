@@ -13,7 +13,8 @@ public record Room(
         String passwordHash,
         String visibility,
         long createdAt,
-        long lastActiveAt
+        long lastActiveAt,
+        Integer summonCooldownHours
 ) {
     public static final String MAIN_ROOM_ID = "main";
     public static final String VISIBILITY_PUBLIC = "public";
@@ -23,6 +24,15 @@ public record Room(
         visibility = visibility == null || visibility.isBlank()
                 ? VISIBILITY_PUBLIC
                 : visibility.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    public Room(String id, String name, String ownerDeviceId, String passwordHash, String visibility,
+                long createdAt, long lastActiveAt) {
+        this(id, name, ownerDeviceId, passwordHash, visibility, createdAt, lastActiveAt, null);
+    }
+
+    public static boolean isValidSummonCooldownHours(int hours) {
+        return hours >= 0 && hours <= 24;
     }
 
     /** public 会出现在房间目录；unlisted 只能通过房间码/邀请链接进入。 */
@@ -43,18 +53,22 @@ public record Room(
     }
 
     public Room withName(String newName) {
-        return new Room(id, newName, ownerDeviceId, passwordHash, visibility, createdAt, lastActiveAt);
+        return new Room(id, newName, ownerDeviceId, passwordHash, visibility, createdAt, lastActiveAt, summonCooldownHours);
     }
 
     public Room withPasswordHash(String newHash) {
-        return new Room(id, name, ownerDeviceId, newHash, visibility, createdAt, lastActiveAt);
+        return new Room(id, name, ownerDeviceId, newHash, visibility, createdAt, lastActiveAt, summonCooldownHours);
     }
 
     public Room withVisibility(String newVisibility) {
-        return new Room(id, name, ownerDeviceId, passwordHash, newVisibility, createdAt, lastActiveAt);
+        return new Room(id, name, ownerDeviceId, passwordHash, newVisibility, createdAt, lastActiveAt, summonCooldownHours);
+    }
+
+    public Room withSummonCooldownHours(Integer hours) {
+        return new Room(id, name, ownerDeviceId, passwordHash, visibility, createdAt, lastActiveAt, hours);
     }
 
     public Room touched(long at) {
-        return new Room(id, name, ownerDeviceId, passwordHash, visibility, createdAt, at);
+        return new Room(id, name, ownerDeviceId, passwordHash, visibility, createdAt, at, summonCooldownHours);
     }
 }

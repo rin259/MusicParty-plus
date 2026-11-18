@@ -189,6 +189,8 @@
               </div>
 
               <!-- Section: Credentials -->
+              <AdminMailSettings :admin-password="adminStore.adminPassword" />
+
               <div class="bg-surface-1 border border-medical-200 shadow-sm overflow-hidden chamfer-br">
                 <div class="p-3 bg-surface-strong text-white flex items-center gap-2">
                   <Database class="w-4 h-4" />
@@ -245,6 +247,7 @@ import { usePlayerStore } from '../stores/player';
 import { adminApi } from '../api/admin';
 import { useToast } from '../composables/useToast';
 import ToggleSwitch from './ui/ToggleSwitch.vue';
+import AdminMailSettings from './AdminMailSettings.vue';
 import { useFocusTrap } from '../composables/useFocusTrap';
 import {
   Settings, X, Pause, Play, SkipForward, ListOrdered, Repeat1, Shuffle,

@@ -189,6 +189,13 @@
           <button type="button" @click="editVisibility = 'unlisted'" class="min-h-11 border px-2 font-mono text-[10px] font-bold transition-colors" :class="editVisibility === 'unlisted' ? 'border-accent bg-accent/10 text-accent-text' : 'border-medical-200 bg-medical-50 text-medical-600'">LINK ONLY</button>
         </div>
 
+        <label class="mb-1 block text-xs text-medical-600" for="edit-room-summon-cooldown">召唤冷却</label>
+        <select id="edit-room-summon-cooldown" v-model="editSummonCooldownHours" :disabled="editSaving" @focus="revealOnFocus" class="mb-3 min-h-11 w-full border border-medical-200 bg-medical-50 px-2.5 text-sm text-medical-900 outline-none focus:border-accent disabled:opacity-50">
+          <option :value="null">跟随站点默认（{{ editTarget.defaultSummonCooldownHours === 0 ? '无冷却' : `${editTarget.defaultSummonCooldownHours} 小时` }}）</option>
+          <option :value="0">0 小时（无冷却）</option>
+          <option v-for="hours in 24" :key="hours" :value="hours">{{ hours }} 小时</option>
+        </select>
+
         <label class="mb-1 block font-mono text-[10px] tracking-[0.14em] text-medical-500" for="edit-room-password">
           PASSWORD（{{ editTarget.hasPassword ? '当前已设置' : '当前无密码' }}）
         </label>
@@ -291,6 +298,7 @@ const deleteError = ref('');
 const editTarget = ref(null);
 const editName = ref('');
 const editVisibility = ref('public');
+const editSummonCooldownHours = ref(null);
 const editPassword = ref('');
 const editClearPassword = ref(false);
 const editSaving = ref(false);
@@ -319,6 +327,7 @@ function openEdit(room) {
   editTarget.value = room;
   editName.value = room.name;
   editVisibility.value = room.listed ? 'public' : 'unlisted';
+  editSummonCooldownHours.value = room.summonCooldownHours ?? null;
   editPassword.value = '';
   editClearPassword.value = false;
   editError.value = '';
@@ -336,6 +345,9 @@ async function saveEdit() {
   editError.value = '';
   try {
     const payload = { name, visibility: editVisibility.value };
+    if (editSummonCooldownHours.value !== (room.summonCooldownHours ?? null)) {
+      payload.summonCooldownHours = editSummonCooldownHours.value;
+    }
     if (editClearPassword.value) {
       payload.clearPassword = true;
     } else if (editPassword.value.trim()) {
