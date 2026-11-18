@@ -201,6 +201,18 @@ export function useAudio(audioRef, playerStore, { beforePlay = () => {}, isOutpu
         updateMediaSession();
     });
 
+    /**
+     * Server progress can legitimately point past the end of the cached file when its
+     * metadata disagrees with the media (a multi-part Bilibili video whose audio is
+     * only part 1). Seeking there makes the element restart from zero, so clamp to
+     * what the media actually contains.
+     */
+    const clampToMedia = (audio, targetMs) => {
+        const limitMs = Number.isFinite(audio.duration) ? audio.duration * 1000 : null;
+        if (limitMs === null || limitMs <= 0) return targetMs;
+        return Math.max(0, Math.min(targetMs, limitMs));
+    };
+
     // === 4. 错误重试机制 ===
     const handleError = () => {
         if (!playerStore.nowPlaying?.music?.url) return;
@@ -306,7 +318,7 @@ export function useAudio(audioRef, playerStore, { beforePlay = () => {}, isOutpu
                 // Repeat rewinds are authoritative server jumps, not ordinary drift correction.
                 if (repeatRestart && Date.now() - lastRepeatRestartAt >= 1000) {
                     lastRepeatRestartAt = Date.now();
-                    if (canSeek(audio)) audio.currentTime = targetTime / 1000;
+                    if (canSeek(audio)) audio.currentTime = clampToMedia(audio, targetTime) / 1000;
                     safePlay();
                     return;
                 }
@@ -315,7 +327,9 @@ export function useAudio(audioRef, playerStore, { beforePlay = () => {}, isOutpu
                 if (playerStore.isPaused) {
                     // 避免重复赋值导致杂音
                     if (canSeek(audio) && Math.abs(audioRef.value.currentTime * 1000 - targetTime) > 200) {
-                        audioRef.value.currentTime = targetTime / 1000;
+                        // 服务端时长若大于实际媒体时长（例如只缓存了多 P 视频的第一 P），
+                        // 直接按 targetTime 对齐会越过结尾，元素随即回到 0 重播。
+                        audioRef.value.currentTime = clampToMedia(audio, targetTime) / 1000;
                     }
                 }
                 // 如果是播放状态，只有偏差过大才对齐
@@ -331,7 +345,7 @@ export function useAudio(audioRef, playerStore, { beforePlay = () => {}, isOutpu
                         && audioRef.value.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
                         && hasBufferedHeadroom(audioRef.value)) {
                             console.log(`[Sync] Correcting time (${document.hidden ? 'bg' : 'fg'}): ${domTime} -> ${targetTime}`);
-                            audioRef.value.currentTime = targetTime / 1000;
+                            audioRef.value.currentTime = clampToMedia(audioRef.value, targetTime) / 1000;
                             lastForcedSyncAt = Date.now();
                     }
                 }

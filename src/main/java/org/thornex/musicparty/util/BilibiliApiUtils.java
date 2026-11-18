@@ -53,8 +53,20 @@ public class BilibiliApiUtils {
                     JsonNode data = jsonNode.path("data");
                     String cid = data.path("cid").asText();
 
-                    // 获取时长（API 返回的是秒）
-                    long durationMs = data.path("duration").asLong() * 1000;
+                    // 获取时长（API 返回的是秒）。
+                    // 多 P 视频的 data.duration 是「所有分 P 之和」，而我们只下载 P1 的音轨，
+                    // 直接用会把时长翻倍：进度条走到一半音频就结束，暂停后客户端对齐到
+                    // 超出文件长度的位置，于是从 0 重新开始播。故取第一分 P 的时长与 cid。
+                    long durationSeconds = data.path("duration").asLong();
+                    JsonNode pages = data.path("pages");
+                    if (pages.isArray() && !pages.isEmpty()) {
+                        JsonNode firstPage = pages.get(0);
+                        long firstPageSeconds = firstPage.path("duration").asLong();
+                        if (firstPageSeconds > 0) durationSeconds = firstPageSeconds;
+                        String firstPageCid = firstPage.path("cid").asText("");
+                        if (!firstPageCid.isBlank()) cid = firstPageCid;
+                    }
+                    long durationMs = durationSeconds * 1000;
 
                     Music music = new Music(
                             bvid,
