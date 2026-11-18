@@ -50,6 +50,8 @@ public class YtDlpResolver {
     private final java.util.concurrent.Semaphore metadataProcesses = new java.util.concurrent.Semaphore(2, true);
     private final java.util.concurrent.Semaphore downloadProcesses;
     private static final String BUVID3 = java.util.UUID.randomUUID().toString().toUpperCase() + "infoc";
+    /** m4a first so the browser can play it everywhere; Opus/WebM as a fallback. */
+    private static final String AUDIO_FORMAT = "bestaudio[ext=m4a]/bestaudio";
 
     public YtDlpResolver(AppProperties appProperties, ObjectMapper objectMapper) {
         this.executable = appProperties.getYtDlp().getPath();
@@ -315,7 +317,7 @@ public class YtDlpResolver {
         String target = "https://music.youtube.com/watch?v=dQw4w9WgXcQ";
         List<String> command = withYoutubeCookies(List.of(
                 executable, "--no-warnings", "--no-playlist", "--simulate",
-                "--format", "bestaudio", "--print", "%(id)s", target), target);
+                "--format", AUDIO_FORMAT, "--print", "%(id)s", target), target);
         return Mono.fromCallable(() -> runCommand(command, "YouTube verification", 20))
                 .subscribeOn(Schedulers.boundedElastic())
                 .timeout(Duration.ofSeconds(25))
@@ -396,9 +398,7 @@ public class YtDlpResolver {
         String outputTemplate = outputDirectory.resolve(fileStem + ".%(ext)s").toAbsolutePath().toString();
         List<String> command = List.of(
                 executable, "--no-playlist", "--no-warnings", "--no-progress", "--no-simulate",
-                // Prefer AAC/m4a: the container serves the file straight to the browser and
-                // Safari cannot decode Opus-in-WebM. Fall back to any audio stream.
-                "--format", "bestaudio[ext=m4a]/bestaudio", "--retries", "5", "--fragment-retries", "10",
+                "--format", AUDIO_FORMAT, "--retries", "5", "--fragment-retries", "10",
                 "--file-access-retries", "3", "--socket-timeout", "30", "--continue",
                 // SoundCloud 的 bestaudio 是 HLS（96k aac）：不并发分片时单曲要 ~20s，
                 // 4 路并发实测 ~8s 且批量时不会触发 CDN 限流；非 HLS 源会忽略这个参数。
