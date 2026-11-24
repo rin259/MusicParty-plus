@@ -1,7 +1,7 @@
 <!-- src/components/layout/MainLayout.vue -->
 <script setup>
 import { computed, nextTick, ref, onMounted, onUnmounted, watch } from 'vue';
-import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare, Mail, BellRing, ArrowLeftRight, Palette, Image as ImageIcon } from 'lucide-vue-next';
+import { Search, Users, ListMusic, X, Menu, Minimize2, Maximize2, Volume2, Activity, Moon, Sun, LogOut, Share2, MessageSquare, Mail, BellRing, ArrowLeftRight, Palette, Image as ImageIcon, CircleHelp } from 'lucide-vue-next';
 import UserList from '../UserList.vue';
 import QueueList from '../QueueList.vue';
 import CoverImage from '../CoverImage.vue';
@@ -19,7 +19,7 @@ import { useWallpaperStore } from '../../stores/wallpaper.js';
 import { useWallpaperEdges } from '../../composables/useWallpaperEdges.js';
 import { WALLPAPER_EDGES } from '../../logic/wallpaper.js';
 
-const emit = defineEmits(['search', 'switch-room']);
+const emit = defineEmits(['search', 'switch-room', 'open-about']);
 const userStore = useUserStore();
 const uiStore = useUiStore();
 const playerStore = usePlayerStore();
@@ -242,6 +242,9 @@ const handleSearchClick = () => {
           <Sun v-if="uiStore.theme === 'dark'" class="w-4 h-4" />
           <Moon v-else class="w-4 h-4" />
         </button>
+        <button @click="emit('open-about')" class="flex items-center justify-center w-11 h-11 border border-medical-200 bg-medical-50 hover:bg-medical-100 text-medical-600 transition-all rounded-sm" title="使用说明" aria-label="使用说明">
+          <CircleHelp class="w-4 h-4" />
+        </button>
         <button @click="appearanceStore.open" class="flex items-center justify-center w-11 h-11 border border-medical-200 bg-medical-50 hover:bg-medical-100 text-medical-600 transition-all rounded-sm" title="自定义主题" aria-label="自定义主题">
           <Palette class="w-4 h-4" />
         </button>
@@ -341,6 +344,7 @@ const handleSearchClick = () => {
           <button type="button" @click="toggleWallpaper" class="flex h-11 w-11 items-center justify-center rounded-sm border border-medical-200 bg-medical-50 text-medical-600 hover:bg-medical-100" :aria-label="wallpaper.active ? '退出壁纸模式' : '进入壁纸模式'" :title="wallpaper.active ? '退出壁纸模式' : '壁纸模式'">
             <ImageIcon class="h-4 w-4" aria-hidden="true" />
           </button>
+          <button type="button" @click="emit('open-about')" class="col-span-2 flex items-center justify-center gap-2 min-h-11 p-3 border border-medical-200 text-medical-600"><CircleHelp class="w-4 h-4" /><span class="text-xs font-bold">使用说明</span></button>
           <button @click="appearanceStore.open" class="col-span-2 flex items-center justify-center gap-2 min-h-11 p-3 border border-accent/40 bg-accent/5 text-accent-text"><Palette class="w-4 h-4" /><span class="text-xs font-bold">自定义主题</span></button>
         </div>
       </aside>
@@ -467,6 +471,8 @@ const handleSearchClick = () => {
           <LogOut class="w-4 h-4" />
           <span class="text-xs tracking-widest uppercase">切换房间 · {{ roomStore.currentName }}</span>
         </button>
+
+        <button type="button" @click="emit('open-about')" class="flex w-full min-h-11 items-center justify-center gap-2 border border-medical-200 text-xs font-bold text-medical-600 hover:border-accent hover:text-accent-text"><CircleHelp class="h-4 w-4" />使用说明</button>
 
         <button type="button" @click="appearanceStore.open" class="flex w-full min-h-11 items-center justify-center gap-2 border border-medical-200 text-xs font-bold text-medical-600 hover:border-accent hover:text-accent-text"><Palette class="h-4 w-4" />自定义主题</button>
 

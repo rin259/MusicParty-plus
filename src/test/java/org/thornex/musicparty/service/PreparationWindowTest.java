@@ -95,8 +95,15 @@ class PreparationWindowTest {
             assertThat(player.getCurrentPlayerState().isFairShuffle()).isNotEqualTo(before);
             player.toggleFairShuffle("SYSTEM");
             assertThat(player.getCurrentPlayerState().isFairShuffle()).isEqualTo(before);
-            // A user command inside the same second is still throttled.
+            // Admin presses must not consume a user's budget: the throttle is per
+            // user, otherwise a busy admin silently swallows everyone else's input.
             player.toggleFairShuffle("user-token");
+            assertThat(player.getCurrentPlayerState().isFairShuffle()).isNotEqualTo(before);
+            // The same user pressing twice inside one second is still throttled.
+            player.toggleFairShuffle("user-token");
+            assertThat(player.getCurrentPlayerState().isFairShuffle()).isNotEqualTo(before);
+            // A different user is unaffected by the first user's cooldown.
+            player.toggleFairShuffle("other-token");
             assertThat(player.getCurrentPlayerState().isFairShuffle()).isEqualTo(before);
         } finally { player.shutdown(); }
     }

@@ -19,7 +19,8 @@
     <!-- Keep the same media element/context across room switches, and capture
          the landing-page join gesture before its asynchronous room request. -->
     <AudioEngine />
-    <RoomLanding v-if="!roomStore.entered" />
+    <AboutPage v-if="showAbout" @close="showAbout = false" />
+    <RoomLanding v-else-if="!roomStore.entered" @open-about="showAbout = true" />
 
     <template v-else>
       <!-- 自动播放被浏览器拦截时，必须在真实点击手势里重新 play()；放这里以便精简模式也能看到 -->
@@ -38,7 +39,7 @@
       </button>
 
       <!-- 主界面 -->
-      <MainLayout v-if="hasStarted" @search="handleSearchClick" @switch-room="showRoomSwitcher = true">
+      <MainLayout v-if="hasStarted" @search="handleSearchClick" @switch-room="showRoomSwitcher = true" @open-about="showAbout = true">
         <CenterConsole />
         <template #player>
           <PlayerControl />
@@ -68,6 +69,7 @@ import { useAdminStore } from './stores/admin';
 import { useChatStore } from './stores/chat';
 import { useRoomStore } from './stores/room';
 import { useWallpaperStore } from './stores/wallpaper.js';
+import AboutPage from './components/AboutPage.vue';
 import { setPageScrollable } from './utils/viewport';
 
 // Components
@@ -97,6 +99,7 @@ const adminStore = useAdminStore();
 const hasStarted = ref(false);
 const showSearch = ref(false);
 const showRoomSwitcher = ref(false);
+const showAbout = ref(false);
 const chatStore = useChatStore();
 const roomStore = useRoomStore();
 const appearanceStore = useAppearanceStore();
@@ -153,6 +156,7 @@ onUnmounted(() => {
 // 键盘可达性(antislop R-32)：Escape 自上而下关闭最上层浮层
 useEventListener(window, 'keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (showAbout.value) { showAbout.value = false; return; }
   if (appearanceStore.isOpen) return; // native appearance dialog owns Escape, not the room below it
   if (showRoomSwitcher.value) return; // the native switch dialog owns Escape, not the room below it
   if (adminStore.showAuthModal) { adminStore.showAuthModal = false; return; }

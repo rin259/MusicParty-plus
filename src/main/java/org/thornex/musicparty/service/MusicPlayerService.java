@@ -80,9 +80,14 @@ public class MusicPlayerService {
     private Set<String> currentLikedUserIds;
     private List<Long> currentLikeMarkers;
 
-    private final AtomicLong lastControlTimestamp = new AtomicLong(0);
+    /**
+     * Per-user control throttle. A single shared timestamp meant two different people
+     * pressing vote-skip within the same second had the second press silently dropped,
+     * so the tally always looked one short of what the room actually did.
+     */
+    private final Map<String, Long> lastControlAt = new ConcurrentHashMap<>();
     private final Map<String, Long> lastSeekTimestamps = new ConcurrentHashMap<>();
-    private static final long GLOBAL_COOLDOWN_MS = 1000;
+    private static final long CONTROL_COOLDOWN_MS = 1000;
     private static final long IDLE_RESET_TIMEOUT_MS = Duration.ofHours(2).toMillis();
 
     private final AtomicLong playHeadVersion = new AtomicLong(0);
@@ -329,9 +334,11 @@ public class MusicPlayerService {
             );
         }
 
-        Set<String> onlineTokens = userService.getRecentlyActiveUserTokens();
-        int currentVoteCount = (int) skipVotes.stream().filter(onlineTokens::contains).count();
-        int eligibleCount = calculateEligibleUsers(onlineTokens);
+        // One snapshot for the room list AND the vote tally. Reading the roster twice
+        // let a disconnect in between produce "6 online, 5 eligible" on the same frame.
+        List<UserSummary> onlineUsers = userService.getOnlineUserSummaries();
+        int currentVoteCount = countVotes(onlineUsers);
+        int eligibleCount = countEligibleUsers(onlineUsers);
 
         PlayMode currentPlayMode = playMode.get();
         return new PlayerState(
@@ -341,7 +348,7 @@ public class MusicPlayerService {
                 currentPlayMode == PlayMode.SHUFFLE,
                 isFairShuffle.get(),
                 allowOfflineShuffle.get(),
-                userService.getOnlineUserSummaries(),
+                onlineUsers,
                 isPaused.get(),
                 isPauseLocked.get(),
                 isSkipLocked.get(),
@@ -373,14 +380,12 @@ public class MusicPlayerService {
         );
     }
 
-    private int calculateEligibleUsers(Set<String> onlineTokens) {
-        String enqueuerToken = currentEnqueuerId.get();
-        // 必须是在线、活跃、非游客、且不是点歌者
-        return (int) userService.getOnlineUserSummaries().stream()
-                .filter(u -> !u.isGuest())
-                .filter(u -> onlineTokens.contains(u.token()))
-                .filter(u -> !u.token().equals(enqueuerToken))
-                .count();
+    private int countEligibleUsers(List<UserSummary> onlineUsers) {
+        return VoteTally.eligible(onlineUsers, currentEnqueuerId.get());
+    }
+
+    private int countVotes(List<UserSummary> onlineUsers) {
+        return VoteTally.votes(onlineUsers, skipVotes, currentEnqueuerId.get());
     }
 
     public void toggleFairShuffle(String sessionId) {
@@ -877,11 +882,11 @@ public class MusicPlayerService {
     }
 
     private void checkVoteSkipThreshold() {
-        Set<String> onlineTokens = userService.getRecentlyActiveUserTokens();
-        int currentVoteCount = (int) skipVotes.stream().filter(onlineTokens::contains).count();
-        int eligibleCount = calculateEligibleUsers(onlineTokens);
+        List<UserSummary> onlineUsers = userService.getOnlineUserSummaries();
+        int currentVoteCount = countVotes(onlineUsers);
+        int eligibleCount = countEligibleUsers(onlineUsers);
 
-        if (eligibleCount > 0 && (double) currentVoteCount / eligibleCount >= voteSkipThreshold.get()) {
+        if (VoteTally.passes(currentVoteCount, eligibleCount, voteSkipThreshold.get())) {
             String msg = String.format("投票切歌通过！(%d/%d 票)，正在进入下一首。", currentVoteCount, eligibleCount);
             eventPublisher.publishEvent(new SystemMessageEvent(this, SystemMessageEvent.Level.INFO, PlayerAction.SYSTEM_MESSAGE, "SYSTEM", msg));
             executeSkip("SYSTEM");
@@ -1497,16 +1502,16 @@ public class MusicPlayerService {
         // Admin/system commands must not be swallowed by the per-user throttle:
         // the endpoint still reports success, so a dropped command looks like a
         // dead switch in the dashboard.
-        if ("SYSTEM".equals(userId)) {
-            lastControlTimestamp.set(now);
-            return false;
-        }
-        if (now - lastControlTimestamp.get() < GLOBAL_COOLDOWN_MS) {
-            log.warn("Action rate limited for user: {}", userId);
-            // eventPublisher.publishEvent(...); // Optional: notify user about rate limit
+        if ("SYSTEM".equals(userId)) return false;
+        Long previous = lastControlAt.put(userId, now);
+        if (previous != null && now - previous < CONTROL_COOLDOWN_MS) {
+            log.debug("Action rate limited for user: {}", userId);
             return true;
         }
-        lastControlTimestamp.set(now);
+        // Keep the map from growing with one entry per token that ever pressed a button.
+        if (lastControlAt.size() > 512) {
+            lastControlAt.entrySet().removeIf(entry -> now - entry.getValue() > 60_000L);
+        }
         return false;
     }
 

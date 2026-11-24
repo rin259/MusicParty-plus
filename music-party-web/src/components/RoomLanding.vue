@@ -10,6 +10,7 @@
           </p>
         </div>
         <div class="flex items-end gap-3 text-right">
+          <button type="button" class="flex h-11 w-11 items-center justify-center border border-medical-200 bg-surface-1 text-medical-600 hover:border-accent hover:text-accent-text" aria-label="使用说明" title="使用说明" @click="$emit('open-about')"><CircleHelp class="h-4 w-4" /></button>
           <button type="button" class="flex h-11 w-11 items-center justify-center border border-medical-200 bg-surface-1 text-medical-600 hover:border-accent hover:text-accent-text" aria-label="自定义主题" title="自定义主题" @click="appearanceStore.open"><Palette class="h-4 w-4" /></button>
           <div class="hidden md:block">
           <div class="font-mono text-[9px] tracking-[0.16em] text-medical-500">DEVICE</div>
@@ -140,7 +141,8 @@
       </div>
 
       <footer class="mt-10 border-t border-medical-200 pt-3 font-mono text-[10px] leading-relaxed tracking-[0.12em] text-medical-500">
-        DEVICE PROFILE {{ deviceShort }} · 清空浏览器存储会丢失房主身份 · 房间码即邀请凭证
+        DEVICE PROFILE {{ deviceShort }} · 清空浏览器存储会丢失房主身份 · 房间码即邀请凭证 ·
+        <button type="button" class="font-mono text-[10px] tracking-[0.12em] text-accent-text hover:underline" @click="$emit('open-about')">使用说明 / ABOUT</button>
       </footer>
     </div>
 
@@ -236,7 +238,7 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
-import { ArrowRight, Plus, RefreshCw, Palette } from 'lucide-vue-next';
+import { ArrowRight, Plus, RefreshCw, Palette, CircleHelp } from 'lucide-vue-next';
 import { useRoomStore } from '../stores/room';
 import { useWallpaperStore } from '../stores/wallpaper.js';
 import { useToast } from '../composables/useToast';
@@ -246,7 +248,7 @@ import { STORAGE_KEYS } from '../constants/keys';
 import { revealOnFocus, setPageScrollable } from '../utils/viewport';
 import { useAppearanceStore } from '../stores/appearance';
 
-const emit = defineEmits(['enter']);
+const emit = defineEmits(['enter', 'open-about']);
 const roomStore = useRoomStore();
 const wallpaper = useWallpaperStore();
 const userStore = useUserStore();

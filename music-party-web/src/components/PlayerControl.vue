@@ -306,10 +306,12 @@ const isSkipDisabled = computed(() => {
     return false;
 });
 
+const userStore = useUserStore();
+
 const canVote = computed(() => {
-    // 只有非点歌者能投票
-    const userStore = useUserStore();
-    return nowPlaying.value && nowPlaying.value.enqueuedById !== userStore.userToken;
+    // 后端同样拒绝游客与点歌者：游客没有身份可计票，点歌者用强制切歌。
+    if (!nowPlaying.value || userStore.isGuest) return false;
+    return nowPlaying.value.enqueuedById !== userStore.userToken;
 });
 
 const skipBtnTitle = computed(() => {
