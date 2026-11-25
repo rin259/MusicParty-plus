@@ -9,6 +9,8 @@ import org.thornex.musicparty.event.QueueUpdateEvent;
 import org.thornex.musicparty.event.SeekEvent;
 import org.thornex.musicparty.event.SystemMessageEvent;
 import org.thornex.musicparty.event.UserCountChangeEvent;
+import org.thornex.musicparty.event.UserNoticeEvent;
+import org.thornex.musicparty.event.VoteStateEvent;
 
 /**
  * 房间作用域的事件发布器：需要路由到房间的事件包成 {@link RoomEvent}，
@@ -43,6 +45,8 @@ public class RoomScopedPublisher implements ApplicationEventPublisher {
                 || event instanceof EnqueueResultEvent
                 || event instanceof ImportProgressEvent
                 || event instanceof SystemMessageEvent
-                || event instanceof UserCountChangeEvent;
+                || event instanceof UserCountChangeEvent
+                || event instanceof UserNoticeEvent
+                || event instanceof VoteStateEvent;
     }
 }

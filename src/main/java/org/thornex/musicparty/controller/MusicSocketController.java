@@ -158,6 +158,14 @@ public class MusicSocketController {
         return runtime == null ? null : runtime.player().getCurrentPlayerState();
     }
 
+    /** Per-session vote receipt so the button can show "you voted" on first paint. */
+    @SubscribeMapping("/user/queue/vote")
+    public java.util.Map<String, Boolean> getMyVoteState(@Header("simpSessionId") String sessionId) {
+        RoomRuntime runtime = runtime(sessionId);
+        if (runtime == null) return java.util.Map.of("voted", false);
+        return java.util.Map.of("voted", runtime.player().hasVoted(sessionId));
+    }
+
     @SubscribeMapping("/topic/r/{roomId}/users/online")
     public List<UserSummary> getInitialOnlineUsers(@DestinationVariable String roomId,
                                                    @Header("simpSessionId") String sessionId) {

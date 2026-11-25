@@ -300,6 +300,7 @@ public class MusicPlayerService {
         currentLikedUserIds.clear();
         currentLikeMarkers.clear();
         skipVotes.clear(); // 切歌时清空投票
+        // Everyone's receipt resets with the tally; the next state sync carries voted=false.
 
         // 重置计时器
         currentMusic.set(music);
@@ -378,6 +379,13 @@ public class MusicPlayerService {
                         voteSkipWaitTime.get()
                 )
         );
+    }
+
+    /** Whether this session currently holds a vote on the playing song. */
+    public boolean hasVoted(String sessionId) {
+        return userService.getUser(sessionId)
+                .map(user -> skipVotes.contains(user.getToken()))
+                .orElse(false);
     }
 
     private int countEligibleUsers(List<UserSummary> onlineUsers) {
@@ -861,23 +869,28 @@ public class MusicPlayerService {
             return;
         }
 
-        // 1. 检查播放时长 (15秒限制，仅针对投票者)
+        // 1. 检查播放时长（仅针对投票者）。拒绝也要回执，否则按钮像坏了一样。
         long currentPos = calculateCurrentPosition();
-        if (currentPos < voteSkipWaitTime.get() * 1000L) {
+        long waitMs = voteSkipWaitTime.get() * 1000L - currentPos;
+        if (waitMs > 0) {
+            eventPublisher.publishEvent(new org.thornex.musicparty.event.UserNoticeEvent(
+                    sessionId, roomId, "VOTE_TOO_EARLY",
+                    String.format("还没到投票时间，约 %d 秒后可投票", Math.max(1, (waitMs + 999) / 1000))));
             return;
         }
 
         // 2. 切换投票状态 (Toggle)
-        if (skipVotes.contains(token)) {
-            skipVotes.remove(token);
-        } else {
-            skipVotes.add(token);
-        }
+        boolean voted = !skipVotes.contains(token);
+        if (voted) skipVotes.add(token);
+        else skipVotes.remove(token);
 
-        // 3. 判定是否达成条件
+        // 3. 回执：这个人的按钮要变成已投票态
+        eventPublisher.publishEvent(new org.thornex.musicparty.event.VoteStateEvent(sessionId, roomId, voted));
+
+        // 4. 判定是否达成条件
         checkVoteSkipThreshold();
         
-        // 4. 广播状态更新 (用于前端角标)
+        // 5. 广播状态更新 (用于前端角标)
         broadcastFullPlayerState();
     }
 
@@ -1505,7 +1518,12 @@ public class MusicPlayerService {
         if ("SYSTEM".equals(userId)) return false;
         Long previous = lastControlAt.put(userId, now);
         if (previous != null && now - previous < CONTROL_COOLDOWN_MS) {
-            log.debug("Action rate limited for user: {}", userId);
+            // Silent rejection is indistinguishable from a dead button, so tell the
+            // presser how long to wait. The room never sees this.
+            long waitMs = CONTROL_COOLDOWN_MS - (now - previous);
+            eventPublisher.publishEvent(new org.thornex.musicparty.event.UserNoticeEvent(
+                    userId, roomId, "RATE_LIMITED",
+                    String.format("操作太快，请 %.1f 秒后重试", Math.max(0.1, waitMs / 1000.0))));
             return true;
         }
         // Keep the map from growing with one entry per token that ever pressed a button.

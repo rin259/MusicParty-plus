@@ -141,6 +141,11 @@ export const createSocketSubscriptions = (roomId = 'main') => {
             playerStore.applyImportProgress(progress);
         },
 
+        // 4c. 个人投票回执：房间频道只有总数，自己投没投要单独下发
+        [WS_DEST.USER_VOTE]: (payload) => {
+            playerStore.hasVoted = !!payload?.voted;
+        },
+
         // 5. 聊天相关
         [topics.TOPIC_CHAT]: (msg) => chatStore.addMessage(msg),
         [WS_DEST.USER_PRIVATE_CHAT]: (msg) => chatStore.addMessage(msg),

@@ -287,7 +287,7 @@ const finishTutorial = () => {
 };
 
 const startTutorial = () => {
-  // 检查是否已完成
+  // 检查是否已完成（手动重看走 restart，不受这个标记限制）
   if (localStorage.getItem(STORAGE_KEY)) return;
   
   // 延迟一点启动，等待 UI 渲染完成

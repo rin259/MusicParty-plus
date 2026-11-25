@@ -107,7 +107,7 @@
                 <li><span class="font-mono text-[10px] text-accent-text">04</span> 队列里的歌由站点统一安排播放，所有人听到的是同一首、同一进度。</li>
               </ol>
               <p class="m-0 border-t border-medical-100 bg-medical-50 px-4 py-2.5 text-[11px] leading-relaxed text-medical-600">
-                首次进房会自动出现一次聚光灯式的新手引导，按提示走完或直接跳过都可以。
+                首次进房会自动出现一次聚光灯式的新手引导，按提示走完或直接跳过都可以。想再看一遍，点页头的闪光按钮，或在菜单里选「重看新手引导」。
               </p>
             </section>
 

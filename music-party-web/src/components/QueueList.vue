@@ -32,6 +32,30 @@
       IDLE · QUEUE EMPTY
     </div>
 
+    <!-- 正在播放：队列只列待播，用户在队列里找不到当前这首，会以为被跳过了 -->
+    <div
+        v-if="player.nowPlaying"
+        class="now-playing-strip flex shrink-0 items-center gap-2 border-b border-medical-200 bg-accent/5 px-2 py-2"
+        aria-current="true"
+    >
+      <span class="w-1 self-stretch flex-shrink-0 bg-accent" aria-hidden="true"></span>
+      <span class="font-mono text-[9px] leading-4 tracking-[0.14em] text-accent-text">
+        {{ player.isPaused ? 'PAUSED' : 'ON AIR' }}
+      </span>
+      <span class="min-w-0 flex-1">
+        <span class="block truncate text-sm font-bold text-medical-900" :title="player.nowPlaying.music.name">
+          {{ player.nowPlaying.music.name }}
+        </span>
+        <span class="block truncate font-mono text-[10px] text-medical-500">
+          {{ player.nowPlaying.music.artists?.[0] }}
+          <template v-if="player.nowPlaying.enqueuedByName"> · {{ player.nowPlaying.enqueuedByName }}</template>
+        </span>
+      </span>
+      <span class="flex-shrink-0 font-mono text-[10px] tabular-nums text-medical-500">
+        {{ formatDuration(player.localProgress) }} / {{ formatDuration(player.nowPlaying.music.duration) }}
+      </span>
+    </div>
+
     <!-- Shuffle Mode View: Grouped by User (ONLY for Fair Shuffle) -->
     <div v-else-if="player.isShuffle && player.isFairShuffle" class="flex-1 overflow-y-auto p-2">
       <!-- Shuffle Indicator -->
@@ -102,6 +126,7 @@
 import { computed, ref, watch, nextTick } from 'vue';
 import { usePlayerStore } from '../stores/player';
 import { Shuffle, ChevronDown, ChevronRight, User, X } from 'lucide-vue-next';
+import { formatDuration } from '../utils/format';
 import { useUserStore } from '../stores/user';
 import QueueItem from './QueueItem.vue';
 import { corruptOnce, globalGate } from '../logic/Glitch.js';

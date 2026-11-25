@@ -20,6 +20,8 @@ import org.thornex.musicparty.event.SeekEvent;
 import org.thornex.musicparty.event.StreamStatusEvent;
 import org.thornex.musicparty.event.SystemMessageEvent;
 import org.thornex.musicparty.event.UserCountChangeEvent;
+import org.thornex.musicparty.event.UserNoticeEvent;
+import org.thornex.musicparty.event.VoteStateEvent;
 import org.thornex.musicparty.service.stream.LiveStreamService;
 import org.thornex.musicparty.util.MessageFormatter;
 
@@ -71,6 +73,16 @@ public class RoomEventBridge {
                 runtime.chat().onSystemEvent(message);
                 broadcastPlayerEvent(roomId, message, runtime);
             }
+        } else if (payload instanceof UserNoticeEvent notice) {
+            // Feedback meant for one person: a throttle rejection or a vote receipt.
+            messagingTemplate.convertAndSendToUser(notice.sessionId(), "/queue/events",
+                    new org.thornex.musicparty.dto.PlayerEvent("WARN", notice.action(), "SYSTEM",
+                            notice.message(), null),
+                    sessionHeaders(notice.sessionId()));
+        } else if (payload instanceof VoteStateEvent vote) {
+            messagingTemplate.convertAndSendToUser(vote.sessionId(), "/queue/vote",
+                    java.util.Map.of("voted", vote.voted()),
+                    sessionHeaders(vote.sessionId()));
         } else if (payload instanceof UserCountChangeEvent count) {
             RoomRuntime runtime = registry.runtimeQuietly(roomId);
             if (runtime != null) runtime.player().onUserCountChanged(count);

@@ -138,13 +138,22 @@
          <button 
              @click="player.playNext" 
              :disabled="isSkipDisabled" 
-             class="flex items-center justify-center w-11 h-11 bg-medical-50 border border-medical-200 rounded-sm text-medical-600 disabled:opacity-50 relative"
-             aria-label="切歌"
+             class="flex items-center justify-center w-11 h-11 rounded-sm border relative transition-colors disabled:opacity-50"
+             :class="voteActive
+               ? 'bg-accent border-accent text-accent-fg'
+               : 'bg-medical-50 border-medical-200 text-medical-600'"
+             :aria-pressed="player.isVoteSkipEnabled && canVote ? player.hasVoted : undefined"
+             :aria-label="skipBtnTitle"
          >
              <SkipForward class="w-4 h-4" />
-             <!-- Badge -->
-             <div v-if="player.isVoteSkipEnabled && canVote && player.currentVotes > 0" class="absolute -top-1 -right-1 bg-accent text-accent-fg text-[11px] font-bold px-1 min-w-[12px] h-3 flex items-center justify-center rounded-sm shadow-sm">
-                {{ player.currentVotes }}
+             <!-- Badge：票数 / 可投人数 -->
+             <!-- 触屏没有 hover：等待时间直接占角标位，否则按钮变灰像坏了 -->
+             <div v-if="voteCountdownText"
+                  class="absolute -top-1 -right-1 bg-scrim px-1 font-mono text-[10px] leading-4 text-white">
+                 {{ voteCountdownText }}
+             </div>
+             <div v-else-if="voteBadgeText" class="absolute -top-1 -right-1 bg-accent text-accent-fg text-[11px] font-bold px-1 min-w-[12px] h-3 flex items-center justify-center rounded-sm shadow-sm">
+                {{ voteBadgeText }}
              </div>
          </button>
         </div>
@@ -188,18 +197,21 @@
         <button 
             @click="player.playNext" 
             :disabled="isSkipDisabled" 
-            class="flex items-center justify-center w-11 h-11 text-medical-800 hover:text-accent-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed relative group/skip" 
+            class="flex items-center justify-center w-11 h-11 transition-colors disabled:opacity-50 disabled:cursor-not-allowed relative group/skip"
+            :class="voteActive ? 'text-accent-text' : 'text-medical-800 hover:text-accent-text'"
             :title="skipBtnTitle"
             :aria-label="skipBtnTitle"
+            :aria-pressed="player.isVoteSkipEnabled && canVote ? player.hasVoted : undefined"
         >
             <SkipForward class="w-6 h-6 fill-current" />
-            <!-- Badge -->
-            <div v-if="player.isVoteSkipEnabled && canVote && player.currentVotes > 0" class="absolute -top-0.5 -right-0.5 bg-accent text-accent-fg text-[11px] font-bold px-1 min-w-[14px] h-3.5 flex items-center justify-center rounded-sm shadow-sm">
-                {{ player.currentVotes }}
+            <!-- Badge：票数 / 可投人数 -->
+            <!-- 角标只有一处：等待时显示倒计时，开放后显示票数。二者互斥，不会互相压住，
+                 也不会像悬停提示那样溢出播放条被裁掉。 -->
+            <div v-if="voteCountdownText" class="absolute -top-1 -right-1 bg-scrim px-1 font-mono text-[10px] leading-4 text-white">
+                {{ voteCountdownText }}
             </div>
-            <!-- Wait Timer Hint -->
-            <div v-if="player.isVoteSkipEnabled && canVote && waitTimeLeft > 0" class="absolute -bottom-6 left-1/2 -translate-x-1/2 bg-scrim text-white text-[11px] px-1 py-0.5 rounded-sm opacity-0 group-hover/skip:opacity-100 transition-opacity whitespace-nowrap">
-                {{ waitTimeLeft }}s 后可投票
+            <div v-else-if="voteBadgeText" class="absolute -top-0.5 -right-0.5 bg-accent text-accent-fg text-[11px] font-bold px-1 min-w-[14px] h-3.5 flex items-center justify-center rounded-sm shadow-sm">
+                {{ voteBadgeText }}
             </div>
         </button>
       </div>
@@ -243,6 +255,7 @@ import SignalLight from './SignalLight.vue';
 import SignalRail from './SignalRail.vue';
 import { useToast } from '../composables/useToast';
 import { positionFromPointer } from '../logic/audioSync';
+import { isVoteActive, skipButtonLabel, voteBadge, voteCountdown } from '../logic/voteUi';
 import { TextDecode } from '../logic/Glitch.js';
 
 const player = usePlayerStore();
@@ -314,15 +327,35 @@ const canVote = computed(() => {
     return nowPlaying.value.enqueuedById !== userStore.userToken;
 });
 
-const skipBtnTitle = computed(() => {
-    if (player.isSkipLocked) return '切歌功能已被锁定';
-    if (player.isVoteSkipEnabled) {
-        if (!canVote.value) return '强制切歌';
-        if (waitTimeLeft.value > 0) return `${waitTimeLeft.value}s 后可投票`;
-        return `投票切歌 (${player.currentVotes}/${player.eligibleUsers})`;
-    }
-    return 'Next';
-});
+// 按投票状态导出的四个可视值，规则集中在 logic/voteUi.js 便于测试。
+const voteActive = computed(() => isVoteActive({
+    enabled: player.isVoteSkipEnabled,
+    canVote: canVote.value,
+    hasVoted: player.hasVoted
+}));
+
+const skipBtnTitle = computed(() => skipButtonLabel({
+    locked: player.isSkipLocked,
+    enabled: player.isVoteSkipEnabled,
+    canVote: canVote.value,
+    waitSeconds: waitTimeLeft.value,
+    votes: player.currentVotes,
+    eligible: player.eligibleUsers,
+    hasVoted: player.hasVoted
+}));
+
+const voteBadgeText = computed(() => voteBadge({
+    enabled: player.isVoteSkipEnabled,
+    canVote: canVote.value,
+    votes: player.currentVotes,
+    eligible: player.eligibleUsers
+}));
+
+const voteCountdownText = computed(() => voteCountdown({
+    enabled: player.isVoteSkipEnabled,
+    canVote: canVote.value,
+    waitSeconds: waitTimeLeft.value
+}));
 
 // 计算进度百分比
 const progressPercent = computed(() => {

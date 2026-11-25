@@ -53,6 +53,8 @@ export const usePlayerStore = defineStore('player', () => {
     const voteSkipWaitTime = ref(15);
     const currentVotes = ref(0);
     const eligibleUsers = ref(0);
+    // 个人投票状态：房间频道只广播总票数，自己的那颗按钮要能显示「已投票」。
+    const hasVoted = ref(false);
 
     const config = ref({
         maxQueueSize: 1000,
@@ -196,6 +198,7 @@ export const usePlayerStore = defineStore('player', () => {
         ackTimers.clear();
         currentVotes.value = 0;
         eligibleUsers.value = 0;
+        hasVoted.value = false;
     };
 
     const disconnect = () => {
@@ -347,7 +350,7 @@ export const usePlayerStore = defineStore('player', () => {
 nowPlaying, queue, isPaused, playMode, isShuffle, isRepeatOne, isListLoop, isFairShuffle, allowOfflineShuffle, config,
         isPauseLocked, isSkipLocked, isPlayModeLocked, connected, isLoading, lyricText,
         localProgress, isBuffering, isErrorState, audioBlocked, streamListenerCount, streamActive,
-        isVoteSkipEnabled, voteSkipThreshold, voteSkipWaitTime, currentVotes, eligibleUsers,
+        isVoteSkipEnabled, voteSkipThreshold, voteSkipWaitTime, currentVotes, eligibleUsers, hasVoted,
         connect, disconnect, tryReconnect, resetRoomState, getCurrentProgress, syncState,
         playNext, togglePause, cyclePlayMode,
         enqueue, enqueuePlaylist, enqueueAlbum, topSong, removeSong,

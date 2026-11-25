@@ -36,6 +36,7 @@ export const WS_DEST = {
     USER_ME_UPDATE: '/user/queue/me',
     APP_CHAT_HISTORY: '/app/chat/history',
     USER_STATE: '/user/queue/player/state',
+    USER_VOTE: '/user/queue/vote',
     USER_CHAT_HISTORY: '/user/queue/chat/history',
     USER_EVENTS: '/user/queue/events',
     USER_PRIVATE_CHAT: '/user/queue/chat/private',

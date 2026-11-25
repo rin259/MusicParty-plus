@@ -23,6 +23,9 @@
     <RoomLanding v-else-if="!roomStore.entered" @open-about="showAbout = true" />
 
     <template v-else>
+      <!-- 断线提示：只改播放条标题的话，壁纸/精简模式下根本看不见 -->
+      <ConnectionBanner />
+
       <!-- 自动播放被浏览器拦截时，必须在真实点击手势里重新 play()；放这里以便精简模式也能看到 -->
       <button
           v-if="player.audioBlocked"
@@ -51,7 +54,7 @@
       <SearchModal :isOpen="showSearch" @close="showSearch = false" />
       <NamePromptModal />
       <ChatOverlay v-if="hasStarted && (!uiStore.isLiteMode || wallpaper.active)" />
-      <TutorialOverlay v-if="hasStarted && !uiStore.isLiteMode && !wallpaper.active" />
+      <TutorialOverlay v-if="hasStarted && !uiStore.isLiteMode && !wallpaper.active" ref="tutorialRef" />
       <AdminAuthModal />
       <AdminDashboard />
     </template>
@@ -70,6 +73,7 @@ import { useChatStore } from './stores/chat';
 import { useRoomStore } from './stores/room';
 import { useWallpaperStore } from './stores/wallpaper.js';
 import AboutPage from './components/AboutPage.vue';
+import ConnectionBanner from './components/ConnectionBanner.vue';
 import { setPageScrollable } from './utils/viewport';
 
 // Components
@@ -100,6 +104,7 @@ const hasStarted = ref(false);
 const showSearch = ref(false);
 const showRoomSwitcher = ref(false);
 const showAbout = ref(false);
+const tutorialRef = ref(null);
 const chatStore = useChatStore();
 const roomStore = useRoomStore();
 const appearanceStore = useAppearanceStore();
@@ -151,6 +156,15 @@ watch(() => roomStore.entered, syncPageScroll, { immediate: true });
 onUnmounted(() => {
   document.body.classList.remove('mp-scrollable');
   document.documentElement.classList.remove('mp-scrollable');
+});
+
+// 新手引导可以随时重看：菜单里发一个事件即可，不必再清浏览器数据。
+useEventListener(window, 'music-party:replay-tutorial', async () => {
+  // 精简模式与壁纸模式下引导不挂载，先退出来再重放，否则点了没有任何反应。
+  if (uiStore.isLiteMode) uiStore.toggleLiteMode();
+  if (wallpaper.active) wallpaper.active = false;
+  await nextTick();
+  tutorialRef.value?.restart?.();
 });
 
 // 键盘可达性(antislop R-32)：Escape 自上而下关闭最上层浮层
