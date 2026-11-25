@@ -603,6 +603,12 @@ watch([telemetryRef, srRef], ([root, summary]) => telemetry.attach(root, summary
 // The desktop v-else branch replaces these nodes on every mobile breakpoint
 // crossing without remounting CenterConsole. Own resources by node identity,
 // not just by this component's first onMounted.
+//
+// The cover is observed alongside the canvas because wallpaper mode resizes it
+// over a 500ms transition and layoutRings() derives the ring geometry from the
+// cover's width. Watching only the canvas froze that geometry at the
+// pre-transition size, so after switching modes the rings no longer matched the
+// cover until some unrelated resize happened to re-run the layout.
 watch(canvasRef, (canvas) => {
   resizeObserver?.disconnect();
   resizeObserver = null;
@@ -611,10 +617,17 @@ watch(canvasRef, (canvas) => {
   visualizer.mount(canvas);
   visualizer.setPlaying(isVisualizerActive.value);
   refreshVisualizerMetrics();
-  if (typeof ResizeObserver === 'function') {
-    resizeObserver = new ResizeObserver(refreshVisualizerMetrics);
-    resizeObserver.observe(canvas.parentElement || canvas);
-  }
+  if (typeof ResizeObserver !== 'function') return;
+  resizeObserver = new ResizeObserver(() => refreshVisualizerMetrics());
+  resizeObserver.observe(canvas.parentElement || canvas);
+  if (coverBoxRef.value) resizeObserver.observe(coverBoxRef.value);
+}, { flush: 'post' });
+
+// The cover node is recreated when the layout switches between mobile and
+// desktop, so the observer has to be re-pointed at the new element.
+watch(coverBoxRef, (cover) => {
+  if (!cover || !resizeObserver) return;
+  resizeObserver.observe(cover);
 }, { flush: 'post' });
 
 watch(lightsRef, (canvas) => {
