@@ -362,6 +362,7 @@ public class MusicPlayerService {
                 voteSkipWaitTime.get(),
                 currentVoteCount,
                 eligibleCount,
+                queueManager.getHistorySnapshot(),
                 new PlayerState.AppConfigSummary(
                         appProperties.getQueue().getMaxSize(),
                         appProperties.getQueue().getHistorySize(),

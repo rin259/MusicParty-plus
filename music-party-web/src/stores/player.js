@@ -55,6 +55,8 @@ export const usePlayerStore = defineStore('player', () => {
     const eligibleUsers = ref(0);
     // 个人投票状态：房间频道只广播总票数，自己的那颗按钮要能显示「已投票」。
     const hasVoted = ref(false);
+    // 已播完的历史：队列播空后这里还能看到刚才放过什么。
+    const playHistory = ref([]);
 
     const config = ref({
         maxQueueSize: 1000,
@@ -80,12 +82,13 @@ export const usePlayerStore = defineStore('player', () => {
     // === 2. Logic ===
     const getCurrentProgress = () => {
         if (!nowPlaying.value) return 0;
-        if (isPaused.value) {
-            return remotePosition.value;
-        } else {
-            // 本地简单的推算：服务器给的进度 + (当前时间 -收到包的时间)
-            return remotePosition.value + (Date.now() - lastSyncTime.value);
-        }
+        const duration = nowPlaying.value.music?.duration || 0;
+        // 服务器时间戳锚点若漂移（或本地时钟跳变），推算值会一路涨到荒谬的数字，
+        // 界面上就成了 "498774:14:42"。始终夹在时长内。
+        const clamp = (ms) => (duration > 0 ? Math.min(Math.max(0, ms), duration) : Math.max(0, ms));
+        if (isPaused.value) return clamp(remotePosition.value);
+        // 本地简单的推算：服务器给的进度 + (当前时间 -收到包的时间)
+        return clamp(remotePosition.value + (Date.now() - lastSyncTime.value));
     };
 
     const requireAuth = () => {
@@ -128,6 +131,7 @@ export const usePlayerStore = defineStore('player', () => {
         voteSkipWaitTime.value = state.voteSkipWaitTime || 15;
         currentVotes.value = state.currentVotes || 0;
         eligibleUsers.value = state.eligibleUsers || 0;
+        playHistory.value = state.playHistory || [];
 
         // 记录服务器发来的进度和收到包的时间
         if (state.nowPlaying) {
@@ -199,6 +203,7 @@ export const usePlayerStore = defineStore('player', () => {
         currentVotes.value = 0;
         eligibleUsers.value = 0;
         hasVoted.value = false;
+        playHistory.value = [];
     };
 
     const disconnect = () => {
@@ -351,6 +356,7 @@ nowPlaying, queue, isPaused, playMode, isShuffle, isRepeatOne, isListLoop, isFai
         isPauseLocked, isSkipLocked, isPlayModeLocked, connected, isLoading, lyricText,
         localProgress, isBuffering, isErrorState, audioBlocked, streamListenerCount, streamActive,
         isVoteSkipEnabled, voteSkipThreshold, voteSkipWaitTime, currentVotes, eligibleUsers, hasVoted,
+        playHistory,
         connect, disconnect, tryReconnect, resetRoomState, getCurrentProgress, syncState,
         playNext, togglePause, cyclePlayMode,
         enqueue, enqueuePlaylist, enqueueAlbum, topSong, removeSong,

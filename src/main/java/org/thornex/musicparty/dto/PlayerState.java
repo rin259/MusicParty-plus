@@ -22,6 +22,7 @@ public record PlayerState(
         int voteSkipWaitTime,
         int currentVotes,
         int eligibleUsers,
+        List<Music> playHistory,
         AppConfigSummary config
 ) {
     public record AppConfigSummary(

@@ -298,7 +298,9 @@ export function useAudio(audioRef, playerStore, { beforePlay = () => {}, isOutpu
             // 如果音频正在播放，直接用 audio.currentTime 作为 UI 显示源，这样最平滑
             // 如果没在播（缓冲中/暂停），用 targetTime
             if (audioRef.value && !audioRef.value.paused) {
-                localProgress.value = audioRef.value.currentTime * 1000;
+                // 元素自身的 currentTime 也可能短暂超过时长（续播、重定向），
+                // 显示前同样夹一次，避免进度文字跑出 "03:30" 之外。
+                localProgress.value = clampToMedia(audioRef.value, audioRef.value.currentTime * 1000);
             } else {
                 localProgress.value = targetTime;
             }

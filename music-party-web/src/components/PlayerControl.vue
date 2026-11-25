@@ -255,6 +255,7 @@ import SignalLight from './SignalLight.vue';
 import SignalRail from './SignalRail.vue';
 import { useToast } from '../composables/useToast';
 import { positionFromPointer } from '../logic/audioSync';
+import { sourceUrlFor } from '../logic/sourceUrl';
 import { isVoteActive, skipButtonLabel, voteBadge, voteCountdown } from '../logic/voteUi';
 import { TextDecode } from '../logic/Glitch.js';
 
@@ -457,23 +458,10 @@ const downloadCurrentMusic = async () => {
   }
 };
 
-// 跳转源页面
-// SoundCloud 的数字 ID 没有页面路径：`soundcloud.com/tracks/<id>` 会 301 到排行榜，
-// 所以优先用后台解析时带回的 `url`（真实 permalink），拼不出页面的平台退回搜索页。
+// 跳转源页面（回退规则见 logic/sourceUrl.js）
 const openSourcePage = () => {
   if (!nowPlaying.value) return;
-  const { platform, id, name, artists, url } = nowPlaying.value.music;
-  const direct = typeof url === 'string' && /^https?:\/\//.test(url) ? url : null;
-  const templates = {
-    netease: `https://music.163.com/#/song?id=${encodeURIComponent(id)}`,
-    bilibili: `https://www.bilibili.com/video/${encodeURIComponent(id)}`,
-    ytmusic: `https://music.youtube.com/watch?v=${encodeURIComponent(id)}`
-  };
-  // 老队列没有 url：走服务端 302 反查真实 permalink，而不是跳到搜索页
-  const fallback = templates[platform]
-      || (platform === 'soundcloud' && id
-          ? `/api/track/url?platform=soundcloud&id=${encodeURIComponent(id)}`
-          : null);
-  window.open(direct || fallback, '_blank', 'noopener');
+  const target = sourceUrlFor(nowPlaying.value.music);
+  if (target) window.open(target, '_blank', 'noopener');
 };
 </script>
