@@ -33,6 +33,8 @@ class NeteaseMusicApiServiceTest {
 
     private HttpServer server;
     private final AtomicInteger requests = new AtomicInteger();
+    /** 每次 /song/url/v1 请求请求的音质，按顺序记录。 */
+    private final java.util.List<String> levelsSeen = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     private volatile int failFirstRequests = 0;
     private volatile String onlyLevelWithUrl = null;
     /** 模拟「连接建立成功但一直不回包」的上游。 */
@@ -75,6 +77,7 @@ class NeteaseMusicApiServiceTest {
         String query = exchange.getRequestURI().getQuery();
         Matcher matcher = LEVEL.matcher(query == null ? "" : query);
         String level = matcher.find() ? matcher.group(1) : "";
+        levelsSeen.add(level);
 
         if (attempt <= failFirstRequests) {
             respond(exchange, 502, "{\"code\":502,\"msg\":\"read ETIMEDOUT\"}");
@@ -99,7 +102,15 @@ class NeteaseMusicApiServiceTest {
         return service(30);
     }
 
+    private NeteaseMusicApiService service(LocalCacheService cache) {
+        return service(30, cache);
+    }
+
     private NeteaseMusicApiService service(long resolveTimeoutSeconds) {
+        return service(resolveTimeoutSeconds, mock(LocalCacheService.class));
+    }
+
+    private NeteaseMusicApiService service(long resolveTimeoutSeconds, LocalCacheService cache) {
         AppProperties properties = new AppProperties();
         AppProperties.NeteaseApiConfig netease = new AppProperties.NeteaseApiConfig();
         netease.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
@@ -107,7 +118,7 @@ class NeteaseMusicApiServiceTest {
         netease.setCookie("MUSIC_U=test-cookie");
         netease.setResolveTimeoutSeconds(resolveTimeoutSeconds);
         properties.setNetease(netease);
-        return new NeteaseMusicApiService(WebClient.builder().build(), properties, mock(LocalCacheService.class));
+        return new NeteaseMusicApiService(WebClient.builder().build(), properties, cache);
     }
 
     @Test
@@ -185,5 +196,34 @@ class NeteaseMusicApiServiceTest {
         var refreshed = api.getPlaylistMusicsPaged("pl1", 0, 50, true).block();
         assertThat(refreshed.items()).hasSize(1);
         assertThat(trackRequests.get()).as("refresh=true 穿透缓存重新获取").isEqualTo(2);
+    }
+
+    /**
+     * 传输超时的自救：重试必须换更小的文件，否则 320kbps 的 10MB 在慢节点上
+     * 每次都会撞同一条传输预算，三次重试注定全灭（线上 netease_2749240712 即如此）。
+     */
+    @Test
+    void eachRetryAsksForALowerQuality() {
+        LocalCacheService cache = mock(LocalCacheService.class);
+        NeteaseMusicApiService api = service(cache);
+
+        api.prefetchMusic("2749240712", LocalCacheService.DownloadPriority.URGENT);
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<reactor.core.publisher.Mono<LocalCacheService.DownloadSource>> captor =
+                org.mockito.ArgumentCaptor.forClass(reactor.core.publisher.Mono.class);
+        org.mockito.Mockito.verify(cache).submitDownload(
+                org.mockito.ArgumentMatchers.eq("netease_2749240712"),
+                captor.capture(),
+                org.mockito.ArgumentMatchers.eq(LocalCacheService.DownloadPriority.URGENT));
+
+        reactor.core.publisher.Mono<LocalCacheService.DownloadSource> provider = captor.getValue();
+        // 四次订阅 = 首发 + 三次重试；每次都应当比上一次低一档，到底后停住。
+        provider.block();
+        provider.block();
+        provider.block();
+        provider.block();
+
+        assertThat(levelsSeen).containsExactly("exhigh", "higher", "standard", "standard");
     }
 }

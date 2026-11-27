@@ -413,16 +413,24 @@ public class LocalCacheService {
                     entry.setPhase("transfer");
 
                     String fileName = musicId + source.extension();
+                    // 计数已收到的字节，超时时能区分「完全没回包」和「慢慢在传但超预算」，
+                    // 否则日志里只剩一句 Reactor 内部堆栈，无从判断该改网络还是改预算。
+                    java.util.concurrent.atomic.AtomicLong received = new java.util.concurrent.atomic.AtomicLong();
+                    long transferBudgetSeconds = Math.max(1, appProperties.getPreparation().getTransferTimeoutSeconds());
                     return webClient.get()
                             .uri(source.url())
                             .headers(httpHeaders -> source.headers().forEach(httpHeaders::add))
                             .retrieve()
                             .bodyToFlux(DataBuffer.class)
+                            .doOnNext(buffer -> received.addAndGet(buffer.readableByteCount()))
                             .timeout(TRANSFER_IDLE_TIMEOUT)
                             .as(data -> DataBufferUtils.write(data, partial, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING))
                             // A trickle of bytes defeats an idle timeout. Bound the entire
                             // transfer too, so 2B/s downloads cannot monopolize the source.
-                            .timeout(Duration.ofSeconds(Math.max(1, appProperties.getPreparation().getTransferTimeoutSeconds())))
+                            .timeout(Duration.ofSeconds(transferBudgetSeconds))
+                            .onErrorMap(TimeoutException.class, error -> new IllegalStateException(
+                                    "音频传输超时（已接收 " + received.get() + " 字节，预算 "
+                                            + transferBudgetSeconds + "s）", error))
                             .thenReturn(new StagedDownload(partial, fileName))
                             .subscribeOn(Schedulers.boundedElastic());
                 })

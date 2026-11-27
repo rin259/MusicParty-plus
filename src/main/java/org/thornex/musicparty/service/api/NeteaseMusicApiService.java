@@ -307,15 +307,28 @@ public class NeteaseMusicApiService implements IMusicApiService {
             return;
         }
 
-        localCacheService.submitDownload(cacheId, resolveMusicUrl(musicId)
-                .map(url -> new LocalCacheService.DownloadSource(
-                        upgradeToHttps(url),
-                        Map.of(
-                                "Referer", "https://music.163.com/",
-                                "User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
-                        ),
-                        extensionFor(url)
-                )), priority);
+        List<String> levels = qualityLevels();
+        // 每一次重试（provider 被重新订阅）都从更低一档音质开始。
+        // 解析失败本来就会在内部逐级降档；这里补的是「解析成功但传输超时」——
+        // 320kbps 约 10MB，在某个 CDN 节点上只跑到 ~200KB/s 时就必然撞 45s 预算，
+        // 而三次重试都取同一档只会次次失败。降到 128kbps（约 4MB）才有机会下完。
+        java.util.concurrent.atomic.AtomicInteger attempt = new java.util.concurrent.atomic.AtomicInteger();
+        Mono<LocalCacheService.DownloadSource> source = Mono.defer(() -> {
+            int start = Math.min(attempt.getAndIncrement(), levels.size() - 1);
+            return resolveMusicUrl(musicId, levels, start)
+                    .timeout(resolveTimeout)
+                    .onErrorMap(TimeoutException.class, error -> new ApiRequestException(
+                            "网易云取流地址解析超时（" + resolveTimeout.toSeconds() + "s），已跳过本曲"))
+                    .map(url -> new LocalCacheService.DownloadSource(
+                            upgradeToHttps(url),
+                            Map.of(
+                                    "Referer", "https://music.163.com/",
+                                    "User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
+                            ),
+                            extensionFor(url)
+                    ));
+        });
+        localCacheService.submitDownload(cacheId, source, priority);
     }
 
     /**
@@ -326,6 +339,18 @@ public class NeteaseMusicApiService implements IMusicApiService {
      */
     // package-private：供 NeteaseMusicApiServiceTest 直接验证重试/降档行为
     Mono<String> resolveMusicUrl(String musicId) {
+        List<String> levels = qualityLevels();
+        // 实测 2026-11-10：网易云网关偶发「连接建立成功但整段不回包」，
+        // 没有总预算时单个任务会把串行下载队列堵满 4 分钟（外层 TASK_TIMEOUT），
+        // 期间其他用户点的歌全部排在后面。重试 + 降档整体不超过 resolveTimeout。
+        return resolveMusicUrl(musicId, levels, 0)
+                .timeout(resolveTimeout)
+                .onErrorMap(TimeoutException.class, error -> new ApiRequestException(
+                        "网易云取流地址解析超时（" + resolveTimeout.toSeconds() + "s），已跳过本曲"));
+    }
+
+    /** 首选音质在前，再按 QUALITY_LADDER 补齐，去重。 */
+    private List<String> qualityLevels() {
         List<String> levels = new ArrayList<>();
         if (StringUtils.hasText(quality)) {
             levels.add(quality);
@@ -335,13 +360,7 @@ public class NeteaseMusicApiService implements IMusicApiService {
                 levels.add(level);
             }
         }
-        // 实测 2026-11-10：网易云网关偶发「连接建立成功但整段不回包」，
-        // 没有总预算时单个任务会把串行下载队列堵满 4 分钟（外层 TASK_TIMEOUT），
-        // 期间其他用户点的歌全部排在后面。重试 + 降档整体不超过 resolveTimeout。
-        return resolveMusicUrl(musicId, levels, 0)
-                .timeout(resolveTimeout)
-                .onErrorMap(TimeoutException.class, error -> new ApiRequestException(
-                        "网易云取流地址解析超时（" + resolveTimeout.toSeconds() + "s），已跳过本曲"));
+        return levels;
     }
 
     private Mono<String> resolveMusicUrl(String musicId, List<String> levels, int index) {
